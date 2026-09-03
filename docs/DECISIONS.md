@@ -167,3 +167,53 @@ Log of every methodological and data-source decision made during this project, i
 - Reason: `analysis/normalization_diagnostics.md` task 4 found plant-level Spearman correlations between the two hazards of about -0.45 (Brazil), +0.03 (Portugal), +0.38 (India). These reflect geographic co-location of arid/hot regions, not a documented physical mechanism by which water stress amplifies heat sensitivity (or vice versa) for a given power plant. Fitting an interaction term to this sample-specific correlation would be a category error — mistaking spatial correlation for causal compounding — and would either break cross-country comparability (if the term were country-specific) or ignore the observed country differences (if fixed).
 - Status: active — open to revision only if literature-based (not sample-derived) evidence of physical compound risk for energy infrastructure is found during the methodology revisit.
 - Companion note: per-hazard decomposition (water-only and heat-only contribution to `Risk_i`) will be considered as an auxiliary diagnostic output alongside the combined SCI, not as a replacement for it — final decision deferred to the Section 5/6 methodology revisit.
+
+## [2026-09-03] Age factor for thermal bucket: fuel-specific curves (V1 closed)
+
+- Decision: `age_factor` is no longer a single curve for the `thermal`
+  bucket. It is differentiated by `fuel_type` (not `fuel_type_bucket`):
+  - Coal: 0.25%/year heat-consumption deterioration between overhauls,
+    with faster loss (~2%) in the first two years, then stabilising.
+    Source: IEA / Coal Industry Advisory Board, *Power Generation from
+    Coal: Measuring and Reporting Efficiency Performance and CO2
+    Emissions*, Paris, 2010, Section 2 ("Deterioration"). The source
+    measures heat-rate (efficiency) deterioration, not generating
+    capacity, and states this deterioration is largely restored at major
+    overhauls — the linear `age_factor` does not model that recovery,
+    so it overstates cumulative loss for well-maintained plants. Declared
+    limitation.
+  - Gas/oil-gas: unchanged, efficiency gain with age (US data
+    2001-2018), opposite sign to coal, already on record in
+    ARCHITECTURE.md Section 7.1.
+  - Nuclear: fixed at 1.0 (neutral). Nuclear capacity change with age is
+    governed by regulatory licensing and decommissioning, not gradual
+    physical degradation; no defensible physical curve exists at this
+    tier of evidence. Declared scope limit.
+  - Bioenergy: uses the coal curve as a proxy (0.25%/year), on the
+    grounds of shared combustion-plant ageing mechanisms (boiler wear,
+    tube corrosion, heat-loss increase). Declared simplification; fuel
+    heterogeneity within bioenergy (residues, dedicated energy crops,
+    bagasse) is not separately modelled.
+  - Mixed-fuel plants (`mixed_fuel_type = True`, 6 plants): `age_factor`
+    is the simple average of the component fuels' curves, capacity-
+    weighted average is used instead if per-fuel capacity is available
+    in the source data.
+- Reason: `gem_validated_plants_{country}.csv` shows thermal-bucket
+  fuel composition is close to a mirror image across the three
+  countries — coal is 86.4% of Indian thermal capacity vs. 5.5% Brazil
+  and 0% Portugal; gas/oil is 87.4% Portugal vs. 52.7% Brazil vs. 9.5%
+  India. This satisfies the ARCHITECTURE.md Section 9 (V1) criterion for
+  heterogeneity large enough to invert cross-country rankings under a
+  single averaged curve. The `thermal` fusion is kept for the water/heat
+  hazard weights (Section 6.1) — the cooling-water dependence mechanism
+  is shared across fuels — but not for `age_factor`, which tracks a
+  different, fuel-specific physical process.
+- Two earlier candidate sources for the coal curve were checked and
+  rejected: the Global Coal Plant Tracker's 10%/15%/20% age penalties
+  (at 9/19/29 years) are a CO2-accounting convention GEM applies to
+  estimate lifetime emissions, not a measured capacity or efficiency
+  curve; Aich, Nandi & Bhattacharya (2019) measures weathering of an
+  open-air raw coal stockpile over 330 days, not power-plant ageing.
+  Neither supports a physical age_factor and both are excluded from
+  the manuscript.
+- Status: active
