@@ -1,10 +1,16 @@
 # Climate Change Risk Score (CCRS) — formula specification (DRAFT)
 
-**Status: draft for review. Not a decision, not code.** ARCHITECTURE.md
-Section 9 still requires every verification item closed before index code is
-written, and the SCI/NAES → unified-score redesign is not yet formalised in
-`docs/DECISIONS.md`. This document is the proposal to be reviewed before any
-of it becomes a DECISIONS.md entry or `src/` code.
+**Status: draft for review. Not a decision, not production `src/` code.**
+ARCHITECTURE.md Section 9 still requires every verification item closed
+before index code is written, and the SCI/NAES → unified-score redesign is
+not yet formalised in `docs/DECISIONS.md`. This document is the proposal to
+be reviewed before any of it becomes a DECISIONS.md entry or `src/` code.
+
+The **band structure** (Section 8) is closed: absolute `WaterRiskBand`,
+sample-relative `HeatRiskBand`, replacing the single-combined-score band.
+The `sv`/`iv` rasteriser it depends on is built and tested
+(`src/processors/water_variability_processor.py`). Everything else in
+Section 10 is still open.
 
 Provisional name: **Climate Change Risk Score (CCRS)**. One value **per
 plant, per scenario** (`ssp126`/`opt`, `ssp370`/`bau`, `ssp585`/`pes`).
@@ -221,36 +227,141 @@ into the resilience factor as `event_factor` was.
   stepped/banded, or with a cap — plus whether the count is used raw or
   normalised by fleet capacity / plant-count exposure, or expressed as a
   rate over the EM-DAT 1900–2024 archive span. Same open question the V2
-  entry already carries. Not decided here, alongside the weights (item A)
-  and the band cutoffs (item B).
+  entry already carries. Not decided here, alongside the combined-score
+  weights (item A).
 
 ---
 
-## 8. Two outputs from the one score
+## 8. Outputs — one numeric score, two discrete bands
 
-Both are derived from the same `CCRS_i,s`; neither re-normalises it.
+### 8.0 The numeric `CCRS_i,s` is unchanged
 
-### 8.1 Per-plant report (ranking / map)
+`CCRS_i,s` stays a **single continuous weighted sum** (Section 2:
+`Hazard_i,s × age_factor_i × EventMultiplier_i`, with `age_factor` and
+`EventMultiplier` applied once implemented). It is the value used for the
+**overall per-plant ranking and the per-plant map**. Nothing in this section
+changes it.
 
-- Every plant ranked by `CCRS_i,s`, per scenario, across all three countries
-  on the one scale.
-- Map of plant points coloured by CCRS band.
-- **Absolute bands** `EXTREME / HIGH / MEDIUM / LOW` by fixed cutoffs on
-  `CCRS_i,s`. Cutoff values **to be set after** the real CCRS distribution
-  is computed and inspected (Section 10 item B) — not percentile bands
-  (those would be relative and destroy the cross-country comparability the
-  design just bought).
+What changed: the discrete risk classification is **no longer one band on the
+whole `CCRS_i,s`**. A single combined band was tried
+(`analysis/ccrs_band_classification.py`, `_v2.py`) and rejected — the water
+and heat terms have very different evidentiary bases (Section 8.3), and one
+band forces the whole classification onto the weaker of the two. The
+classification is now **two independently-cut bands**:
 
-### 8.2 Per-country report
+### 8.1 `WaterRiskBand_i` — absolute, WRI-anchored (ws + sv + iv)
 
-- For each country × scenario: the **share of installed capacity in each
-  risk band** — `Σ capacity_mw` of plants in EXTREME / HIGH / MEDIUM / LOW,
-  as a percentage of the country's computable capacity base.
-- Capacity base = the V6 computable base (coordinates + `commissioning_year`
-  present), consistent with the closed V6 decision. Capacity enters **only
-  here**, never inside `CCRS_i,s`.
-- This is the cross-country headline: "X % of Brazil's operating capacity is
-  EXTREME-risk under SSP5-8.5" is directly comparable to the India figure.
+A combined water score cut at **absolute** thresholds anchored in WRI
+Aqueduct 4.0 — no sample percentiles.
+
+**Combined score.** `S_water_i = w_ws·ws_raw_i + w_sv·sv_raw_i + w_iv·iv_raw_i`,
+using the `ws_raw` (sentinel-substituted, per the closed water-stress
+decision), `sv_raw` and `iv_raw` layers from
+`water_stress_processor` / `water_variability_processor`.
+
+**Weights — derived from the WRI category step widths, fully auditable:**
+
+Each indicator has four finite WRI category boundaries; its categories span
+raw 0 up to its High→Extremely-High threshold `τ_k`:
+
+| indicator | raw quantity | WRI boundaries (Low \| Low-Med \| Med-High \| High \| Extremely-High) | `τ_k` |
+|---|---|---|---|---|
+| `ws` | withdrawal ÷ available supply (ratio) | 0.10 / 0.20 / 0.40 / 0.80 | 0.80 |
+| `sv` | within-year CV of blue-water supply | 0.33 / 0.66 / 1.00 / 1.33 | 1.33 |
+| `iv` | between-year CV of blue-water supply | 0.25 / 0.50 / 0.75 / 1.00 | 1.00 |
+
+1. Average WRI category width for indicator `k`: `Δ_k = τ_k / 4`
+   → `Δ_ws = 0.2000`, `Δ_sv = 0.3325`, `Δ_iv = 0.2500`.
+   (For `ws` the four steps 0.10/0.10/0.20/0.40 are unequal, so the average
+   is used; `sv`/`iv` steps are ~uniform.)
+2. Weight ∝ inverse average category width, so that traversing one average
+   WRI category of **any** indicator adds the same amount to `S_water`:
+   `w_k = (1/Δ_k) / Σ_j (1/Δ_j) = (4/τ_k) / Σ_j (4/τ_j) = (1/τ_k) / Σ_j (1/τ_j)`.
+
+   | | `1/τ_k` | `w_k` |
+   |---|---|---|
+   | `ws` | 1.25000 | **0.4164** |
+   | `sv` | 0.75188 | **0.2505** |
+   | `iv` | 1.00000 | **0.3331** |
+   | Σ | 3.00188 | 1.0000 |
+
+   `S_water_i = 0.4164·ws_raw + 0.2505·sv_raw + 0.3331·iv_raw`
+
+**Absolute band cuts** on `S_water` = the value of `S_water` when all three
+indicators sit exactly on the same WRI category boundary:
+
+| WaterRiskBand boundary | ws / sv / iv at | `S_water` cut |
+|---|---|---|
+| Low → Low-Medium | 0.10 / 0.33 / 0.25 | **0.208** |
+| Low-Medium → Medium-High | 0.20 / 0.66 / 0.50 | **0.415** |
+| Medium-High → High | 0.40 / 1.00 / 0.75 | **0.667** |
+| High → Extremely-High | 0.80 / 1.33 / 1.00 | **0.999 ≈ 1.0** |
+
+Because `w_k·τ_k = 1/3` for every `k`, each indicator contributes exactly one
+third of the top cut, which lands at 1.0. `S_water` above 1.0 (possible —
+`iv` and `ws` raw values run well past their top threshold) is deeper into
+Extremely-High.
+
+**Anchor strength (declared).** `ws` — strong: the 20 %/40 % withdrawal-ratio
+lines trace to Raskin et al. 1997 (SEI) and are standard in the
+water-resources literature. `sv`/`iv` — published but weaker: WRI's own
+operational round-number CV cutoffs (framework from Brauman et al. 2016),
+not tied to a documented impact level. See
+`analysis/absolute_threshold_research.md`.
+
+### 8.2 `HeatRiskBand_i` — sample-relative (heat alone)
+
+`extreme_heat_days` (mean days/yr with tasmax > 40 °C) classified on its
+**own**, at the **pooled p25 / p75 / p95** of this study's plant sample,
+GFDL-ESM4 as the primary GCM (MIROC6 reported as the GCM-sensitivity
+variant, using its own pooled percentiles). Percentile cuts are
+rank-invariant, so this is equivalently a cut on the transformed heat term.
+
+> **Declared limitation.** There is no published absolute threshold that
+> classifies the annual frequency of days above 40 °C into risk categories.
+> The literature classifies single-day intensity (WBGT, ISO 7243) or the
+> presence/absence of a temperature threshold (World Bank CKP), not
+> cumulative annual frequency. Heat-mortality epidemiology deliberately
+> avoids fixed absolute cuts because they do not carry across different
+> baseline climates — the same physical value (e.g. 35 °C) represents very
+> different risk in different climates. `HeatRiskBand` therefore uses cuts
+> relative to this study's sample (pooled percentiles) and is sensitive to
+> the GCM used (~10–100× difference between GFDL-ESM4 and MIROC6 in the
+> underlying absolute values, though the classification itself is recomputed
+> per percentile). This is a declared limitation, not an implementation
+> flaw — it is the available state of the art for this kind of indicator.
+
+### 8.3 Why two bands and not one
+
+`ws`/`sv`/`iv` can be cut at externally-published absolute thresholds; the
+heat term cannot. A single combined band inherits the weakest link — its
+cuts could not be physically anchored while heat is in it, *and* absolute
+water information would be diluted by heat's sample-relative nature. Keeping
+them separate lets water's stronger basis stand on its own and makes heat's
+limitation explicit rather than hidden inside a blended cut.
+
+### 8.4 Per-plant report
+
+- Every plant ranked by the numeric `CCRS_i,s`, per scenario, across all
+  three countries on the one scale; map of plant points.
+- Each plant additionally carries **both** bands: `WaterRiskBand_i` and
+  `HeatRiskBand_i` — shown as a pair, never merged.
+
+### 8.5 Per-country report — two separate metrics, never combined
+
+For each country × scenario, **two** capacity shares, reported side by side
+and never summed into one percentage:
+
+- "**X % of installed capacity in [band] water risk** (absolute, WRI
+  Aqueduct 4.0 categories)"
+- "**Y % of installed capacity in [band] heat risk** (relative to this
+  study's sample, GCM-dependent)"
+
+Capacity base = the V6 computable base (coordinates + `commissioning_year`),
+consistent with the closed V6 decision. Capacity enters only here, never
+inside `CCRS_i,s`. A joint cross-tabulation (capacity in each
+`WaterRiskBand × HeatRiskBand` cell) is an auxiliary output — see
+`analysis/ccrs_final_summary.md` Section 4.
 
 ---
 
@@ -268,40 +379,56 @@ share rather than a point estimate.
 
 | # | item | status / precedent |
 |---|---|---|
-| A | **Weights `w_water`, `w_heat`, `w_sv`, `w_iv`** per bucket | Open. Same status as the original §6.1 weight matrix and V5. To be derived by projected-magnitude normalisation (§6) or an equivalent method. Includes: do `wind`/`solar` get non-zero `w_sv`/`w_iv` at all. |
-| B | **Band cutoffs** for EXTREME/HIGH/MEDIUM/LOW | Open. Absolute cutoffs, set after inspecting the real CCRS distribution. |
+| A | **Weights in the combined numeric `CCRS_i,s`** (`w_water`/`w_heat`/`w_sv`/`w_iv` per bucket) | Open. Same status as the original §6.1 weight matrix and V5. To be derived by projected-magnitude normalisation (§6). Includes: do `wind`/`solar` get non-zero `w_sv`/`w_iv` at all. **Note:** the *within-water* weights for `WaterRiskBand` (ws/sv/iv relative) are separately fixed in §8.1 from the WRI category widths — that derivation is for the absolute water band only, not the combined-score weight vector. |
+| B | **Band cutoffs** | ~~Open~~ **Closed** (Section 8). `WaterRiskBand` = absolute WRI Aqueduct 4.0 category cuts on `S_water` (0.208 / 0.415 / 0.667 / 1.0); `HeatRiskBand` = sample-relative pooled p25/p75/p95 of `extreme_heat_days`, GFDL-ESM4 primary, with a declared limitation. The single-combined-CCRS band is dropped. |
 | C | **`EventMultiplier` functional form `f()`** | Open. Linear / stepped / capped; count raw vs normalised by exposure vs rate over 1900–2024 — same open question as the V2 entry. Geocoding level is **not** open: country, per closed V2 (Section 7). |
 | D | **`age_factor` → ≥ 1 multiplier mapping** | Open. Convert §7.1 %/year curves into a multiplicative factor; confirm sign convention. |
 | E | **`fuel_factor` (V5)** | Open (V5). If it survives review it becomes a second multiplier; if removed, CCRS is unaffected as drafted. |
 | F | **Drought / SPEI term — whether to add it, and its weight** | Open. Method is settled if it is added: SPEI with **Thornthwaite** PET (`pr`+`tas`), one method across both GCMs (Section 3). Catalogue constraint in `analysis/spei_catalog_check.md`. |
 | G | **Global `(min, max)` constants per term** | To be computed once from a dated data snapshot and frozen in config; not a per-run quantity. |
-| H | **sv/iv processing path** | New. sv/iv are not currently rasterised or extracted. Needs either a `water_stress_processor`-style rasterisation of `sv_x_r`/`iv_x_r`, or a plant-level point-in-polygon extraction (as in `analysis/aqueduct_indicator_correlation.py`). Design choice, not made here. |
+| H | **sv/iv processing path** | ~~New~~ **Done.** `src/processors/water_variability_processor.py` rasterises `sv_x_r`/`iv_x_r` into `seasonal_variability[_raw]_*` / `interannual_variability[_raw]_*` on the heat grid, mirroring `water_stress_processor` (per-country per-indicator Min-Max, no log, no sentinel). |
 | I | **Outlier handling for `Tlin` (sv/iv)** | Open. Whether a p99 clip precedes the linear Min-Max. |
 
 ---
 
-## 11. What this draft explicitly does NOT do
+## 11. What this draft does and does not settle
 
-- Does not set any weight, cutoff, or multiplier value.
-- Does not reopen or close any V-item. `EventMultiplier` is country-level, so V2 stays closed as-is.
-- Does not write or modify anything in `src/`.
-- Does not supersede ARCHITECTURE.md §5/§6 — it proposes to, pending review.
-- Does not commit anything.
+Settled here (Section 8): the **band structure** — two independent bands,
+absolute `WaterRiskBand` (with its ws/sv/iv weights and cuts fully derived)
+and sample-relative `HeatRiskBand` (with its declared limitation). The
+single-combined-CCRS band is dropped. `sv`/`iv` rasterisation is built
+(`water_variability_processor.py`).
+
+Not settled (Section 10): the combined numeric `CCRS_i,s` weight vector
+(item A), `EventMultiplier` functional form (item C), `age_factor` →
+multiplier mapping and its code (item D), `fuel_factor` / V5 (item E),
+whether a SPEI term is added (item F), the frozen global transform constants
+(item G).
+
+Also: this draft does not reopen or close any V-item (`EventMultiplier` is
+country-level, so V2 stays closed), and does not by itself supersede
+ARCHITECTURE.md §5/§6 — that happens when a `docs/DECISIONS.md` entry records
+the accepted spec.
 
 ---
 
 ## 12. New pipeline components implied (for scoping only)
 
-If this spec is accepted roughly as-is, the index layer would need:
+If this spec is accepted roughly as-is, the index layer would still need:
 
-1. sv/iv extraction (item H).
-2. A global per-term transform module — `log1p`/linear + frozen global
-   Min-Max bounds (item G).
-3. A CCRS assembly module — weighted sum × `age_factor` × `EventMultiplier`,
-   per plant per scenario.
-4. `age_factor` implementation with the V1 fuel sub-curves (item D).
-5. `EventMultiplier` implementation (item C; country-level per closed V2).
-6. Two report generators (Section 8) + Monte Carlo wrapper (Section 9).
+1. A global per-term transform module for the numeric score — `log1p`/linear
+   + frozen global Min-Max bounds (item G).
+2. A `CCRS_i,s` assembly module — weighted sum × `age_factor` ×
+   `EventMultiplier`, per plant per scenario.
+3. `age_factor` implementation with the V1 fuel sub-curves (item D).
+4. `EventMultiplier` implementation (item C; country-level per closed V2).
+5. `WaterRiskBand` + `HeatRiskBand` classifiers promoted from the `analysis/`
+   diagnostics (`water_risk_band_classification.py`, the heat-percentile cut
+   in `ccrs_final_summary.py`) into `src/`.
+6. Report generators (Section 8) + Monte Carlo wrapper (Section 9).
 
-None of this is built until the open items above are closed and a
+Done: `sv`/`iv` rasterisation (`src/processors/water_variability_processor.py`,
+tested).
+
+None of the above is built until the remaining open items are closed and a
 DECISIONS.md entry records the accepted spec.
