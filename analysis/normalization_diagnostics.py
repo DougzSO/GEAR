@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import (  # noqa: E402
     ASSETS_PROCESSED,
+    AQUEDUCT_SCENARIO_FOR_CMIP6,
     AQUEDUCT_SCENARIOS,
     CLIMATE_PROCESSED,
     CMIP6_SCENARIOS,
@@ -52,9 +53,15 @@ MD_OUT = HERE / "normalization_diagnostics.md"
 PCTL_POINTS = [1, 5, 25, 50, 75, 95, 99]
 MODELS = configured_models()
 
-# Scenario-identity pairing between the two hazards (config.AQUEDUCT_SCENARIO_FOR_CMIP6):
-# ssp126 <-> opt, ssp585 <-> pes. bau has no heat counterpart.
-HEAT_TO_WATER_SCENARIO = {"ssp126": "opt", "ssp585": "pes"}
+# Scenario-identity pairing between the two hazards, taken straight from
+# config.AQUEDUCT_SCENARIO_FOR_CMIP6 so this stays in step with the pipeline
+# (ssp126 <-> opt, ssp585 <-> pes, ssp370 <-> bau). Restricted to CMIP6
+# scenarios that are actually configured and whose water counterpart exists.
+HEAT_TO_WATER_SCENARIO = {
+    hs: ws
+    for hs, ws in AQUEDUCT_SCENARIO_FOR_CMIP6.items()
+    if hs in CMIP6_SCENARIOS and ws in AQUEDUCT_SCENARIOS
+}
 
 
 # --------------------------------------------------------------------------
@@ -409,11 +416,12 @@ def build_report(values: pd.DataFrame) -> str:
 
     # ---------------------------------------------------------------- Task 4
     out.append("\n## 4. Do the two hazards compound? (matched plants)\n")
+    pair_txt = ", ".join(f"{hs} <-> {ws}" for hs, ws in HEAT_TO_WATER_SCENARIO.items())
     out.append(
         "Pearson and Spearman between `water_stress_raw` and `extreme_heat_days` "
-        "raw, per country, on plants matched for both. Scenarios paired by SSP "
-        "identity (ssp126 <-> opt, ssp585 <-> pes); the pooled row stacks both "
-        "pairs.\n"
+        f"raw, per country, on plants matched for both. Heat uses the first "
+        f"configured GCM ({MODELS[0]}). Scenarios paired by SSP identity "
+        f"({pair_txt}); the pooled row stacks all pairs.\n"
     )
     h4 = ["country", "pairing", "n plants", "Pearson r", "Spearman rho"]
     r4 = []
@@ -464,10 +472,11 @@ def build_report(values: pd.DataFrame) -> str:
     out.append("\n## 5. Candidate transforms — shape comparison (plant level, per country)\n")
     out.append(
         "Plant-level matched values, all scenarios of a hazard pooled per country "
-        "(water: bau+opt+pes; heat: ssp126+ssp585, first model). Each candidate "
-        "maps to 0-1; the table shows p25/p50/p75 and skewness of the result so "
-        "the shapes can be compared against the current linear Min-Max. "
-        "Descriptive only — no winner picked, nothing implemented in `src/`.\n"
+        f"(water: {'+'.join(AQUEDUCT_SCENARIOS)}; heat: {'+'.join(CMIP6_SCENARIOS)}, "
+        f"first model {MODELS[0]}). Each candidate maps to 0-1; the table shows "
+        "p25/p50/p75 and skewness of the result so the shapes can be compared "
+        "against the current linear Min-Max. Descriptive only — no winner picked, "
+        "nothing implemented in `src/`.\n"
     )
     h5 = ["country", "hazard", "transform", "p25", "p50", "p75", "skew"]
     r5 = []
