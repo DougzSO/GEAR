@@ -217,3 +217,76 @@ Log of every methodological and data-source decision made during this project, i
   Neither supports a physical age_factor and both are excluded from
   the manuscript.
 - Status: active
+
+## [2026-09-03] Second CMIP6 GCM: MIROC6 (V4 closed); SSP3-7.0 added as intermediate scenario (V3 closed)
+
+- Decision: MIROC6 is added as the second CMIP6 GCM, alongside
+  gfdl_esm4, for the extreme-heat layer. SSP3-7.0 is added as a third
+  scenario, alongside SSP1-2.6 and SSP5-8.5, for both GCMs -- pairing
+  with the existing Aqueduct `bau` label on the water side
+  (`config.AQUEDUCT_SCENARIO_FOR_CMIP6` gains an ssp370 <-> bau entry).
+- Reason (V4): Of four candidates checked against the CDS
+  projections-cmip6 catalogue (ipsl_cm6a_lr, miroc6, mpi_esm1_2_lr,
+  cnrm_cm6_1), IPSL-CM6A-LR was excluded outright -- ssp126 and ssp585
+  are absent from its catalogue entry, so it cannot serve as a second
+  anchor-scenario GCM regardless of structural divergence. Among the
+  three with full ssp126/ssp370/ssp585 coverage, MIROC6 was chosen for
+  the greatest structural divergence from GFDL-ESM4 (distinct
+  convection scheme and model lineage). CNRM-CM6-1 was passed over
+  because CNRM-family models typically ship as r1i1p1f2 rather than
+  r1i1p1f1, which would break variant parity with the already-downloaded
+  gfdl_esm4 (r1i1p1f1/gr1); MPI-ESM1-2-LR is the fallback if the first
+  MIROC6 download surfaces a variant or grid problem. The CDS catalogue
+  endpoint does not expose the variant label pre-download -- MIROC6's
+  r?i?p?f? must be confirmed on first download and checked for
+  r1i1p1f1 parity.
+- Reason (V3): SSP3-7.0 (Aqueduct `bau`) is confirmed available on the
+  CDS catalogue for gfdl_esm4 and for miroc6, both covering 2041-2070.
+  Including it changes the heat Min-Max pool from 2 to 3 scenarios per
+  the existing per-country joint-pooling design (see the heat
+  normalisation entry above) -- this changes the normalisation
+  denominator for every heat pixel already processed and requires
+  reprocessing, not just an additive run.
+- Status: active
+
+## [2026-09-03] NAES/SCI computable-capacity denominator (V6 closed)
+
+- Decision: The known asymmetry in the computable capacity base
+  (coordinates + commissioning_year available) is declared as a
+  manuscript footnote. No alternative-denominator sensitivity check is
+  run.
+- Reason: Per-country computable fraction of declared capacity: Brazil
+  98.22%, Portugal 99.59%, India 95.83% (source:
+  gem_validated_plants_{country}.csv, Stage 1/2 output). Every plant in
+  all three countries has a usable coordinate; the only limiting field
+  is commissioning_year. Max-min spread is 3.76 percentage points,
+  under the 5-point threshold set in ARCHITECTURE.md Section 9 (V6),
+  so the criterion for a footnote-only treatment is met.
+- Status: active
+
+## [2026-09-03] Event factor: country-level EM-DAT frequency (V2 closed)
+
+- Decision: `event_factor` moves off the fixed 1.0 placeholder to a
+  per-country event-frequency factor built from EM-DAT, replacing the
+  country-only granularity ceiling -- no state/district-level factor is
+  built.
+- Reason: Type-filtered EM-DAT event counts are 239 (Brazil), 38
+  (Portugal), 622 (India), each event carrying a severity signal
+  (deaths >= 10, affected >= 100, official declaration, or OFDA/BHA
+  recognition) in 95.0% / 63.2% / 98.6% of cases respectively --
+  country-level counts are 100% usable by construction, since every
+  EM-DAT row carries an ISO country code independent of the Location
+  text field. Structured administrative-tier data (adm1/state or
+  adm2/district) is present in only 50-54% of events per country, and
+  splits close to evenly and low between adm1 (~30-37%) and adm2
+  (~18-30%) -- too sparse and too similar across countries to support a
+  defensible sub-national factor; building one would drop roughly
+  two-thirds of events from the factor's evidence base. This applies
+  the country-only branch of the ARCHITECTURE.md Section 9 (V2)
+  criterion.
+- Open implementation question, not yet resolved: whether the country
+  frequency factor is a raw event count, a count normalised by fleet
+  capacity or plant-count exposure, or a rate per unit time over the
+  EM-DAT archive's 1900-2024 span. This is deferred to the event_factor
+  implementation itself, once all of V1-V6 are closed.
+- Status: active
