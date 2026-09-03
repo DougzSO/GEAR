@@ -24,7 +24,9 @@ contém decisões metodológicas abertas; essas pertencem ao `ARCHITECTURE.md`.
 Parâmetros globais fixos nesta camada (`src/config.py`):
 `COUNTRIES = [Brazil, Portugal, India]`, `YEAR_TARGET = 2050`,
 `CRS_TARGET = EPSG:4326`, `RESOLUTION_TARGET_DEG = 0.008333` (~1 km),
-`CMIP6_SCENARIOS = [ssp126, ssp585]`, `AQUEDUCT_SCENARIOS = [bau, opt, pes]`.
+`CMIP6_SCENARIOS = [ssp126, ssp585, ssp370]`,
+`CMIP6_SOURCE_ID_CDS = [gfdl_esm4, miroc6]`,
+`AQUEDUCT_SCENARIOS = [bau, opt, pes]`.
 
 ---
 

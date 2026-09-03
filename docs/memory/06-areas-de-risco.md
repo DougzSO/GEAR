@@ -96,7 +96,8 @@
 *(Parágrafo atualizado para inglês para refletir V2/V4 fechados.)*
 
 Heat still without bias-correction/ensemble weighting — a second GCM
-(MIROC6, V4) is the mitigation on record but is not downloaded yet;
+(MIROC6, V4) is the mitigation on record and is now downloaded and pooled
+into the heat normalisation (2 GCMs × 3 scenarios);
 Aqueduct sentinel basins substituted by `country_max`; the
 `Status == operating` filter caps the most recent commissioning year;
 `event_factor` moves from a fixed 1.0 to a per-country EM-DAT frequency

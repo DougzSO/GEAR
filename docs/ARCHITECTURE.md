@@ -68,10 +68,10 @@ rationale above is unchanged and stays in Portuguese):
 The Aqueduct `bau` scenario (SSP3-7.0) now has a heat counterpart: daily
 `tasmax` for `ssp370` is on the CDS catalogue for both GCMs over 2041-2070,
 so SSP3-7.0 enters the active scenario set as the intermediate trajectory
-(see Post-data verification items, V3 — RESOLVED). Implementation note:
-`config.CMIP6_SCENARIOS` and `config.CMIP6_SOURCE_ID_CDS` still hold the
-pre-decision values (`ssp126`/`ssp585`, `gfdl_esm4` only); the third
-scenario and MIROC6 are wired in when the index layer is built.
+(see Post-data verification items, V3 — RESOLVED). Implementation state:
+`config.CMIP6_SCENARIOS` holds `["ssp126", "ssp585", "ssp370"]` and
+`config.CMIP6_SOURCE_ID_CDS` holds `["gfdl_esm4", "miroc6"]`; all three
+scenarios for both GCMs have been downloaded and processed.
 
 ---
 
@@ -90,9 +90,9 @@ countries — selected for the greatest structural divergence from GFDL-ESM4.
 IPSL-CM6A-LR was excluded (no ssp126/ssp585 on the CDS catalogue) and
 CNRM-CM6-1 was passed over (typically `r1i1p1f2`, which would break variant
 parity with the downloaded `gfdl_esm4` at `r1i1p1f1`); MPI-ESM1-2-LR is the
-fallback. See `docs/DECISIONS.md` and `analysis/gcm_catalog_check.md`. Only
-`gfdl_esm4` rasters exist on disk today; the MIROC6 download is part of the
-index-layer implementation.
+fallback. See `docs/DECISIONS.md` and `analysis/gcm_catalog_check.md`. Both
+`gfdl_esm4` and `miroc6` rasters exist on disk (all three scenarios, three
+countries); MIROC6's realisation member is confirmed `r1i1p1f1` (grid `gn`).
 
 ---
 
