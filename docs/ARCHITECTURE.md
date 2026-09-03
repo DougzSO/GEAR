@@ -391,8 +391,8 @@ Estes limites são declarados no manuscrito, não omitidos.
   pontuais, secas extremas interanuais) não são capturados.
 - **Bias correction do GCM:** os rasters de calor usam a saída do modelo
   diretamente, sem correção de viés sistemático. A sensibilidade a esse
-  artefato é parcialmente capturada pelo segundo GCM obrigatório, mas
-  não eliminada.
+  artefato é parcialmente capturada pelo segundo GCM obrigatório (MIROC6),
+  mas não eliminada.
 - **Capacidade de adaptação:** o fator de resiliência captura
   características estruturais do ativo (idade, histórico de eventos),
   não capacidade prospectiva de adaptação de operadores ou reguladores.

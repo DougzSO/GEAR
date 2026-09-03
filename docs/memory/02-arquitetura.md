@@ -15,7 +15,7 @@ src/
     climate_downloader.py      orquestrador: boundaries + cds_tasmax + aqueduct
   processors/
     water_stress_processor.py  CSV Aqueduct -> raster normalizado (Min-Max/país, pool bau/opt/pes) + raster bruto; sentinela 9999 -> country_max nos dois
-    heat_stress_processor.py   raster extreme_heat_days -> raster normalizado (Min-Max/país E /modelo, pool ssp126/ssp585); bruto = passthrough do downloader; itera sobre configured_models()
+    heat_stress_processor.py   raster extreme_heat_days -> raster normalizado (Min-Max/país, todos os modelos E cenários no mesmo pool: ssp126/ssp370/ssp585 x gfdl_esm4/miroc6); bruto = passthrough do downloader; itera sobre configured_models()
 tests/                 pytest; fixtures sintéticas, sem chamada de API real
 ```
 

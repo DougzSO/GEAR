@@ -55,6 +55,7 @@ Log of every methodological and data-source decision made during this project, i
 ## [2026-09-03] Extreme heat CMIP6 GCM: GFDL-ESM4, with a mandatory second model slot
 - Decision: `config.CMIP6_SOURCE_ID_CDS` is a list. It currently holds only `gfdl_esm4` (CDS `model` label). The downloader and every report iterate over the list and write model-tagged outputs (`extreme_heat_days_{country}_{model}_{scenario}_{native,1km}.tif`).
 - Reason: ARCHITECTURE.md Section 4 makes a second CMIP6 GCM a mandatory sensitivity check. The list structure and model-tagged paths are in place now so that adding the second model is a config-only change. Choice of the second model and its country coverage is verification item V4.
+- Update (2026-09-03): V4 closed — the list now holds `["gfdl_esm4", "miroc6"]` and all three countries are covered. See "Second CMIP6 GCM: MIROC6 (V4 closed); SSP3-7.0 added as intermediate scenario (V3 closed)" below.
 - Status: active
 
 ## [2026-09-03] Extreme heat scenario labels for the CDS API
@@ -66,6 +67,7 @@ Log of every methodological and data-source decision made during this project, i
 - Decision: The native GCM per-cell day count (~1 deg, ~100 km) is resampled to `RESOLUTION_TARGET_DEG` by nearest neighbour and clipped to the country bounding box. Both the native raster and the 1 km raster are written.
 - Reason: Ported. There is no bias correction here, so a higher-order interpolator would fake spatial precision the data does not have. The "1 km" of this layer is nominal, for stacking with the other hazards; this is stated in the manuscript methods.
 - Update (2026-09-03): "the country bounding box" is now `cds_tasmax_downloader._climate_bounds` — the per-coordinate union of the GADM bounds and `config.COUNTRY_BBOX_FALLBACK[country]` — used for BOTH the CDS request area and the post-resample clip box. See the dedicated "Climate download bbox: union of GADM bounds and a per-country floor box" entry below.
+- Update (2026-09-03, grid alignment): `_resample_to_1km` no longer clips a resolution-only reprojection to the bbox. It reprojects directly onto a fixed per-country destination grid (`_target_grid` = `_climate_bounds` + `RESOLUTION_TARGET_DEG`), identical transform/shape/CRS for every GCM, so the per-country multi-model Min-Max pool downstream sees one grid. This was required once a second GCM (MIROC6, ~1.4 deg) joined GFDL-ESM4 (~1.25 deg) — see the "Second CMIP6 GCM: MIROC6" entry's 2026-09-03 update.
 - Status: active
 
 ## [2026-09-03] Climate download bbox: union of GADM bounds and a per-country floor box
@@ -247,6 +249,41 @@ Log of every methodological and data-source decision made during this project, i
   normalisation entry above) -- this changes the normalisation
   denominator for every heat pixel already processed and requires
   reprocessing, not just an additive run.
+- Update (2026-09-03): executed. `config.CMIP6_SOURCE_ID_CDS` is now
+  `["gfdl_esm4", "miroc6"]` and `CMIP6_SCENARIOS` gains `ssp370`; all
+  3 countries x 2 models x 3 scenarios were downloaded and reprocessed
+  (heat and water).
+  - MIROC6 realisation member confirmed **`r1i1p1f1`** (grid label `gn`)
+    for all three scenarios -- parity with gfdl_esm4 (`r1i1p1f1` / `gr1`)
+    holds, so this decision is unchanged.
+  - **Grid-alignment bug found and fixed.** `_resample_to_1km` derived the
+    1 km output grid from each model's own native extent, so GFDL-ESM4
+    (~1.25x1 deg) and MIROC6 (~1.4x1.4 deg) landed on offset,
+    differently-shaped 1 km rasters (Portugal 721x421 vs 751x338) and
+    `heat_stress_processor._assert_consistent_grid` correctly refused to
+    pool them. Fix: `_resample_to_1km` now reprojects every model onto one
+    common per-country grid derived only from `_climate_bounds(country)` +
+    `RESOLUTION_TARGET_DEG` (`_target_grid`). All 6 rasters per country now
+    share one grid and the guard passes. Water rasters were reprocessed
+    because the fix also shifts the gfdl_esm4/ssp126 reference grid
+    (Portugal 721x421 -> 751x451; Brazil 4650x5389 -> 4683x5419; India
+    unchanged at 3721x3601).
+  - **Declared limitation -- MIROC6 resolution at Portugal scale.**
+    MIROC6's native ~1.4x1.4 deg grid gives only 2 longitude cells over
+    mainland Portugal (western native cell edge at -9.14 E). 34 of 450
+    Portuguese plants -- the Lisboa / Torres Vedras / Lourinha coastal
+    wind-and-solar strip plus Sines Refinery -- fall west of that edge and
+    are NaN for MIROC6 (nearest-neighbour reprojection does not
+    extrapolate past the source extent); they are scored by GFDL-ESM4
+    only. Brazil has 12 such coastal MIROC6 no-matches, India 0. The high
+    MIROC6 magnitudes for Portugal (`extreme_heat_days` up to ~67-79
+    days/yr, plant-level p50 ~9-11, vs GFDL-ESM4's ~2.5-6 max and ~0.2-0.5
+    p50) are **genuine MIROC6 output, not a resampling artefact** -- the
+    grid fix changed raster shape/transform but not one native value.
+    MIROC6 is a warm, high-sensitivity model and its coarse cells spread
+    hot interior/border values; this cross-model spread is what the
+    mandatory second-GCM sensitivity check is meant to expose. GCM remains
+    MIROC6 -- V4 is not reopened.
 - Status: active
 
 ## [2026-09-03] NAES/SCI computable-capacity denominator (V6 closed)

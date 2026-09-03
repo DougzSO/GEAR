@@ -176,20 +176,26 @@ AQUEDUCT_TO_SSP_LABEL = {
 }
 
 # Emission scenarios used by the extreme-heat layer (Copernicus CDS / CMIP6).
-CMIP6_SCENARIOS = ["ssp126", "ssp585"]
+# ssp370 was added per the closed V3 decision (see docs/DECISIONS.md, "Second
+# CMIP6 GCM: MIROC6 ...; SSP3-7.0 added as intermediate scenario"): daily
+# tasmax for ssp370 is on the CDS catalogue for both configured GCMs over
+# 2041-2070, and it pairs with the Aqueduct "bau" scenario on the water side.
+CMIP6_SCENARIOS = ["ssp126", "ssp585", "ssp370"]
 
 # Value required by the CDS "experiment" parameter for each scenario above.
 CMIP6_SCENARIO_TO_CDS_EXPERIMENT = {
     "ssp126": "ssp1_2_6",
     "ssp585": "ssp5_8_5",
+    "ssp370": "ssp3_7_0",
 }
 
 # Scenario-identity pairing between the water (Aqueduct) and heat (CMIP6)
-# layers, used downstream to combine hazards. "bau" is left out — no CMIP6
-# counterpart in the active scenario set.
+# layers, used downstream to combine hazards. ssp370 <-> "bau" per the closed
+# V3 decision.
 AQUEDUCT_SCENARIO_FOR_CMIP6 = {
     "ssp126": "opt",
     "ssp585": "pes",
+    "ssp370": "bau",
 }
 
 # --------------------------------------------------------------------------
@@ -197,13 +203,20 @@ AQUEDUCT_SCENARIO_FOR_CMIP6 = {
 # --------------------------------------------------------------------------
 # List, not a scalar: ARCHITECTURE.md Section 4 makes a second GCM a
 # mandatory sensitivity check. The downloader and processors iterate over
-# this list for both ssp126 and ssp585. Only GFDL-ESM4 is populated now; the
-# second entry is pending post-data verification item V4 (model choice and
-# country coverage).
+# this list for every scenario in CMIP6_SCENARIOS.
+#
+# gfdl_esm4 MUST stay first: water_stress_processor._load_reference_grid
+# takes configured_models()[0] / ssp126 as the grid all water rasters are
+# rasterised onto.
+#
+# miroc6 added per the closed V4 decision (see docs/DECISIONS.md, "Second
+# CMIP6 GCM: MIROC6 (V4 closed)"): chosen for the greatest structural
+# divergence from GFDL-ESM4 among the candidates with full ssp126/ssp370/
+# ssp585 coverage on the CDS catalogue. Its realisation member is confirmed
+# from the downloaded NetCDF filename on first retrieval.
 CMIP6_SOURCE_ID_CDS = [
     "gfdl_esm4",
-    # <pending V4: second GCM, e.g. a model with a structurally different
-    #  convection / hydrological-cycle parameterisation than GFDL-ESM4>
+    "miroc6",
 ]
 
 CMIP6_FUTURE_PERIOD = ("2041-01-01", "2070-12-31")  # the "2050" window

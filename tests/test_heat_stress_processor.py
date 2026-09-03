@@ -1,8 +1,8 @@
 """Tests for heat_stress_processor — per-country Min-Max with scenarios
-(ssp126/ssp585) AND models pooled jointly into one domain, passthrough of the
-raw layer, NaN preservation, multi-model iteration, and the fail-loud grid
-guard that protects the joint pool once a second GCM is added (V4). Synthetic
-fixtures only, no CDS data."""
+(ssp126/ssp585/ssp370) AND models pooled jointly into one domain, passthrough
+of the raw layer, NaN preservation, multi-model iteration, and the fail-loud
+grid guard that protects the joint pool now that a second GCM (miroc6, V4) is
+configured. Synthetic fixtures only, no CDS data."""
 
 import numpy as np
 import pytest
@@ -24,12 +24,16 @@ def _grid(values: np.ndarray, res: float = 1.0, x0: float = 0.0) -> xr.DataArray
 
 def _patch_rasters(monkeypatch, data: dict):
     """``data`` maps (model, scenario) -> np.ndarray; installs a fake
-    ``_load_heat_raster`` and a matching ``configured_models``."""
+    ``_load_heat_raster``, a matching ``configured_models``, and a
+    ``CMIP6_SCENARIOS`` restricted to the scenarios present in ``data`` (so a
+    fixture can exercise 2 or 3 scenarios without depending on config)."""
     monkeypatch.setattr(
         hsp, "_load_heat_raster", lambda c, m, s: _grid(data[(m, s)])
     )
     models = sorted({m for m, _ in data})
+    scenarios = sorted({s for _, s in data})
     monkeypatch.setattr(hsp, "configured_models", lambda: models)
+    monkeypatch.setattr(hsp, "CMIP6_SCENARIOS", scenarios)
 
 
 # --------------------------------------------------------------------------
@@ -93,6 +97,21 @@ def test_minmax_pools_jointly_across_two_models(monkeypatch):
     assert cmin == pytest.approx(0.0)     # from m_cool
     assert cmax == pytest.approx(200.0)   # from m_hot
     # a per-model domain would have given (0, 8) or (50, 200) — never (0, 200)
+
+
+def test_minmax_pools_all_three_scenarios_jointly(monkeypatch):
+    # ssp370 (V3) joins ssp126/ssp585 in the same per-country domain.
+    _patch_rasters(monkeypatch, {
+        ("gfdl_esm4", "ssp126"): np.array([[0.0, 10.0]]),
+        ("gfdl_esm4", "ssp370"): np.array([[15.0, 120.0]]),
+        ("gfdl_esm4", "ssp585"): np.array([[5.0, 90.0]]),
+        ("miroc6", "ssp126"): np.array([[1.0, 12.0]]),
+        ("miroc6", "ssp370"): np.array([[20.0, 150.0]]),   # joint max
+        ("miroc6", "ssp585"): np.array([[8.0, 140.0]]),
+    })
+    cmin, cmax = hsp.compute_country_minmax("India")
+    assert cmin == pytest.approx(0.0)     # gfdl_esm4 / ssp126
+    assert cmax == pytest.approx(150.0)   # miroc6 / ssp370
 
 
 def test_every_model_scenario_shares_one_country_domain(monkeypatch, tmp_path):
@@ -189,13 +208,14 @@ def test_normalize_clips_outside_country_domain(monkeypatch):
 def test_process_all_countries_iterates_every_model(monkeypatch, tmp_path):
     monkeypatch.setattr(hsp, "CLIMATE_PROCESSED", tmp_path)
     monkeypatch.setattr(hsp, "configured_models", lambda: ["m1", "m2"])
+    monkeypatch.setattr(hsp, "CMIP6_SCENARIOS", ["ssp126", "ssp585", "ssp370"])
     monkeypatch.setattr(hsp, "_load_heat_raster", lambda c, m, s: _grid(np.array([[0.0, 50.0]])))
 
     report = hsp.process_all_countries(countries=["Brazil"])
     assert set(report["countries"]["Brazil"]["models"]) == {"m1", "m2"}
     for model in ("m1", "m2"):
         scen = report["countries"]["Brazil"]["models"][model]["scenarios"]
-        assert set(scen) == {"ssp126", "ssp585"}
+        assert set(scen) == {"ssp126", "ssp585", "ssp370"}
         assert all(s["success"] for s in scen.values())
     assert (tmp_path / "heat_stress_Brazil_m1_ssp126_1km.tif").exists()
     assert (tmp_path / "heat_stress_Brazil_m2_ssp585_1km.tif").exists()

@@ -33,11 +33,13 @@ from __future__ import annotations
 import json
 import logging
 import time
+import math
 import zipfile
 from pathlib import Path
 
 import xarray as xr
 from rasterio.enums import Resampling
+from rasterio.transform import from_origin
 
 from src.config import (
     CDS_API_URL,
@@ -240,25 +242,49 @@ def _compute_extreme_heat_days(nc_files: list[Path], model: str) -> xr.DataArray
     return days_per_year
 
 
+def _target_grid(country: str):
+    """The single 1 km destination grid for a country — ``(transform, width,
+    height)`` derived only from ``_climate_bounds(country)`` and
+    ``RESOLUTION_TARGET_DEG``.
+
+    Every GCM resamples onto exactly this transform and shape, whatever its
+    native resolution. Deriving the output grid from each model's own native
+    extent instead (an earlier design) left GFDL-ESM4 (~1.25x1 deg) and
+    MIROC6 (~1.4x1.4 deg) on offset, differently-shaped 1 km rasters, which
+    broke the per-country joint Min-Max pool downstream (its
+    ``_assert_consistent_grid`` guard caught it)."""
+    xmin, ymin, xmax, ymax = _climate_bounds(country)
+    res = RESOLUTION_TARGET_DEG
+    width = math.ceil((xmax - xmin) / res)
+    height = math.ceil((ymax - ymin) / res)
+    # Origin at the top-left corner (xmin, ymax); rows run north -> south.
+    transform = from_origin(xmin, ymax, res, res)
+    return transform, width, height
+
+
 def _resample_to_1km(da: xr.DataArray, country: str) -> xr.DataArray:
-    """Resample by nearest neighbour to ``RESOLUTION_TARGET_DEG`` and clip to
-    ``_climate_bounds(country)`` — the same box used for the CDS request, so
-    the raster is never clipped tighter than what was downloaded."""
+    """Resample by nearest neighbour onto the country's common 1 km grid (see
+    ``_target_grid``): identical transform, shape and CRS for every GCM, so
+    the per-country joint Min-Max pool sees consistent grids. The extent
+    matches ``_climate_bounds(country)`` — the same box used for the CDS
+    request — so the raster is never clipped tighter than what was
+    downloaded."""
     da = da.rio.set_spatial_dims(x_dim="lon", y_dim="lat", inplace=False)
     da = da.rio.write_crs(CRS_TARGET)
 
-    xmin, ymin, xmax, ymax = _climate_bounds(country)
+    transform, width, height = _target_grid(country)
     resampled = da.rio.reproject(
         CRS_TARGET,
-        resolution=(RESOLUTION_TARGET_DEG, RESOLUTION_TARGET_DEG),
+        transform=transform,
+        shape=(height, width),
         resampling=Resampling.nearest,
     )
-    clipped = resampled.rio.clip_box(minx=xmin, miny=ymin, maxx=xmax, maxy=ymax)
-    clipped.attrs["resampling_method"] = (
+    resampled.attrs["resampling_method"] = (
         f"nearest_neighbor — spatial resampling from ~1 degree to "
-        f"{RESOLUTION_TARGET_DEG} degree, not a real increase in resolution"
+        f"{RESOLUTION_TARGET_DEG} degree onto a fixed per-country grid, "
+        f"not a real increase in resolution"
     )
-    return clipped
+    return resampled
 
 
 def process_country_model_scenario(

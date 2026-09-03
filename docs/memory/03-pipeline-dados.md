@@ -22,8 +22,10 @@ Nada em `data/` está no git.
 - `COUNTRIES = [Brazil, Portugal, India]`, `COUNTRY_ISO3`.
 - `CRS_TARGET = EPSG:4326`, `RESOLUTION_TARGET_DEG = 0.008333` (~1 km nominal).
 - `YEAR_TARGET = 2050`, `CMIP6_FUTURE_PERIOD = 2041-01-01 .. 2070-12-31`.
-- `CMIP6_SCENARIOS = [ssp126, ssp585]`; `AQUEDUCT_SCENARIOS = [bau, opt, pes]`.
-- `CMIP6_SOURCE_ID_CDS = ["gfdl_esm4"]` — **lista**; 2º GCM pendente (V4).
+- `CMIP6_SCENARIOS = [ssp126, ssp585, ssp370]` (ssp370 <-> Aqueduct `bau`, V3
+  fechado); `AQUEDUCT_SCENARIOS = [bau, opt, pes]`.
+- `CMIP6_SOURCE_ID_CDS = ["gfdl_esm4", "miroc6"]` — **lista**, gfdl_esm4
+  sempre primeiro (grade de referência da água); 2º GCM = MIROC6 (V4 fechado).
 - `EXTREME_HEAT_THRESHOLD_C = 40`.
 - `MAINLAND_ONLY_COUNTRIES = {Portugal}`.
 - `COUNTRY_BBOX_FALLBACK` — piso de cobertura do download de calor, unido aos
