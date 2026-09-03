@@ -1,0 +1,75 @@
+# 04 — Scripts e comandos
+
+Tudo roda localmente. Ambiente virtual dedicado em `.venv/` na raiz do
+projeto (não copiar de outro repositório — paths de venv não são portáveis).
+
+## Setup
+
+```
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+Credenciais em `credentials.local` na raiz (git-ignored). Chaves lidas:
+`CDS_API_URL`, `CDS_API_KEY` (obrigatórias para cds_tasmax), `GEE_PROJECT_ID`
+(opcional — sem ela o Aqueduct é pulado). GEE também exige um token de
+autenticação local (`earthengine authenticate`), não coberto por
+`credentials.local`.
+
+## Testes
+
+```
+.venv\Scripts\python -m pytest -q
+```
+
+Configuração em `pytest.ini` (`pythonpath = .`). Fixtures sintéticas; nenhum
+teste faz chamada de rede.
+
+## Downloaders
+
+```
+# orquestrador de clima (boundaries + cds_tasmax + aqueduct)
+.venv\Scripts\python -m src.downloaders.climate_downloader
+
+# um país/cenário de calor isolado
+.venv\Scripts\python -m src.downloaders.cds_tasmax_downloader --country Brazil --scenario ssp126 [--model gfdl_esm4]
+
+# EM-DAT (download + filtro + contagem/cobertura)
+.venv\Scripts\python -m src.downloaders.emdat_downloader
+
+# validação do snapshot GEM (arquivo .xlsx precisa estar em data/raw/assets/)
+.venv\Scripts\python -m src.downloaders.assets_validator --discover     # inspeciona colunas
+.venv\Scripts\python -m src.downloaders.assets_validator --validate     # pipeline completo
+.venv\Scripts\python -m src.downloaders.assets_validator --fuel-distribution
+```
+
+`boundaries_downloader`, `coastline_downloader`, `rivers_downloader` não têm
+CLI própria — chamados via `climate_downloader` ou importados
+(`download_all_boundaries`, `download_coastline`, `download_rivers`).
+
+## Processors de clima
+
+```
+# calor: normaliza extreme_heat_days -> heat_stress_{país}_{modelo}_{cenário}_1km.tif
+.venv\Scripts\python -m src.processors.heat_stress_processor [--overwrite]
+
+# água: precisa do calor processado antes (referência de grade)
+.venv\Scripts\python -m src.processors.water_stress_processor [--overwrite]
+```
+
+Ordem: `heat_stress_processor` → `water_stress_processor`.
+
+## Custo/tempo observado (2026-09-03, GFDL-ESM4, 3 países)
+
+- GADM: ~450 MB no total (Brasil ~290 MB). Alguns minutos.
+- CDS tasmax: fila do CDS + download; observado 1,5–3 min por país×cenário
+  (Portugal ~0,57 MB `.nc`, Brasil ~37 MB, Índia ~20 MB) — bem menos que os
+  ~200 MB estimados. Área do request = `_climate_bounds` (união bounds GADM +
+  `COUNTRY_BBOX_FALLBACK`); Índia/Portugal re-baixados em 2026-09-03 com a
+  caixa expandida (Índia 1 km passou de `(3121, 3411)` para `(3721, 3601)`,
+  Portugal de `(601, 392)` para `(721, 421)`).
+- Aqueduct: 1 chamada GEE + 1 download HTTP por país; segundos a ~1 min.
+  42 MB no total (Brasil 31 MB).
+- EM-DAT Archive: ~8 MB, um download.
+- Processors: segundos por país×cenário; ~275 MB de rasters processados de
+  calor + ~150 MB de água (normalizado + bruto).

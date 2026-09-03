@@ -38,7 +38,8 @@ brutos de hazard.
   utilitário ou 1 MW distribuído). Essa heterogeneidade é declarada
   explicitamente no manuscrito em vez de ser corrigida por um limiar
   uniforme artificial.
-- **Cenários de emissão:** SSP1-2.6 e SSP5-8.5 como extremos.
+- **Cenários de emissão:** SSP1-2.6 e SSP5-8.5 como extremos; SSP3-7.0
+  como cenário intermediário (ver Seção 3 e item V3, RESOLVIDO).
 - **Horizonte temporal:** 2041–2070, representado pelo ponto médio 2050.
 - **Hazards:** estresse hídrico e calor extremo. SLR está fora do escopo
   ativo (ver Seção 3).
@@ -55,30 +56,43 @@ tecnologia para esse hazard neste escopo. SLR é declarado no manuscrito
 como limite de escopo e trabalho futuro explícito — não omitido
 silenciosamente.
 
-Os dois hazards ativos e suas fontes de dado são:
+The two active hazards and their data sources (this paragraph and the table
+have been updated to English to reflect the closed V3/V4 decisions; the SLR
+rationale above is unchanged and stays in Portuguese):
 
-| Hazard | Fonte | Cenários | Unidade bruta |
+| Hazard | Source | Scenarios | Raw unit |
 |---|---|---|---|
-| Estresse hídrico | WRI Aqueduct 4.0, via Google Earth Engine | `opt` (SSP1-2.6), `pes` (SSP5-8.5) | `consumption_to_availability_ratio` |
-| Calor extremo | Copernicus CDS, CMIP6 `gfdl_esm4` + segundo GCM | `ssp126`, `ssp585` | dias/ano com tasmax > 40 °C |
+| Water stress | WRI Aqueduct 4.0, via Google Earth Engine | `bau` (SSP3-7.0), `opt` (SSP1-2.6), `pes` (SSP5-8.5) | `consumption_to_availability_ratio` |
+| Extreme heat | Copernicus CDS, CMIP6 `gfdl_esm4` + `miroc6` | `ssp126`, `ssp370`, `ssp585` | days/year with tasmax > 40 °C |
 
-O cenário Aqueduct `bau` (SSP3-7.0) está disponível nos dados baixados mas
-não tem contrapartida em calor nos cenários ativos (SSP1-2.6 e SSP5-8.5).
-A inclusão de SSP3-7.0 como cenário intermediário está condicionada à
-verificação de disponibilidade do dado de calor correspondente (ver
-Verificações pós-dados, item V3).
+The Aqueduct `bau` scenario (SSP3-7.0) now has a heat counterpart: daily
+`tasmax` for `ssp370` is on the CDS catalogue for both GCMs over 2041-2070,
+so SSP3-7.0 enters the active scenario set as the intermediate trajectory
+(see Post-data verification items, V3 — RESOLVED). Implementation note:
+`config.CMIP6_SCENARIOS` and `config.CMIP6_SOURCE_ID_CDS` still hold the
+pre-decision values (`ssp126`/`ssp585`, `gfdl_esm4` only); the third
+scenario and MIROC6 are wired in when the index layer is built.
 
 ---
 
-## 4. Segundo GCM — sensitivity check obrigatório
+## 4. Second GCM — mandatory sensitivity check
 
-Um único GCM (`GFDL-ESM4`) produz os rasters de calor extremo. Um segundo
-modelo CMIP6 é obrigatório como sensitivity check, não opcional. O
-`cds_tasmax_downloader.py` e o `config.py` devem suportar pelo menos dois
-`source_id` configuráveis para os cenários `ssp126` e `ssp585`.
+(This section has been updated to English to reflect the closed V4
+decision.)
 
-A escolha do segundo modelo e a decisão de cobrir os três países ou apenas
-os casos de maior exposição a calor são verificações pós-dados (item V4).
+A second CMIP6 model is mandatory as a sensitivity check on the
+extreme-heat rasters, not optional. `cds_tasmax_downloader.py` and
+`config.py` support a configurable list of `source_id` models for the
+`ssp126` / `ssp585` (and now `ssp370`) scenarios.
+
+**RESOLVED (V4):** the second model is `MIROC6`, covering the three
+countries — selected for the greatest structural divergence from GFDL-ESM4.
+IPSL-CM6A-LR was excluded (no ssp126/ssp585 on the CDS catalogue) and
+CNRM-CM6-1 was passed over (typically `r1i1p1f2`, which would break variant
+parity with the downloaded `gfdl_esm4` at `r1i1p1f1`); MPI-ESM1-2-LR is the
+fallback. See `docs/DECISIONS.md` and `analysis/gcm_catalog_check.md`. Only
+`gfdl_esm4` rasters exist on disk today; the MIROC6 download is part of the
+index-layer implementation.
 
 ---
 
@@ -208,23 +222,28 @@ país–cenário, recomputado dentro de cada iteração de Monte Carlo.
 | Eólica | 1,6 %/ano | Literatura existente, retida |
 | Solar | 0,6 %/ano | Literatura existente, retida |
 | Hidro | ~0,5–0,6 %/ano | Turner, S. W. D. et al. *Nature Communications*, 2024 — declínio cumulativo de 23% em 610 plantas nos EUA entre 1980 e 2022; apenas 21% desse declínio é atribuível à disponibilidade hídrica, mantendo este fator distinto do hazard de estresse hídrico já capturado separadamente |
-| Thermal | *Verificação pós-dados — item V1* | Usinas a carvão perdem eficiência com a idade; usinas a gás natural ganham eficiência com a idade no mesmo período (estudo US, 2001–2018) — sinais opostos dentro do bucket fusionado |
+| Thermal | *Item V1 — RESOLVIDO: sub-curvas por `fuel_type` (ver Seção 9 e `docs/DECISIONS.md`)* | Usinas a carvão perdem eficiência com a idade; usinas a gás natural ganham eficiência com a idade no mesmo período (estudo US, 2001–2018) — sinais opostos dentro do bucket fusionado |
 
-### 7.2 Fator de evento (`event_factor`)
+### 7.2 Event factor (`event_factor`)
 
-Atualmente fixo em 1,0 para todos os ativos (a geocodificação pontual do
-EM-DAT cobre apenas 10,7% dos eventos na região de estudo).
+(This subsection has been updated to English to reflect the closed V2
+decision.)
 
-Substituição proposta: fator de frequência de eventos por país (ou nível
-administrativo mais fino onde o EM-DAT suportar), construído a partir dos
-eventos EM-DAT com os critérios padrão de inclusão (≥ 10 mortes,
-≥ 100 afetados, ou emergência declarada). Essa substituição troca
-granularidade espacial (não diferencia ativos dentro do mesmo país) por
-cobertura completa em vez de uma amostra pequena e não representativa.
+Historical placeholder: fixed at 1.0 for every asset (EM-DAT point
+geocoding covers only ~10.7% of events in the study region).
 
-A confirmação desta substituição é verificação pós-dados (item V2):
-depende de avaliar a cobertura e geocodificação real do EM-DAT para
-os três países após a reconstrução da camada de aquisição.
+**RESOLVED (V2):** replaced by a per-country event-frequency factor built
+from EM-DAT — **not** a state/district factor. Structured sub-national
+administrative data is present for only 50-54% of events per country and
+splits low and evenly between adm1/state (~30-37%) and adm2/district
+(~18-30%), too sparse to support a defensible finer factor; building one
+would drop roughly two-thirds of events from its evidence base. This trades
+spatial granularity (assets within one country are not differentiated) for
+full coverage instead of a small, unrepresentative sample. See
+`docs/DECISIONS.md` and `analysis/emdat_coverage_diagnostics.md`. The exact
+form of the country factor (raw count, capacity- or exposure-normalised, or
+a rate over the 1900-2024 archive span) is left to the `event_factor`
+implementation, once V1-V6 are all closed.
 
 ### 7.3 Fator de combustível (`fuel_factor`)
 
@@ -255,52 +274,78 @@ ranking dos ativos.
 
 ---
 
-## 9. Verificações pós-dados
+## 9. Post-data verification items
 
-Estes itens não podem ser resolvidos por raciocínio antecipado. Cada um
-tem um critério explícito de decisão a ser aplicado após a reconstrução
-da camada de aquisição e processamento e visualização dos dados reais.
-Nenhum código de índice é escrito antes de todos estarem resolvidos.
+> Section language note: items V1–V4 and V6 are resolved and have been
+> rewritten in English pointing to their `docs/DECISIONS.md` entries; the
+> original observation/criterion text is kept beneath each as the record of
+> what drove the decision. **V5 is still open and is left exactly as it was,
+> in Portuguese.**
 
-**V1 — Curva de idade do bucket thermal**
-- **O que observar:** distribuição de carvão versus gás natural dentro do
-  bucket `thermal` por país, em `gem_validated_plants_{país}.csv`.
-- **Critério:** se a proporção carvão/gás for suficientemente homogênea
-  entre os três países para que uma curva média não inverta rankings, uma
-  curva média documentada é aceitável. Se a heterogeneidade entre países
-  for grande o suficiente para inverter rankings, o bucket thermal recebe
-  sub-curvas por combustível específico apenas para o fator de idade,
-  mantendo a fusão nos pesos de hazard.
+These items could not be settled by upfront reasoning. Each had an explicit
+decision criterion to apply after the acquisition/processing layer was
+rebuilt and the real data inspected. No index code is written until all are
+resolved.
 
-**V2 — Fator de evento (substituição do valor fixo 1,0)**
-- **O que observar:** cobertura e geocodificação do EM-DAT para Brasil,
-  Portugal e Índia — número de eventos com localização administrativa
-  utilizável versus total elegível pelos critérios de inclusão.
-- **Critério:** se a cobertura for suficiente para construir um fator por
-  nível administrativo (estado/distrito), usar esse nível. Se a cobertura
-  suportar apenas o nível país, usar país. Se a cobertura for insuficiente
-  para qualquer nível, manter 1,0 e declarar como limitação.
+**V1 — Age curve for the thermal bucket**
+- **Status: RESOLVED.** See `docs/DECISIONS.md`, entry "Age factor for
+  thermal bucket: fuel-specific curves (V1 closed)". Sub-curves per
+  `fuel_type` within thermal (coal, gas, nuclear, bioenergy, mixed); the
+  thermal fusion is kept only for the water/heat hazard weights.
+- *Original observation (kept as historical context):* distribution of coal
+  versus natural gas within the `thermal` bucket per country, in
+  `gem_validated_plants_{country}.csv`.
+- *Original criterion:* if the coal/gas ratio is homogeneous enough across
+  the three countries that an average curve does not invert rankings, a
+  documented average curve is acceptable. If the cross-country
+  heterogeneity is large enough to invert rankings, the thermal bucket gets
+  fuel-specific sub-curves for the age factor only, keeping the fusion in
+  the hazard weights.
 
-**V3 — SSP3-7.0 como cenário intermediário**
-- **O que verificar:** disponibilidade de `gfdl_esm4` com `ssp370` no
-  Copernicus CDS (consulta de catálogo de API, não análise de dados).
-  Verificar também para o segundo GCM escolhido em V4.
-- **Critério:** se disponível para ambos os GCMs, incluir SSP3-7.0 e
-  alinhar com o cenário Aqueduct `bau` já disponível. Se disponível para
-  apenas um GCM, avaliar se o desalinhamento é aceitável ou se SSP3-7.0
-  fica fora. A inclusão altera o pool de min-max de calor de 2 para 3
-  cenários, mudando o denominador de normalização de todos os pixels —
-  esta consequência deve ser considerada na decisão.
+**V2 — Event factor (replacing the fixed 1.0)**
+- **Status: RESOLVED.** See `docs/DECISIONS.md`, entry "Event factor:
+  country-level EM-DAT frequency (V2 closed)". Country-level factor, not
+  state/district -- sub-national administrative coverage is insufficient
+  (50-54% of events, ~30% at adm1).
+- *Original observation (kept as historical context):* EM-DAT coverage and
+  geocoding for Brazil, Portugal and India -- number of events with a usable
+  administrative location versus the total eligible under the inclusion
+  criteria.
+- *Original criterion:* if coverage is sufficient to build a factor at an
+  administrative level (state/district), use that level. If coverage only
+  supports the country level, use country. If coverage is insufficient for
+  any level, keep 1.0 and declare it as a limitation.
 
-**V4 — Escolha e cobertura do segundo GCM**
-- **O que verificar:** quais modelos CMIP6 têm `ssp126` e `ssp585`
-  disponíveis no Copernicus CDS para os três países, com resolução e
-  período compatíveis com o pipeline existente.
-- **Critério:** selecionar o modelo com maior divergência estrutural
-  em relação ao `GFDL-ESM4` (diferente família de parametrização de
-  convecção ou ciclo hidrológico), cobrindo os três países. Se nenhum
-  modelo cobre os três países com qualidade equivalente, cobrir apenas
-  os casos de maior exposição a calor e declarar a limitação.
+**V3 — SSP3-7.0 as an intermediate scenario**
+- **Status: RESOLVED.** See `docs/DECISIONS.md`, entry "Second CMIP6 GCM:
+  MIROC6 (V4 closed); SSP3-7.0 added as intermediate scenario (V3 closed)".
+  Daily `tasmax` for SSP3-7.0 is on the CDS catalogue for both `gfdl_esm4`
+  and MIROC6 over 2041-2070, so it is added as a third scenario for both
+  GCMs, paired with the Aqueduct `bau` label.
+- *Original check (kept as historical context):* availability of
+  `gfdl_esm4` with `ssp370` on the Copernicus CDS (API catalogue query, not
+  data analysis). Check the second GCM chosen in V4 as well.
+- *Original criterion:* if available for both GCMs, include SSP3-7.0 and
+  align it with the already-available Aqueduct `bau` scenario. If available
+  for only one GCM, judge whether the misalignment is acceptable or SSP3-7.0
+  stays out. Inclusion changes the heat Min-Max pool from 2 to 3 scenarios,
+  changing the normalisation denominator for every pixel -- this consequence
+  must be weighed in the decision.
+
+**V4 — Choice and coverage of the second GCM**
+- **Status: RESOLVED.** See `docs/DECISIONS.md`, entry "Second CMIP6 GCM:
+  MIROC6 (V4 closed)". MIROC6 chosen; IPSL-CM6A-LR excluded for missing
+  ssp126/ssp585 on the CDS catalogue; CNRM-CM6-1 passed over for its
+  `r1i1p1f2` variant, divergent from `gfdl_esm4` (`r1i1p1f1`).
+- *Original check (kept as historical context):* which CMIP6 models have
+  `ssp126` and `ssp585` available on the Copernicus CDS for the three
+  countries, with resolution and period compatible with the existing
+  pipeline.
+- *Original criterion:* select the model with the greatest structural
+  divergence from `GFDL-ESM4` (different convection-parameterisation family
+  or hydrological cycle), covering the three countries. If no model covers
+  all three at equivalent quality, cover only the highest heat-exposure
+  cases and declare the limitation.
 
 **V5 — Fator de combustível (`fuel_factor`)**
 - **O que revisar:** literatura de robustez estrutural por tecnologia
@@ -311,17 +356,21 @@ Nenhum código de índice é escrito antes de todos estarem resolvidos.
   não produzir justificativa defensável, o fator é removido da fórmula
   de resiliência e a simplificação é declarada no manuscrito.
 
-**V6 — Denominador do NAES (base computável vs. capacidade total)**
-- **O que observar:** fração de ativos GEM com coordenadas válidas e
-  `commissioning_year` disponível sobre a capacidade total declarada,
-  por país.
-- **Critério:** se a fração computável for consistentemente alta e
-  simétrica entre os três países (diferença < 5 pontos percentuais),
-  a limitação é declarada em nota de rodapé. Se a assimetria entre
-  países for maior, um sensitivity check com denominador alternativo
-  (capacidade total declarada, imputando hazard médio do país para
-  ativos sem coordenada) é executado e reportado como resultado
-  secundário.
+**V6 — NAES denominator (computable base vs. total capacity)**
+- **Status: RESOLVED.** See `docs/DECISIONS.md`, entry "NAES/SCI
+  computable-capacity denominator (V6 closed)". Asymmetry of 3.76
+  percentage points (Brazil 98.22% / Portugal 99.59% / India 95.83%),
+  below the 5-point threshold -- declared as a manuscript footnote, no
+  sensitivity check run.
+- *Original observation (kept as historical context):* fraction of GEM
+  assets with valid coordinates and a `commissioning_year` over total
+  declared capacity, per country.
+- *Original criterion:* if the computable fraction is consistently high and
+  symmetric across the three countries (difference < 5 percentage points),
+  the limitation is declared in a footnote. If the cross-country asymmetry
+  is larger, a sensitivity check with an alternative denominator (total
+  declared capacity, imputing the country-mean hazard for assets without
+  coordinates) is run and reported as a secondary result.
 
 ---
 
