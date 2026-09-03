@@ -1,0 +1,23 @@
+.venv/
+credentials.local
+_netrc
+.dodsrc
+.env
+
+# Data and generated artefacts — large, reproducible from the downloaders /
+# processors, never a source of truth on disk.
+data/raw/
+data/processed/
+data/outputs/
+logs/
+cache/
+
+# Analysis outputs — the .md reports and the .py scripts stay tracked; the
+# bulk CSV extracts are regenerable from those scripts and are not.
+analysis/*.csv
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store

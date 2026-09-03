@@ -1,0 +1,1 @@
+GEAR framework rebuild: acquisition/processing layer rebuilt from the prior GEAR repository per docs/INVENTORY.md, index/weighting methodology per docs/ARCHITECTURE.md, no index code until post-data verification items V1 through V6 are resolved.
