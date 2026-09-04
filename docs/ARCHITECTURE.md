@@ -4,12 +4,11 @@
 
 Especifica o que o GEAR fará: escopo, o score de risco (CCRS), pesos,
 fatores de condição do ativo (idade, evento) e incerteza. As decisões aqui
-registradas estão tomadas, exceto onde explicitamente marcadas como
-**verificação pós-dados** — itens que só podem ser resolvidos após a
-reconstrução da camada de aquisição e processamento e visualização dos
-dados reais. Dessas, apenas **V5 (`fuel_factor`)** segue em aberto; o
-desenho do CCRS (Seção 5) está fechado e registrado em `docs/DECISIONS.md`.
-Nenhum código de índice foi escrito ainda.
+registradas estão tomadas. Os itens de **verificação pós-dados** (V1–V6),
+que só podiam ser resolvidos após a reconstrução da camada de aquisição e a
+inspeção dos dados reais, estão **todos fechados** (V5 fechado em
+2026-09-03). O desenho do CCRS (Seção 5) está fechado e registrado em
+`docs/DECISIONS.md`. Nenhum código de índice foi escrito ainda.
 
 ---
 
@@ -327,7 +326,7 @@ físico é o mesmo (dependência de água de refrigeração e sensibilidade
 
 ---
 
-## 7. Asset-condition factors (age, and — pending V5 — fuel)
+## 7. Asset-condition factor (age)
 
 *(Rewritten in English on 2026-09-03. The original design multiplied three
 sub-factors into a single normalised `Resilience_i`; the CCRS dissolves that
@@ -339,8 +338,9 @@ event_{factor,i},\ 0.1)$, normalised by the empirically observed ceiling
 within each country–scenario pair. **That product is dissolved under the
 CCRS.** `age_factor` becomes a direct multiplier on `Hazard_i,s` (§7.1),
 `event_factor` becomes the separate `EventMultiplier` (§7.2), `fuel_factor`
-stays with verification item V5 (§7.3), and the 0.1 floor and per-country
-ceiling normalisation are gone.
+is removed entirely (§7.3, V5 closed), and the 0.1 floor and per-country
+ceiling normalisation are gone. `age_factor` is now the only asset-condition
+factor.
 
 **Why the product is dissolved, not just relabelled.** `event_factor` was
 country-uniform (every plant in a country shared it) and `fuel_factor` was
@@ -404,22 +404,29 @@ The V2 sub-question (raw count vs rate vs exposure-normalised) is resolved
 here in favour of the rate; country-level granularity is unchanged (V2 not
 reopened).
 
-### 7.3 Fuel factor (`fuel_factor`) — verification item V5, still open
+### 7.3 Fuel factor (`fuel_factor`) — removed (V5 closed)
 
-`fuel_factor` was meant to carry technology-level structural robustness not
+`fuel_factor` was meant to carry per-technology structural robustness not
 captured by age or by the measured hazard. Its original justification leaned
-partly on SLR, which is out of active scope. It is removed from the
-(now-dissolved) resilience product; **whether it exists at all as a CCRS
-factor is verification item V5** (§9), still open:
+partly on SLR, which is out of active scope. **It is removed entirely** —
+see `docs/DECISIONS.md`, entry "fuel_factor removed from resilience formula
+(V5 closed)". No bucket receives a `fuel_factor`, and `CCRS_i,s` (Section 5)
+carries no such term; only `age_factor` and `EventMultiplier` multiply the
+hazard score.
 
-- if the V5 review re-derives defensible values for every bucket (`hydro`,
-  `wind`, `solar`, `thermal`) from water and heat alone, `fuel_factor`
-  enters the CCRS as a *second* multiplicative factor alongside `age_factor`;
-- if it cannot, `fuel_factor` is dropped and the simplification is declared
-  in the manuscript.
+The V5 investigation covered all four buckets — thermal cooling-system type,
+hydro storage / regularisation, wind and solar component thermal robustness.
+Every candidate mechanism is physically real but fails the test of being
+defensible, codifiable, and independent of the water/heat hazard weights
+already captured: thermal cooling type governs *how* a plant responds to
+`WaterStress_i` rather than adding a separable quantity (and coverage data
+is not public for the three countries); hydro storage would need
+basin-specific hydrological simulation outside this scope; wind and solar
+component differences lack public normalised degradation datasets.
 
-The CCRS as drafted does not include it. This is resolved by V5, not by the
-SCI → CCRS change.
+This is a closed decision. If data of the required kind appears later,
+adding a structural-robustness factor would be a **new** decision — not a
+reopening of V5.
 
 ---
 
@@ -450,18 +457,17 @@ share rather than a point estimate.
 
 ## 9. Post-data verification items
 
-> Section language note: items V1–V4 and V6 are resolved and have been
-> rewritten in English pointing to their `docs/DECISIONS.md` entries (V1 was
-> resolved, then revised — see below); the original observation/criterion
-> text is kept beneath each as the record of what drove the decision.
-> **V5 is still open — the only unresolved item.** Its Portuguese criterion
-> text is kept verbatim, with a short English status note added on top.
+> Section language note: all items V1–V6 are resolved and rewritten in
+> English pointing to their `docs/DECISIONS.md` entries (V1 was resolved,
+> then revised; V5 was closed on 2026-09-03 — `fuel_factor` removed). The
+> original observation/criterion text is kept beneath each as the record of
+> what drove the decision.
 
 These items could not be settled by upfront reasoning. Each had an explicit
 decision criterion to apply after the acquisition/processing layer was
-rebuilt and the real data inspected. **V5 (`fuel_factor`) is the only one
-still open;** the CCRS index design (Section 5) is otherwise closed and
-recorded in `docs/DECISIONS.md`.
+rebuilt and the real data inspected. **All six are now resolved;** the CCRS
+index design (Section 5) is closed and recorded in `docs/DECISIONS.md`. No
+index code is written yet.
 
 **V1 — Age curve for the thermal bucket**
 - **Status: RESOLVED, then REVISED.** Closed by `docs/DECISIONS.md` entry
@@ -530,19 +536,23 @@ recorded in `docs/DECISIONS.md`.
   all three at equivalent quality, cover only the highest heat-exposure
   cases and declare the limitation.
 
-**V5 — Fator de combustível (`fuel_factor`)**
-- **Status: still open** — the one unresolved verification item. Under the
-  CCRS the "resilience formula" mentioned below no longer exists (Section 7);
-  V5 now decides whether `fuel_factor` becomes a *second* multiplier on the
-  CCRS score alongside `age_factor`, or is dropped. The review criterion is
-  unchanged. (Portuguese text kept verbatim, per the section note above.)
-- **O que revisar:** literatura de robustez estrutural por tecnologia
-  para os hazards água e calor, independentemente de SLR.
-- **Critério:** se valores defensáveis puderem ser derivados para cada
-  bucket (`hydro`, `wind`, `solar`, `thermal`) a partir exclusivamente
-  de água e calor, o fator é mantido com os novos valores. Se a revisão
-  não produzir justificativa defensável, o fator é removido da fórmula
-  de resiliência e a simplificação é declarada no manuscrito.
+**V5 — Fuel factor (`fuel_factor`)**
+- **Status: RESOLVED.** See `docs/DECISIONS.md`, entry "fuel_factor removed
+  from resilience formula (V5 closed)". `fuel_factor` is removed entirely —
+  no bucket receives one and `CCRS_i,s` carries no such term. The per-bucket
+  investigation (thermal cooling type, hydro storage/regularisation,
+  wind/solar component robustness) found every candidate mechanism either
+  not separable from the water/heat hazard weights already captured, or
+  lacking public codifiable data for the three countries. The current
+  design has only `age_factor` and `EventMultiplier` as multipliers on the
+  hazard score (Section 7).
+- *Original review target (kept as historical context):* per-technology
+  structural-robustness literature for the water and heat hazards,
+  independent of SLR.
+- *Original criterion:* if defensible values could be derived for every
+  bucket (`hydro`, `wind`, `solar`, `thermal`) from water and heat alone,
+  keep the factor with the new values; if not, remove it and declare the
+  simplification in the manuscript. The "remove it" branch applied.
 
 **V6 — Per-country capacity roll-up base (computable base vs. total capacity)**
 - **Status: RESOLVED.** See `docs/DECISIONS.md`, entry "NAES/SCI

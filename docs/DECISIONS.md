@@ -425,5 +425,25 @@ Log of every methodological and data-source decision made during this project, i
   "NAES/SCI computable-capacity denominator (V6 closed)", "Event factor:
   country-level EM-DAT frequency (V2 closed)". The linear no-interaction
   hazard combination and the country-level event factor are unchanged in
-  substance. `fuel_factor` (V5) and the frozen global Min-Max constants
-  remain open.
+  substance. `fuel_factor` is removed (V5 closed -- see below); the frozen
+  global Min-Max transform constants remain open.
+
+## [2026-09-03] fuel_factor removed from resilience formula (V5 closed)
+
+- Decision: fuel_factor is removed entirely, not just from the
+  dissolved 3-factor Resilience product -- no bucket gets a
+  fuel_factor as a CCRS multiplier, closed or conditional.
+- Reason: investigated across all four buckets (thermal cooling-
+  system type, hydro storage/regularisation, wind component thermal
+  robustness, solar technology thermal-cycling robustness). Every
+  candidate mechanism is real but fails the "defensible, codifiable,
+  independent of the water/heat hazard weights already captured"
+  test: thermal cooling type determines HOW a plant responds to
+  WaterStress_i, not a separable quantity, and coverage data
+  (PLATTS/GlobalData) is not publicly available for the 3 countries;
+  hydro storage requires basin-specific hydrological simulation not
+  available at this scope; wind/solar component-level differences
+  lack public normalised failure/degradation datasets. See
+  analysis/ (V5 research document, if versioned) for full per-bucket
+  evidence and citations.
+- Status: active
