@@ -1,117 +1,134 @@
 """
-CCRS — termo ``Hazard_{i,s}`` por planta, cenário e GCM.
+CCRS -- the ``Hazard_{i,s}`` term, per plant, scenario and GCM.
 
-Este módulo calcula **apenas** o termo de hazard do Climate Change Risk Score
-(``docs/ARCHITECTURE.md`` Seção 5.1, ``analysis/climate_risk_score_spec.md``
-Seção 2):
+This module computes **only** the hazard term of the Climate Change Risk Score
+(``docs/ARCHITECTURE.md`` Section 5.1, ``analysis/climate_risk_score_spec.md``
+Section 2):
 
-    Hazard_{i,s} = w_water[bucket]·water_sub_{i,s} + w_heat[bucket]·Tlog(heat_{i,s})
+    Hazard_{i,s} = w_water[bucket] * water_sub_{i,s} + w_heat[bucket] * Tlog(heat_{i,s})
 
-    water_sub_{i,s} = 0.4164·Tlog(ws) + 0.2505·Tlin(sv) + 0.3331·Tlin(iv)
+    water_sub_{i,s} = 0.4164 * Tlog(ws) + 0.2505 * Tlin(sv) + 0.3331 * Tlin(iv)
 
-O score completo ``CCRS_{i,s} = Hazard_{i,s} × age_factor_i × EventMultiplier_c``
-**não** é montado aqui: o mapeamento das curvas %/ano do ``age_factor`` para um
-multiplicador ≥ 1 é o item aberto D da spec (``ARCHITECTURE.md`` Seção 10) —
-ponto de parada, não lacuna a preencher sozinho. ``EventMultiplier_c`` tem forma
-fechada (Seção 7.2) mas também é aplicado na etapa de montagem, fora deste
-módulo. Bandas de risco (WaterRiskBand / HeatRiskBand) são outra etapa.
-
---------------------------------------------------------------------------
-Os quatro termos de hazard e o que NÃO são
---------------------------------------------------------------------------
-``ws``, ``sv`` e ``iv`` são os **três indicadores WRI Aqueduct 4.0** de risco
-hídrico, não precipitação nem SPEI:
-
-* ``ws``  — *water stress*: razão retirada/disponibilidade (coluna
-  ``{cenário}50_ws_x_r`` do Aqueduct), rasterizada por
-  ``src/processors/water_stress_processor.py`` (sentinela WRI 9999 já
-  substituída pelo ``country_max`` real no raster ``water_stress_raw_*``).
-* ``sv``  — *seasonal variability*: coeficiente de variação intra-anual da
-  oferta de água azul (coluna ``{cenário}50_sv_x_r``), rasterizado por
-  ``src/processors/water_variability_processor.py`` (raster
-  ``seasonal_variability_raw_*``).
-* ``iv``  — *interannual variability*: coeficiente de variação interanual da
-  mesma oferta (coluna ``{cenário}50_iv_x_r``), mesmo processor (raster
-  ``interannual_variability_raw_*``).
-
-Não há termo de precipitação/SPEI no CCRS atual: um termo de seca (SPEI) é o
-item aberto F da spec — os downloads de ``pr``/``tas`` já existem
-(``cds_precipitation_downloader``) mas nenhum ``spei_processor`` foi escrito,
-e ``sv``/``iv`` **não** substituem esse termo (medem variabilidade da oferta,
-não déficit hídrico climático).
-
-* ``heat`` — média de dias/ano com tasmax > 40 °C (``extreme_heat_days_*``,
-  passthrough do ``cds_tasmax_downloader``), por GCM.
-
-``wd`` (*water depletion*) é **excluído** do cálculo: o Spearman plant-level
-``ws × wd`` é 0.98–0.998 nos três países
-(``analysis/aqueduct_indicator_correlation.md``), então ``wd`` não carrega
-informação de ranking independente de ``ws``. Incluir os dois duplicaria o
-canal de nível de estresse hídrico. ``ws`` é mantido (indicador-título do WRI,
-já no pipeline); ``wd`` é descartado.
+The full score ``CCRS_{i,s} = Hazard_{i,s} * age_factor_i * EventMultiplier_c``
+is **not** assembled here: mapping the %/year ``age_factor`` curves onto a >= 1
+multiplier is the spec's open item D (``ARCHITECTURE.md`` Section 10) -- a stop
+point, not a gap to fill unilaterally. ``EventMultiplier_c`` has a closed form
+(Section 7.2) but is also applied in the assembly step, outside this module.
+The risk bands (WaterRiskBand / HeatRiskBand) are yet another step.
 
 --------------------------------------------------------------------------
-Transformações e bounds
+The four hazard terms, and what they are NOT
 --------------------------------------------------------------------------
-* ``Tlog(x) = MinMax(log1p(x))`` — aplicada a ``ws`` e ``heat`` (skew direito
-  severo em nível de planta).
-* ``Tlin(x) = MinMax(x)``          — aplicada a ``sv`` e ``iv`` (quase
-  simétricas; log1p sobre-corrigiria e poderia inverter a ordem).
-* **Bounds globais**: um par ``(min, max)`` por termo, agrupando os 3 países ×
-  3 cenários (nunca por país, nunca por cenário). Essa é a propriedade que faz
-  um CCRS de 0.4 significar a mesma exposição em Lisboa e em Chennai.
-  - ``ws``/``sv``/``iv``: os rasters de água não dependem do GCM, então há um
-    único par por termo, agrupando as plantas que interceptam alguma bacia.
-  - ``heat``: um par **por GCM**. As magnitudes de MIROC6 rodam ~10–100× as do
-    GFDL-ESM4; agrupar os dois num bound só seria um blend inter-modelo. Ver
-    "GCM" abaixo.
-* Os bounds são **congelados** em ``FROZEN_BOUNDS`` (item aberto G da spec:
-  "constante fixa e documentada, não recomputada por rodada"). ``main`` e o
-  cálculo padrão usam os valores congelados; ``compute_global_bounds`` os
-  recalcula a partir dos dados em disco. ``tests/test_ccrs_calculator.py``
-  compara os dois e **falha** se divergirem — atualizar ``FROZEN_BOUNDS``
-  exige revisão manual explícita.
+``ws``, ``sv`` and ``iv`` are the **three WRI Aqueduct 4.0 water-risk
+indicators**, not precipitation and not SPEI:
+
+* ``ws``  -- water stress: withdrawal-to-availability ratio (Aqueduct column
+  ``{scenario}50_ws_x_r``), rasterised by
+  ``src/processors/water_stress_processor.py`` (the WRI 9999 sentinel is
+  already substituted by the real ``country_max`` in the
+  ``water_stress_raw_*`` raster).
+* ``sv``  -- seasonal variability: within-year coefficient of variation of
+  blue-water supply (Aqueduct column ``{scenario}50_sv_x_r``), rasterised by
+  ``src/processors/water_variability_processor.py``
+  (``seasonal_variability_raw_*`` raster).
+* ``iv``  -- interannual variability: between-year coefficient of variation of
+  the same supply (Aqueduct column ``{scenario}50_iv_x_r``), same processor
+  (``interannual_variability_raw_*`` raster).
+
+There is no precipitation/SPEI term in the current CCRS: a drought (SPEI) term
+is the spec's open item F -- the ``pr``/``tas`` downloads already exist
+(``cds_precipitation_downloader``) but no ``spei_processor`` has been written,
+and ``sv``/``iv`` do **not** stand in for it (they measure variability of
+supply, not a climatic water deficit).
+
+* ``heat`` -- mean days/year with tasmax > 40 C (``extreme_heat_days_*``, a
+  passthrough of ``cds_tasmax_downloader``), per GCM.
+
+``wd`` (water depletion) is **excluded** from the calculation: the plant-level
+Spearman ``ws x wd`` is 0.98-0.998 across the three countries
+(``analysis/aqueduct_indicator_correlation.md``), so ``wd`` carries no rank
+information independent of ``ws``. Keeping both would double-count the
+water-stress level channel. ``ws`` is kept (the WRI headline indicator, already
+in the pipeline); ``wd`` is dropped.
 
 --------------------------------------------------------------------------
-Pesos por bucket tecnológico (``ARCHITECTURE.md`` Seção 5.3, fechado)
+Transforms and bounds
+--------------------------------------------------------------------------
+* ``Tlog(x) = MinMax(log1p(x))`` -- applied to ``ws`` and ``heat`` (severe
+  right skew at plant level).
+* ``Tlin(x) = MinMax(x)``        -- applied to ``sv`` and ``iv`` (near
+  symmetric; log1p would over-correct and could invert their ordering).
+* **Global bounds**: one ``(min, max)`` pair per term, pooling the 3 countries
+  x 3 scenarios (never per-country, never per-scenario). This is the property
+  that makes a CCRS of 0.4 mean the same exposure in Lisbon and in Chennai.
+  - ``ws``/``sv``/``iv``: the water rasters do not depend on the GCM, so there
+    is a single pair per term, pooling the plants that intersect a basin.
+  - ``heat``: one pair **per GCM**. MIROC6 magnitudes run ~10-100x GFDL-ESM4;
+    pooling both into one bound would be a cross-model blend. See "GCM" below,
+    and ``docs/DECISIONS.md`` "[2026-09-04] CCRS global Min-Max bounds".
+* The bounds are **frozen** in ``FROZEN_BOUNDS`` (spec open item G: "a fixed,
+  documented constant, not recomputed per run"). ``main`` and the default
+  calculation use the frozen values; ``compute_global_bounds`` recomputes them
+  from the data on disk. ``tests/test_ccrs_calculator.py`` compares the two
+  and **fails** on drift -- updating ``FROZEN_BOUNDS`` requires explicit
+  manual review.
+
+--------------------------------------------------------------------------
+Per technology-bucket weights (``ARCHITECTURE.md`` Section 5.3, closed)
 --------------------------------------------------------------------------
     bucket    w_water  w_heat
-    hydro      1.00     0.00   (calor já dentro do estresse hídrico via evaporação de reservatório)
-    thermal    0.75     0.25   (Van Vliet água ~ordem de grandeza acima da taxa marginal de calor)
-    wind       0.00     1.00   (sem mecanismo hídrico físico plausível)
+    hydro      1.00     0.00   (heat already inside water stress via reservoir evaporation)
+    thermal    0.75     0.25   (Van Vliet water outcome ~an order of magnitude above the marginal heat rate)
+    wind       0.00     1.00   (no plausible physical water mechanism)
     solar      0.00     1.00   (idem)
 
-Para ``wind``/``solar`` todo o lado da água — ``ws``, ``sv`` E ``iv`` — zera
-junto. Os pesos internos ``(0.4164, 0.2505, 0.3331)`` vêm da largura das
-categorias WRI Aqueduct 4.0 (``w_k ∝ 1/τ_k``, spec §8.1), não da matriz de
-magnitude da Seção 6.1.
+For ``wind``/``solar`` the whole water side -- ``ws``, ``sv`` AND ``iv`` --
+zeroes together. The within-water weights ``(0.4164, 0.2505, 0.3331)`` come
+from the WRI Aqueduct 4.0 category step widths (``w_k proportional to 1/tau_k``,
+spec Section 8.1), not from the Section 6.1 magnitude matrix.
 
 --------------------------------------------------------------------------
-GCM (``ARCHITECTURE.md`` Seção 5.4)
+GCM (``ARCHITECTURE.md`` Section 5.4)
 --------------------------------------------------------------------------
-GFDL-ESM4 é o valor primário de toda figura citada do CCRS. MIROC6 é painel de
-sensibilidade, mantido em campo/coluna separado — **nunca** média nem blend
-50/50 com GFDL-ESM4. ``compute_hazard_by_gcm`` devolve uma coluna
-``hazard`` por GCM lado a lado, sem combiná-las.
+GFDL-ESM4 is the primary value for every cited CCRS figure. MIROC6 is a
+sensitivity panel, kept in a separate field/column -- **never** averaged or
+50/50-blended with GFDL-ESM4. ``compute_hazard_by_gcm`` returns one
+``hazard_{model}`` column per GCM side by side, never combined.
 
 --------------------------------------------------------------------------
-Capacidade
+Plant identity
 --------------------------------------------------------------------------
-Capacidade não entra em ``Hazard_{i,s}`` nem em ``CCRS_{i,s}`` — só no
-roll-up por país (``ARCHITECTURE.md`` Seção 5.5). Este módulo não agrega
-capacidade; ``computable_base`` está aqui só para que qualquer roll-up futuro
-use a base computável do V6 (coordenada válida + ``commissioning_year``),
-nunca ``capacity_mw`` diretamente.
+``(country, plant_name)`` is **not** unique: 429 name groups hold several
+distinct GEM records (different coordinates, same name; 265 of them also share
+``capacity_mw`` + ``commissioning_year``). ``load_plants`` therefore assigns a
+stable ``plant_uid`` -- a deterministic content hash of the record's
+``(plant_name, lat, lon)`` CSV text tokens, **not** a positional index (see
+``load_plants`` for why there is no native GEM id and why the hash is on
+content, not row position). It is carried through every frame and used as the
+merge key in ``compute_hazard_by_gcm`` -- without it the per-GCM merge
+cross-joins the ambiguous rows and inflates the output. See
+``docs/DECISIONS.md`` and the regression tests
+``test_compute_hazard_by_gcm_has_no_cross_join_duplication`` and
+``test_plant_uid_is_stable_*``.
 
-Standalone: ``python -m src.index.ccrs_calculator`` a partir da raiz do
-projeto. Lê os rasters brutos processados e
-``gem_validated_plants_{país}.csv``; escreve
-``data/outputs/tables/ccrs_hazard.csv``.
+--------------------------------------------------------------------------
+Capacity
+--------------------------------------------------------------------------
+Capacity enters neither ``Hazard_{i,s}`` nor ``CCRS_{i,s}`` -- only the
+per-country roll-up (``ARCHITECTURE.md`` Section 5.5). This module does not
+aggregate capacity; ``computable_base`` is here only so any future roll-up
+uses the V6 computable base (valid coordinate + ``commissioning_year``), never
+``capacity_mw`` directly.
+
+Standalone: ``python -m src.index.ccrs_calculator`` from the project root.
+Reads the processed raw rasters and ``gem_validated_plants_{country}.csv``;
+writes ``data/outputs/tables/ccrs_hazard.csv``.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 from pathlib import Path
 
@@ -124,6 +141,7 @@ from src.config import (
     AQUEDUCT_SCENARIO_FOR_CMIP6,
     ASSETS_PROCESSED,
     COUNTRIES,
+    COUNTRY_ISO3,
     OUTPUT_TABLES,
 )
 from src.downloaders.cds_tasmax_downloader import configured_models
@@ -134,24 +152,39 @@ from src.processors.water_variability_processor import raw_raster_path as var_ra
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------
-# Termos e transformações
+# Terms and transforms
 # --------------------------------------------------------------------------
 HAZARD_TERMS = ("ws", "heat", "sv", "iv")
-LOG_TERMS = frozenset({"ws", "heat"})   # log1p → Min-Max
-LIN_TERMS = frozenset({"sv", "iv"})     # Min-Max linear
+LOG_TERMS = frozenset({"ws", "heat"})   # log1p -> Min-Max
+LIN_TERMS = frozenset({"sv", "iv"})     # linear Min-Max
 
-# ``wd`` (water depletion) fica de fora: redundante de ranking com ``ws``
-# (Spearman 0.98–0.998, analysis/aqueduct_indicator_correlation.md).
+# ``wd`` (water depletion) is left out: rank-redundant with ``ws``
+# (Spearman 0.98-0.998, analysis/aqueduct_indicator_correlation.md).
 EXCLUDED_INDICATORS = ("wd",)
 
-# Cenários Aqueduct (lado da água) e o cenário CMIP6 pareado (lado do calor),
-# pela identidade SSP de config.AQUEDUCT_SCENARIO_FOR_CMIP6.
+# Aqueduct scenarios (water side) and the paired CMIP6 scenario (heat side),
+# by the SSP identity in config.AQUEDUCT_SCENARIO_FOR_CMIP6.
 WATER_SCENARIOS = ("opt", "bau", "pes")
 WATER_TO_HEAT = {ws: hs for hs, ws in AQUEDUCT_SCENARIO_FOR_CMIP6.items()}
 
+# Stable per-plant identifier and the merge key it anchors.
+PLANT_UID = "plant_uid"
+GCM_MERGE_KEY = [PLANT_UID, "water_scenario", "heat_scenario"]
+# Raw CSV text tokens hashed into plant_uid -- attributes of the record, never
+# its position in the file. Verified unique across all three countries.
+_UID_FIELDS = ("plant_name", "lat", "lon")
+_UID_DIGEST_BYTES = 6   # 48-bit hash; collision-checked at load time
+# Descriptive columns carried once (from the first model's frame) into the
+# per-GCM wide table.
+_META_COLUMNS = [
+    "country", "plant_name", "lat", "lon", "bucket",
+    "capacity_mw", "commissioning_year",
+]
+
 # --------------------------------------------------------------------------
-# Pesos internos do water_sub — largura das categorias WRI Aqueduct 4.0
-# (spec §8.1). w_k ∝ 1/τ_k, τ_k = limiar High → Extremely-High do indicador.
+# water_sub within-water weights -- WRI Aqueduct 4.0 category widths
+# (spec Section 8.1). w_k proportional to 1/tau_k, tau_k = the indicator's
+# High -> Extremely-High threshold.
 # --------------------------------------------------------------------------
 WRI_TOP_THRESHOLD = {"ws": 0.80, "sv": 1.33, "iv": 1.00}
 
@@ -164,16 +197,17 @@ def _derive_within_water_weights() -> dict[str, float]:
 
 WITHIN_WATER_WEIGHTS = _derive_within_water_weights()
 
-# Valores publicados na spec §8.1 / ARCHITECTURE.md §5.1. A derivação acima
-# deve reproduzi-los — trava contra edição acidental de WRI_TOP_THRESHOLD.
+# Values published in spec Section 8.1 / ARCHITECTURE.md Section 5.1. The
+# derivation above must reproduce them -- a guard against an accidental edit
+# of WRI_TOP_THRESHOLD.
 _PUBLISHED_WITHIN_WATER = {"ws": 0.4164, "sv": 0.2505, "iv": 0.3331}
 assert all(
     abs(WITHIN_WATER_WEIGHTS[k] - _PUBLISHED_WITHIN_WATER[k]) < 5e-5
     for k in _PUBLISHED_WITHIN_WATER
-), f"within-water weights {WITHIN_WATER_WEIGHTS} divergem da spec §8.1"
+), f"within-water weights {WITHIN_WATER_WEIGHTS} diverge from spec Section 8.1"
 
 # --------------------------------------------------------------------------
-# Pesos água/calor por bucket tecnológico (ARCHITECTURE.md §5.3, fechado).
+# Per technology-bucket water/heat weights (ARCHITECTURE.md Section 5.3, closed).
 # --------------------------------------------------------------------------
 BUCKETS = ("hydro", "thermal", "wind", "solar")
 BUCKET_WEIGHTS = {
@@ -184,17 +218,18 @@ BUCKET_WEIGHTS = {
 }
 assert all(
     abs(w["water"] + w["heat"] - 1.0) < 1e-12 for w in BUCKET_WEIGHTS.values()
-), "w_water + w_heat deve somar 1 por bucket"
+), "w_water + w_heat must sum to 1 per bucket"
 
 # --------------------------------------------------------------------------
-# Bounds globais congelados (item aberto G da spec).
+# Frozen global bounds (spec open item G).
 #
-# Derivados de compute_global_bounds() sobre os dados em disco no snapshot
-# abaixo. NÃO editar à mão sem revisão manual explícita: o teste de regressão
-# em tests/test_ccrs_calculator.py recalcula e compara, e falha se divergir.
-# Formato: bounds RAW (pré-log1p) (min, max). Tlog aplica log1p a dado e bound.
-#   - ws/sv/iv: um par por termo (rasters de água independem do GCM).
-#   - heat:     um par por GCM (MIROC6 ~10–100× GFDL; nunca no mesmo pool).
+# Derived from compute_global_bounds() over the data on disk at the snapshot
+# below. Do NOT edit by hand without explicit manual review: the regression
+# test in tests/test_ccrs_calculator.py recomputes and compares, and fails on
+# drift. Format: RAW bounds (pre-log1p) (min, max). Tlog applies log1p to both
+# the data and the bound.
+#   - ws/sv/iv: one pair per term (water rasters are GCM-independent).
+#   - heat:     one pair per GCM (MIROC6 ~10-100x GFDL; never in the same pool).
 # --------------------------------------------------------------------------
 BOUNDS_DATA_SNAPSHOT = "2026-09-04"
 FROZEN_BOUNDS: dict[str, object] = {
@@ -209,23 +244,22 @@ FROZEN_BOUNDS: dict[str, object] = {
 
 
 class BoundsRegressionError(RuntimeError):
-    """Recomputo dos bounds globais divergiu de ``FROZEN_BOUNDS``.
+    """The recomputed global bounds diverged from ``FROZEN_BOUNDS``.
 
-    Não é para ser silenciado. Se os dados em disco mudaram de propósito
-    (novo país, novo cenário, reprocessamento de raster), atualize
-    ``FROZEN_BOUNDS`` e ``BOUNDS_DATA_SNAPSHOT`` **deliberadamente**, com o
-    diff de números registrado no commit — nunca deixe o teste recalcular e
-    aceitar em silêncio.
+    Not to be silenced. If the data on disk changed on purpose (a new country,
+    a new scenario, a raster reprocessed), update ``FROZEN_BOUNDS`` and
+    ``BOUNDS_DATA_SNAPSHOT`` **deliberately**, with the number diff recorded in
+    the commit -- never let the test recompute and accept silently.
     """
 
 
 # --------------------------------------------------------------------------
-# Rasters e amostragem
+# Rasters and sampling
 # --------------------------------------------------------------------------
 def raster_path(term: str, country: str, water_scenario: str, model: str) -> Path:
-    """Caminho do raster BRUTO processado para um termo/país/cenário(/GCM).
+    """Path to the processed RAW raster for a term/country/scenario(/GCM).
 
-    ``model`` só é usado por ``heat``; os rasters de água ignoram-no.
+    ``model`` is only used by ``heat``; the water rasters ignore it.
     """
     if term == "ws":
         return ws_raw_path(country, water_scenario)
@@ -236,14 +270,14 @@ def raster_path(term: str, country: str, water_scenario: str, model: str) -> Pat
     if term == "heat":
         return heat_raw_path(country, model, WATER_TO_HEAT[water_scenario])
     raise ValueError(
-        f"termo desconhecido {term!r} (esperado um de {HAZARD_TERMS}; "
-        f"{EXCLUDED_INDICATORS} é excluído do CCRS por design)"
+        f"unknown term {term!r} (expected one of {HAZARD_TERMS}; "
+        f"{EXCLUDED_INDICATORS} is excluded from the CCRS by design)"
     )
 
 
 def sample_raster(path: Path, lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
-    """Amostra de vizinho mais próximo do raster em cada (lon, lat). Pontos
-    fora da grade ou sobre nodata voltam como NaN."""
+    """Nearest-pixel sample of the raster at each (lon, lat). Points outside
+    the grid or on nodata come back as NaN."""
     with rasterio.open(path) as src:
         band = src.read(1).astype("float64")
         nod = src.nodata
@@ -258,16 +292,63 @@ def sample_raster(path: Path, lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
     return out
 
 
+def _derive_plant_uid(iso3: str, name: str, lat_token: str, lon_token: str) -> str:
+    """``{ISO3}-blake2s(plant_name | lat | lon)`` over the raw CSV text tokens.
+
+    Deterministic (blake2s, not Python's salted ``hash``), so the same record
+    yields the same uid on every run, in any row order.
+    """
+    payload = "\x1f".join((name, lat_token, lon_token)).encode("utf-8")
+    return f"{iso3}-{hashlib.blake2s(payload, digest_size=_UID_DIGEST_BYTES).hexdigest()}"
+
+
 def load_plants(country: str) -> pd.DataFrame:
-    """Plantas validadas do país: ``plant_name``, ``lon``/``lat``,
-    ``capacity_mw``, ``commissioning_year`` e ``bucket`` (de
-    ``fuel_type_bucket``). Todas têm coordenada (V6)."""
-    df = pd.read_csv(ASSETS_PROCESSED / f"gem_validated_plants_{country}.csv")
+    """Validated plants for the country: ``plant_uid``, ``plant_name``,
+    ``lon``/``lat``, ``capacity_mw``, ``commissioning_year`` and ``bucket``
+    (from ``fuel_type_bucket``). Every plant has a coordinate (V6).
+
+    ``plant_uid`` -- there is **no native GEM identifier** in
+    ``gem_validated_plants_{country}.csv``. GEM's own unit and location IDs
+    (``GEM unit/phase ID``, ``GEM location ID``) live only in
+    ``gem_units_detail.csv`` at generating-unit grain and are **not** carried
+    through the unit -> plant aggregation in
+    ``src/downloaders/assets_validator.py`` (which keys plants on
+    country + normalised name + coordinate rounded to ~100 m). ``plant_uid``
+    is therefore a **deterministic content hash**:
+    ``{ISO3}-blake2s(plant_name | lat | lon)`` computed over the raw CSV
+    **text tokens** of those three fields -- attributes of the record, never
+    its position or order in the file.
+
+    * Stable across row reordering, row filtering / removal, and re-export, as
+      long as the plant's name and coordinate strings are byte-identical.
+    * A genuine edit to a plant's name or coordinates produces a **new** uid --
+      correct, since it is then a different record.
+    * ``(plant_name, lat, lon)`` is verified unique in all three countries'
+      current snapshots; this function raises if the hash ever collides.
+    """
+    path = ASSETS_PROCESSED / f"gem_validated_plants_{country}.csv"
+    # lat/lon/name read as raw text so the hash is byte-stable; numeric copies
+    # of lat/lon are re-parsed below for raster sampling.
+    df = pd.read_csv(path, dtype={f: "string" for f in _UID_FIELDS})
+    iso3 = COUNTRY_ISO3[country]
+
+    tokens = df[list(_UID_FIELDS)].fillna("")
+    uid = [
+        _derive_plant_uid(iso3, name, lat, lon)
+        for name, lat, lon in zip(tokens["plant_name"], tokens["lat"], tokens["lon"])
+    ]
+    if len(set(uid)) != len(uid):
+        raise ValueError(
+            f"plant_uid hash collision in {path.name}: two records hash to the "
+            f"same id. Increase _UID_DIGEST_BYTES or add a field to _UID_FIELDS."
+        )
+
     return pd.DataFrame({
+        PLANT_UID: uid,
         "country": country,
         "plant_name": df["plant_name"].astype("string"),
-        "lon": pd.to_numeric(df["lon"], errors="coerce"),
-        "lat": pd.to_numeric(df["lat"], errors="coerce"),
+        "lon": pd.to_numeric(df["lon"], errors="coerce").astype("float64"),
+        "lat": pd.to_numeric(df["lat"], errors="coerce").astype("float64"),
         "capacity_mw": pd.to_numeric(df["capacity_mw"], errors="coerce"),
         "commissioning_year": pd.to_numeric(df["commissioning_year"], errors="coerce"),
         "bucket": df["fuel_type_bucket"].astype("string"),
@@ -275,8 +356,8 @@ def load_plants(country: str) -> pd.DataFrame:
 
 
 def sample_terms(model: str) -> pd.DataFrame:
-    """Uma linha por (país, planta, cenário de água) com os quatro valores
-    BRUTOS de termo amostrados para ``model`` no lado do calor."""
+    """One row per (plant, water scenario) with the four RAW term values
+    sampled for ``model`` on the heat side. Carries ``plant_uid``."""
     parts = []
     for country in COUNTRIES:
         plants = load_plants(country)
@@ -295,38 +376,38 @@ def sample_terms(model: str) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------
-# Transformações e bounds
+# Transforms and bounds
 # --------------------------------------------------------------------------
 def transform_term(term: str, raw: np.ndarray, lo: float, hi: float) -> np.ndarray:
-    """``Tlog`` para ws/heat, ``Tlin`` para sv/iv. ``lo``/``hi`` são bounds
-    BRUTOS; para ``Tlog`` o log1p é aplicado a dado e bound antes do Min-Max.
-    Domínio degenerado (``hi <= lo``) → zeros."""
+    """``Tlog`` for ws/heat, ``Tlin`` for sv/iv. ``lo``/``hi`` are RAW bounds;
+    for ``Tlog`` the log1p is applied to both data and bound before the
+    Min-Max. Degenerate domain (``hi <= lo``) -> zeros."""
     raw = np.asarray(raw, "float64")
     if term in LOG_TERMS:
         x, a, b = np.log1p(raw), np.log1p(lo), np.log1p(hi)
     elif term in LIN_TERMS:
         x, a, b = raw, float(lo), float(hi)
     else:
-        raise ValueError(f"termo desconhecido {term!r}")
+        raise ValueError(f"unknown term {term!r}")
     if b <= a:
         return np.zeros_like(x)
     return np.clip((x - a) / (b - a), 0.0, 1.0)
 
 
 def compute_global_bounds(models: list[str] | None = None) -> dict[str, object]:
-    """Recalcula os bounds globais a partir dos rasters em disco.
+    """Recompute the global bounds from the rasters on disk.
 
-    Sobre as linhas com bucket tecnológico conhecido, países e cenários
-    agrupados:
+    Over the rows with a known technology bucket, countries and scenarios
+    pooled:
 
-    * ``ws``/``sv``/``iv``: um par ``(min, max)`` por termo, sobre as plantas
-      cujo termo é finito (interceptam alguma bacia). Os rasters de água
-      independem do GCM — amostrar com qualquer GCM configurado dá o mesmo
-      resultado; ``models[0]`` é usado por conveniência.
-    * ``heat``: um par por GCM, sobre as plantas cujo ``heat`` é finito para
-      aquele GCM.
+    * ``ws``/``sv``/``iv``: one ``(min, max)`` pair per term, over the plants
+      whose term is finite (they intersect a basin). The water rasters are
+      GCM-independent -- sampling with any configured GCM gives the same
+      result; ``models[0]`` is used for convenience.
+    * ``heat``: one pair per GCM, over the plants whose ``heat`` is finite for
+      that GCM.
 
-    Estrutura idêntica a ``FROZEN_BOUNDS``.
+    Same structure as ``FROZEN_BOUNDS``.
     """
     models = models or configured_models()
     frames = {m: sample_terms(m) for m in models}
@@ -357,15 +438,15 @@ def _bounds_close(a: dict[str, object], b: dict[str, object], atol: float = 1e-4
 
 
 def assert_frozen_bounds_current(models: list[str] | None = None) -> dict[str, object]:
-    """Recalcula e compara com ``FROZEN_BOUNDS``; levanta
-    ``BoundsRegressionError`` se divergir. Devolve os bounds recalculados."""
+    """Recompute and compare against ``FROZEN_BOUNDS``; raise
+    ``BoundsRegressionError`` on drift. Returns the recomputed bounds."""
     live = compute_global_bounds(models)
     if not _bounds_close(live, FROZEN_BOUNDS):
         raise BoundsRegressionError(
-            "bounds recalculados divergem de FROZEN_BOUNDS "
-            f"(snapshot {BOUNDS_DATA_SNAPSHOT}).\n  congelado: {FROZEN_BOUNDS}\n"
-            f"  recalculado: {live}\n"
-            "Revisão manual obrigatória antes de atualizar a constante."
+            "recomputed bounds diverge from FROZEN_BOUNDS "
+            f"(snapshot {BOUNDS_DATA_SNAPSHOT}).\n  frozen:     {FROZEN_BOUNDS}\n"
+            f"  recomputed: {live}\n"
+            "Manual review required before updating the constant."
         )
     return live
 
@@ -380,19 +461,19 @@ def _term_bounds(term: str, model: str, bounds: dict[str, object]) -> tuple[floa
 # Hazard
 # --------------------------------------------------------------------------
 def water_sub(t_ws: np.ndarray, t_sv: np.ndarray, t_iv: np.ndarray) -> np.ndarray:
-    """``0.4164·Tlog(ws) + 0.2505·Tlin(sv) + 0.3331·Tlin(iv)`` — sobre os
-    termos já transformados. NaN se algum termo for NaN."""
+    """``0.4164 * Tlog(ws) + 0.2505 * Tlin(sv) + 0.3331 * Tlin(iv)`` -- over the
+    already-transformed terms. NaN if any term is NaN."""
     w = WITHIN_WATER_WEIGHTS
     return w["ws"] * np.asarray(t_ws) + w["sv"] * np.asarray(t_sv) + w["iv"] * np.asarray(t_iv)
 
 
 def hazard(bucket: np.ndarray, water_sub_val: np.ndarray, t_heat: np.ndarray) -> np.ndarray:
-    """``w_water[bucket]·water_sub + w_heat[bucket]·Tlog(heat)``.
+    """``w_water[bucket] * water_sub + w_heat[bucket] * Tlog(heat)``.
 
-    Um lado com peso 0 é descartado antes da multiplicação, então um
-    ``water_sub`` NaN não contamina ``wind``/``solar`` (nem o ``heat`` NaN
-    contamina ``hydro``). Onde o lado tem peso > 0, um NaN propaga — a planta
-    fica sem hazard nesse cenário, o comportamento correto.
+    A side with weight 0 is dropped before the multiplication, so a NaN
+    ``water_sub`` does not contaminate ``wind``/``solar`` (nor a NaN ``heat``
+    contaminate ``hydro``). Where the side has weight > 0, a NaN propagates --
+    the plant has no hazard in that scenario, which is the correct behaviour.
     """
     bucket = np.asarray(bucket, dtype=object)
     w_water = np.array([BUCKET_WEIGHTS[b]["water"] if b in BUCKET_WEIGHTS else np.nan
@@ -402,8 +483,8 @@ def hazard(bucket: np.ndarray, water_sub_val: np.ndarray, t_heat: np.ndarray) ->
     water_sub_val = np.asarray(water_sub_val, "float64")
     t_heat = np.asarray(t_heat, "float64")
 
-    # Só multiplica onde o peso é > 0: o lado zerado nunca toca um NaN, e o
-    # lado com peso propaga NaN normalmente (planta sem hazard nesse cenário).
+    # Multiply only where the weight is > 0: the zeroed side never touches a
+    # NaN, and the weighted side propagates NaN normally.
     water_part = np.zeros(len(w_water), dtype="float64")
     heat_part = np.zeros(len(w_heat), dtype="float64")
     mw = w_water > 0.0
@@ -411,18 +492,19 @@ def hazard(bucket: np.ndarray, water_sub_val: np.ndarray, t_heat: np.ndarray) ->
     water_part[mw] = w_water[mw] * water_sub_val[mw]
     heat_part[mh] = w_heat[mh] * t_heat[mh]
     out = water_part + heat_part
-    # bucket desconhecido → NaN (não deveria acontecer: sample já filtra)
+    # unknown bucket -> NaN (should not happen: the caller filters first)
     out[np.isnan(w_water) | np.isnan(w_heat)] = np.nan
     return out
 
 
 def compute_hazard(model: str, bounds: dict[str, object] | None = None) -> pd.DataFrame:
-    """``Hazard_{i,s}`` por planta × cenário para um GCM.
+    """``Hazard_{i,s}`` per plant x scenario for one GCM.
 
-    Uma linha por (país, planta, cenário) com bucket conhecido. Colunas:
-    identificação, ``bucket``, ``capacity_mw``, ``commissioning_year``, os
-    quatro termos transformados ``T_*``, ``water_sub``, ``hazard``, ``model``.
-    Usa ``FROZEN_BOUNDS`` por padrão.
+    One row per (plant, scenario) with a known bucket -- keyed by
+    ``plant_uid``. Columns: identity + ``lat``/``lon``, ``bucket``,
+    ``capacity_mw``, ``commissioning_year``, the four transformed terms
+    ``T_*``, ``water_sub``, ``hazard``, ``model``. Uses ``FROZEN_BOUNDS`` by
+    default.
     """
     bounds = bounds or FROZEN_BOUNDS
     df = sample_terms(model)
@@ -436,10 +518,9 @@ def compute_hazard(model: str, bounds: dict[str, object] | None = None) -> pd.Da
     ws_sub = water_sub(tt["ws"], tt["sv"], tt["iv"])
     haz = hazard(df["bucket"].to_numpy(), ws_sub, tt["heat"])
 
-    out = df[[
-        "country", "plant_name", "water_scenario", "heat_scenario",
-        "bucket", "capacity_mw", "commissioning_year",
-    ]].copy()
+    out = df[[PLANT_UID, "country", "plant_name", "lat", "lon",
+              "water_scenario", "heat_scenario", "bucket",
+              "capacity_mw", "commissioning_year"]].copy()
     for term in HAZARD_TERMS:
         out[f"T_{term}"] = tt[term]
     out["water_sub"] = ws_sub
@@ -451,30 +532,45 @@ def compute_hazard(model: str, bounds: dict[str, object] | None = None) -> pd.Da
 def compute_hazard_by_gcm(
     models: list[str] | None = None, bounds: dict[str, object] | None = None
 ) -> pd.DataFrame:
-    """``Hazard`` de cada GCM lado a lado, uma coluna ``hazard_{model}`` por
-    GCM — **nunca** combinadas. GFDL-ESM4 é a coluna primária; MIROC6 é
-    painel de sensibilidade (``ARCHITECTURE.md`` §5.4).
+    """Each GCM's ``Hazard`` side by side -- one ``hazard_{model}`` column per
+    GCM, **never** combined. GFDL-ESM4 is the primary column; MIROC6 is a
+    sensitivity panel (``ARCHITECTURE.md`` Section 5.4).
+
+    The merge is on ``plant_uid`` + scenario (``GCM_MERGE_KEY``), so each
+    individual GEM record stays distinct and no row is duplicated by a
+    cross-join (see the module docstring, "Plant identity"). Every model
+    yields the same key set, so the descriptive columns are taken once from
+    the first model's frame.
     """
     models = models or configured_models()
-    key = ["country", "plant_name", "water_scenario", "heat_scenario", "bucket",
-           "capacity_mw", "commissioning_year"]
     merged: pd.DataFrame | None = None
     for m in models:
-        h = compute_hazard(m, bounds=bounds)[key + ["hazard"]].rename(
-            columns={"hazard": f"hazard_{m}"}
+        h = compute_hazard(m, bounds=bounds)
+        col = f"hazard_{m}"
+        h = h.rename(columns={"hazard": col})
+        if merged is None:
+            merged = h[GCM_MERGE_KEY + _META_COLUMNS + [col]].copy()
+        else:
+            merged = merged.merge(h[GCM_MERGE_KEY + [col]], on=GCM_MERGE_KEY, how="outer")
+
+    dup = int(merged.duplicated(GCM_MERGE_KEY).sum())
+    if dup:
+        raise RuntimeError(
+            f"compute_hazard_by_gcm produced {dup} duplicate {GCM_MERGE_KEY} rows "
+            "-- the per-GCM merge cross-joined. This should be impossible with a "
+            "stable plant_uid; investigate load_plants."
         )
-        merged = h if merged is None else merged.merge(h, on=key, how="outer")
     return merged
 
 
 # --------------------------------------------------------------------------
-# Base computável (V6) — para qualquer roll-up de capacidade futuro
+# Computable base (V6) -- for any future capacity roll-up
 # --------------------------------------------------------------------------
 def computable_base(df: pd.DataFrame) -> pd.DataFrame:
-    """Filtra para a base computável do V6: coordenada válida (todas têm) +
-    ``commissioning_year`` presente. Qualquer soma de capacidade no roll-up
-    por país (``ARCHITECTURE.md`` §5.5) parte daqui, nunca de ``capacity_mw``
-    sobre a frota inteira."""
+    """Filter to the V6 computable base: valid coordinate (every plant has
+    one) + ``commissioning_year`` present. Any capacity sum in the per-country
+    roll-up (``ARCHITECTURE.md`` Section 5.5) starts here, never from
+    ``capacity_mw`` over the whole fleet."""
     return df[df["commissioning_year"].notna()]
 
 
@@ -486,7 +582,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--check-bounds", action="store_true",
-        help="recalcula os bounds globais e compara com FROZEN_BOUNDS; não escreve nada",
+        help="recompute the global bounds and compare against FROZEN_BOUNDS; writes nothing",
     )
     parser.add_argument("--out", type=Path, default=OUTPUT_TABLES / "ccrs_hazard.csv")
     args = parser.parse_args()
@@ -497,14 +593,13 @@ def main() -> int:
         except BoundsRegressionError as exc:
             logger.error(str(exc))
             return 1
-        logger.info("bounds congelados conferem com os dados (%s): %s",
-                    BOUNDS_DATA_SNAPSHOT, live)
+        logger.info("frozen bounds match the data (%s): %s", BOUNDS_DATA_SNAPSHOT, live)
         return 0
 
     wide = compute_hazard_by_gcm()
     args.out.parent.mkdir(parents=True, exist_ok=True)
     wide.to_csv(args.out, index=False)
-    logger.info("escrito %s (%d linhas planta×cenário)", args.out, len(wide))
+    logger.info("wrote %s (%d plant x scenario rows)", args.out, len(wide))
 
     haz_cols = [c for c in wide.columns if c.startswith("hazard_")]
     for c in haz_cols:
@@ -512,7 +607,7 @@ def main() -> int:
         logger.info("%s: n=%d, p50=%.4f, p95=%.4f, max=%.4f",
                     c, len(s), s.median(), s.quantile(0.95), s.max())
     base = computable_base(wide)
-    logger.info("base computável (commissioning_year presente): %d / %d linhas",
+    logger.info("computable base (commissioning_year present): %d / %d rows",
                 len(base), len(wide))
     return 0
 

@@ -447,3 +447,44 @@ Log of every methodological and data-source decision made during this project, i
   analysis/ (V5 research document, if versioned) for full per-bucket
   evidence and citations.
 - Status: active
+
+## [2026-09-04] CCRS global Min-Max bounds: heat per-GCM, water GCM-independent
+
+- Decision: The global Min-Max bounds that the CCRS per-term transforms use
+  (`Tlog`/`Tlin`, ARCHITECTURE.md Section 5.1) are computed as follows, and
+  frozen as `ccrs_calculator.FROZEN_BOUNDS`:
+  - `heat` (`extreme_heat_days`): one `(min, max)` pair **per GCM** --
+    `gfdl_esm4` and `miroc6` each get their own pair, pooled over the 3
+    countries x 3 scenarios, and are **never pooled or averaged with each
+    other**.
+  - `ws` / `sv` / `iv` (Aqueduct water stress and seasonal / interannual
+    variability): one `(min, max)` pair per term, computed **once**, pooled
+    over the 3 countries x 3 scenarios. This is GCM-independent by
+    construction -- the water rasters (`water_stress_raw_*`,
+    `seasonal_variability_raw_*`, `interannual_variability_raw_*`) carry no
+    GCM axis, and sampling them against the plant set produces identical
+    values whichever GCM's run is used to assemble the pool.
+  - Pool membership: plant x scenario rows with a known `fuel_type_bucket`
+    (currently all validated plants) whose term value is finite (the plant
+    intersects an Aqueduct basin for `ws`/`sv`/`iv`, or a heat raster cell
+    for `heat`).
+- Reason: ARCHITECTURE.md Section 5.4 forbids blending GFDL-ESM4 and MIROC6 --
+  they are a primary figure plus a sensitivity panel, not an ensemble. That
+  rule is applied here to the **bounds computation**, not only to the final
+  Hazard value: a heat bound pooled across both GCMs would let MIROC6's
+  ~10-100x larger day-counts set the denominator for GFDL-ESM4's transformed
+  heat term (and vice versa), which is exactly the cross-model contamination
+  Section 5.4 rejects. The water terms have no such axis, so a single frozen
+  pair per term is the correct "global, documented, not per-run" constant
+  (spec item G).
+- This was **not** spelled out in `analysis/climate_risk_score_spec.md`
+  item G, which only says the `(min, max)` constants must be "computed once
+  from a dated data snapshot and frozen ... not a per-run quantity" without
+  addressing the GCM axis. This entry is the retroactive formalisation of the
+  choice made when `ccrs_calculator.py` was implemented.
+- References: `src/index/ccrs_calculator.py` (introduced in commit 244de40),
+  frozen-bounds data snapshot `BOUNDS_DATA_SNAPSHOT = 2026-09-04`, regression
+  lock in
+  `tests/test_ccrs_calculator.py::test_frozen_bounds_match_recomputed_from_data`.
+  Engineering detail in `docs/memory/05-decisoes-tecnicas.md` item 12.
+- Status: active

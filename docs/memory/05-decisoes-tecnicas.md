@@ -245,9 +245,11 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   bounds **por-GCM** sobre linhas casadas nos 4 termos.
 - **Decisão** (`src/index/ccrs_calculator.py`):
   - `ws`/`sv`/`iv`: **um** par `(min, max)` por termo. Os rasters de água não
-    dependem do GCM; o pool é sobre as plantas (bucket conhecido) cujo termo é
+    dependem do GCM; o pool é sobre as plantas (com `fuel_type_bucket`
+    conhecido — hoje **todas** as 10 808 plantas validadas) cujo termo é
     finito, 3 países × 3 cenários. Verificado: amostrar com GFDL ou MIROC6 dá
-    o mesmo conjunto e os mesmos números.
+    o mesmo conjunto e os mesmos números (32 301 linhas planta×cenário com
+    `ws`/`sv`/`iv` finito; 123 sem — plantas fora de qualquer bacia Aqueduct).
   - `heat`: **um par por GCM** (`gfdl_esm4`, `miroc6` separados). MIROC6 roda
     ~10–100× GFDL; um pool conjunto seria um blend inter-modelo, proibido pela
     §5.4. Alinhado com a regra "GFDL primário, MIROC6 painel de sensibilidade,
@@ -267,18 +269,46 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
     onde o peso é > 0, o NaN propaga (planta sem hazard nesse cenário).
   - `age_factor` (item aberto D) e `EventMultiplier` **não** são aplicados
     aqui — o módulo entrega só o termo Hazard.
+  - **Identidade de planta:** `(country, plant_name)` NÃO é única — 429 grupos
+    de nome têm vários registros GEM distintos (coordenadas diferentes, mesmo
+    nome; 265 desses também compartilham `capacity_mw` + `commissioning_year`).
+    Não há identificador nativo do GEM no
+    `gem_validated_plants_{país}.csv` — os IDs do GEM (`GEM unit/phase ID`,
+    `GEM location ID`) só existem no `gem_units_detail.csv` em grão de unidade
+    e não são propagados pela agregação unidade→planta do `assets_validator`.
+    `load_plants` então deriva `plant_uid =
+    {ISO3}-blake2s(plant_name | lat | lon)` sobre os **tokens de texto crus**
+    do CSV (atributos do registro, nunca a posição/ordem na tabela) — hash
+    determinístico (`hashlib.blake2s`, 48 bits), estável a reordenação,
+    filtragem e reexportação enquanto os três campos não mudarem byte a byte;
+    uma edição real de nome/coordenada gera uid novo (correto, é outro
+    registro). `(plant_name, lat, lon)` é único nos 3 países hoje; `load_plants`
+    levanta `ValueError` se o hash colidir. Esse uid é a chave de merge em
+    `compute_hazard_by_gcm`; sem identificador estável o merge por-GCM fazia
+    cross-join parcial nos 265 grupos e inflava a saída para 46 998 linhas em
+    vez de 32 424 (10 808 plantas × 3 cenários). `compute_hazard_by_gcm`
+    levanta `RuntimeError` se restar chave duplicada após o merge.
+- **Idioma:** o módulo e o teste estão em inglês — convenção real do código em
+  `src/` (docstrings/comentários em inglês, vide `water_variability_processor`,
+  `config.py`). `docs/memory/` continua em português.
 - **Consequências:** `FROZEN_BOUNDS` fica desatualizado se qualquer raster de
   `ws`/`sv`/`iv`/`heat` for reprocessado ou se países/cenários mudarem — a
   trava de regressão captura isso na próxima execução do teste. O CSV de saída
-  (`data/outputs/tables/ccrs_hazard.csv`) traz `hazard_gfdl_esm4` e
-  `hazard_miroc6` em colunas separadas, nunca combinadas.
+  (`data/outputs/tables/ccrs_hazard.csv`) traz `plant_uid`, `lat`/`lon` e
+  `hazard_gfdl_esm4` / `hazard_miroc6` em colunas separadas, nunca combinadas;
+  uma linha por `plant_uid` × cenário.
 - **Arquivos:** `src/index/ccrs_calculator.py`,
   `tests/test_ccrs_calculator.py`.
-- **Status:** Ativa (inferido nos pontos abaixo).
+- **Status:** Ativa. Eixo GCM dos bounds (heat por-GCM, água GCM-independente)
+  **formalizado** em `docs/DECISIONS.md`, entrada "[2026-09-04] CCRS global
+  Min-Max bounds: heat per-GCM, water GCM-independent" — a spec item G não
+  detalhava esse eixo; a entrada é a formalização retroativa.
 
-  > ⚠️ Ponto a validar (Douglas): (a) heat com bound por-GCM e água com bound
-  > único GCM-independente — consistente com a §5.4, mas a spec item G não
-  > detalha o eixo GCM; (b) o conjunto sobre o qual o pool é tirado (plantas
-  > com o termo finito + bucket conhecido; 2 plantas/país sem
-  > `fuel_type_bucket` ficam de fora); (c) se este congelamento de G merece uma
-  > entrada em `docs/DECISIONS.md` como decisão de snapshot de dado.
+  > ⚠️ Ponto a validar (Douglas): correção — a afirmação anterior de "2
+  > plantas/país sem `fuel_type_bucket`" (herdada de um docstring
+  > desatualizado de `analysis/ccrs_bucket_weighted_distribution.py`) está
+  > **errada**. Nos `gem_validated_plants_{país}.csv` atuais **todas** as
+  > plantas mapeiam para um dos 4 buckets — nenhuma planta é excluída do pool
+  > por bucket ausente. As únicas exclusões por termo são amostras NaN
+  > (planta fora de bacia/raster), que são "sem valor a contribuir", não
+  > exclusão de planta.

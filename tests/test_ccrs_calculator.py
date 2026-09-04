@@ -1,14 +1,17 @@
-"""Tests for src/index/ccrs_calculator — the CCRS Hazard term.
+"""Tests for src/index/ccrs_calculator -- the CCRS Hazard term.
 
 Covers: the closed per-bucket water/heat weights and how they are applied
 (one case per bucket), the frozen global-bounds regression lock, the
-GFDL-ESM4 / MIROC6 separation (separate fields, never blended), and the
-exclusion of ``wd`` from every calculation.
+GFDL-ESM4 / MIROC6 separation (separate fields, never blended), the exclusion
+of ``wd`` from every calculation, and the per-GCM merge having no cross-join
+duplication (stable ``plant_uid``).
 
-Pure-function and monkeypatched tests run without touching disk. The
-frozen-bounds regression test reads the processed rasters and is skipped
-(never silently passed) when they are absent.
+Pure-function and monkeypatched tests run without touching disk. Tests that
+read the processed rasters or the validated-plant CSVs are skipped (never
+silently passed) when those inputs are absent.
 """
+
+import random
 
 import numpy as np
 import pandas as pd
@@ -115,6 +118,7 @@ def test_compute_hazard_end_to_end_per_bucket(monkeypatch):
     """compute_hazard: raw sample -> transform with given bounds -> weighted
     Hazard, one plant per bucket."""
     fake = pd.DataFrame({
+        cc.PLANT_UID: ["T-00000", "T-00001", "T-00002", "T-00003", "T-00004"],
         "country": "Testland",
         "plant_name": ["h", "t", "w", "s", "nobucket"],
         "lon": 0.0, "lat": 0.0,
@@ -197,24 +201,31 @@ def test_bounds_close_detects_drift():
 
 
 # --------------------------------------------------------------------------
-# 3. GFDL-ESM4 vs MIROC6 — separate fields, never blended
+# 3. GFDL-ESM4 vs MIROC6 -- separate fields, never blended
 # --------------------------------------------------------------------------
+def _fake_hazard_frame(val, *, dup_names=False):
+    """Two plants with the SAME name and (when dup_names) identical
+    capacity/commissioning year, but distinct plant_uid -- the exact shape
+    that used to cross-join in the per-GCM merge."""
+    name = "same plant" if dup_names else None
+    return pd.DataFrame({
+        cc.PLANT_UID: ["A-00000", "A-00001"],
+        "country": ["A", "A"],
+        "plant_name": [name or "p1", name or "p2"],
+        "lat": [1.0, 2.0], "lon": [3.0, 4.0],
+        "water_scenario": ["opt", "opt"], "heat_scenario": ["ssp126", "ssp126"],
+        "bucket": ["wind", "solar"],
+        "capacity_mw": [1.0, 1.0] if dup_names else [1.0, 2.0],
+        "commissioning_year": [2001.0, 2001.0] if dup_names else [2001.0, 2002.0],
+        "hazard": [val, val],
+    })
+
+
 def test_compute_hazard_by_gcm_keeps_models_in_separate_columns(monkeypatch):
-    key = ["country", "plant_name", "water_scenario", "heat_scenario", "bucket",
-           "capacity_mw", "commissioning_year"]
-
-    def fake_compute_hazard(model, bounds=None):
-        val = {"gfdl_esm4": 0.10, "miroc6": 0.90}[model]
-        base = pd.DataFrame({
-            "country": ["A", "A"], "plant_name": ["p1", "p2"],
-            "water_scenario": ["opt", "opt"], "heat_scenario": ["ssp126", "ssp126"],
-            "bucket": ["wind", "solar"], "capacity_mw": [1.0, 2.0],
-            "commissioning_year": [2001.0, 2002.0],
-        })
-        base["hazard"] = val
-        return base
-
-    monkeypatch.setattr(cc, "compute_hazard", fake_compute_hazard)
+    monkeypatch.setattr(
+        cc, "compute_hazard",
+        lambda model, bounds=None: _fake_hazard_frame({"gfdl_esm4": 0.10, "miroc6": 0.90}[model]),
+    )
     wide = cc.compute_hazard_by_gcm(models=["gfdl_esm4", "miroc6"])
 
     assert "hazard_gfdl_esm4" in wide.columns
@@ -227,16 +238,175 @@ def test_compute_hazard_by_gcm_keeps_models_in_separate_columns(monkeypatch):
     assert not any(np.allclose(wide[c], blend) for c in wide.columns if c.startswith("hazard_"))
 
 
+def test_compute_hazard_by_gcm_has_no_cross_join_duplication(monkeypatch):
+    """Two GEM records sharing name + capacity + commissioning year (distinct
+    only by plant_uid / coordinate) must NOT cross-join in the per-GCM merge.
+    Before the plant_uid key this produced 2x2 = 4 rows instead of 2."""
+    monkeypatch.setattr(
+        cc, "compute_hazard",
+        lambda model, bounds=None: _fake_hazard_frame(
+            {"gfdl_esm4": 0.10, "miroc6": 0.90}[model], dup_names=True),
+    )
+    wide = cc.compute_hazard_by_gcm(models=["gfdl_esm4", "miroc6"])
+
+    assert len(wide) == 2                                    # one row per plant_uid, not 4
+    assert wide[cc.PLANT_UID].tolist() == ["A-00000", "A-00001"]
+    assert wide.duplicated(cc.GCM_MERGE_KEY).sum() == 0
+
+
+def test_compute_hazard_by_gcm_raises_on_residual_duplication(monkeypatch):
+    """The guard inside compute_hazard_by_gcm fires if a merge ever
+    cross-joins again (e.g. plant_uid stops being unique)."""
+    dupe = _fake_hazard_frame(0.5, dup_names=True)
+    dupe[cc.PLANT_UID] = "A-00000"                            # break uid uniqueness
+    monkeypatch.setattr(cc, "compute_hazard", lambda model, bounds=None: dupe.copy())
+    with pytest.raises(RuntimeError, match="cross-join"):
+        cc.compute_hazard_by_gcm(models=["gfdl_esm4", "miroc6"])
+
+
 @pytest.mark.skipif(not _rasters_present(), reason="processed rasters absent")
 def test_real_gcm_columns_differ_and_are_not_a_blend():
     wide = cc.compute_hazard_by_gcm()
-    g, m = wide["hazard_gfdl_esm4"], wide["hazard_miroc6"]
     both = wide.dropna(subset=["hazard_gfdl_esm4", "hazard_miroc6"])
     assert (both["hazard_gfdl_esm4"] != both["hazard_miroc6"]).any()
-    # MIROC6 runs hotter for wind/solar (heat-only buckets) — sanity that the
+    # MIROC6 runs hotter for wind/solar (heat-only buckets) -- sanity that the
     # columns are genuinely per-model, not a shared value
     ws = both[both["bucket"].isin(["wind", "solar"])]
     assert ws["hazard_miroc6"].mean() > ws["hazard_gfdl_esm4"].mean()
+
+
+# --------------------------------------------------------------------------
+# 3b. plant_uid -- derived from record content, stable, unique
+# --------------------------------------------------------------------------
+def _plants_present() -> bool:
+    return all(
+        (cc.ASSETS_PROCESSED / f"gem_validated_plants_{c}.csv").exists()
+        for c in cc.COUNTRIES
+    )
+
+
+_FIXTURE_ROWS = [
+    {"country": "Brazil", "plant_name": "Alpha wind farm", "lat": "-1.1000", "lon": "-2.2000",
+     "capacity_mw": 10.0, "commissioning_year": 2000.0, "fuel_type_bucket": "wind"},
+    {"country": "Brazil", "plant_name": "Beta solar project", "lat": "-3.3000", "lon": "-4.4000",
+     "capacity_mw": 20.0, "commissioning_year": 2001.0, "fuel_type_bucket": "solar"},
+    # same name as row 0, different coordinate -> a distinct GEM record
+    {"country": "Brazil", "plant_name": "Alpha wind farm", "lat": "-1.5000", "lon": "-2.9000",
+     "capacity_mw": 10.0, "commissioning_year": 2000.0, "fuel_type_bucket": "wind"},
+    {"country": "Brazil", "plant_name": "Gamma hydroelectric plant", "lat": "-5.5000", "lon": "-6.6000",
+     "capacity_mw": 30.0, "commissioning_year": 2002.0, "fuel_type_bucket": "hydro"},
+    {"country": "Brazil", "plant_name": "Delta power station", "lat": "-7.7000", "lon": "-8.8000",
+     "capacity_mw": 40.0, "commissioning_year": 2003.0, "fuel_type_bucket": "thermal"},
+]
+
+
+def _write_plants_csv(path, rows):
+    pd.DataFrame(rows).to_csv(path, index=False)
+
+
+def _uid_by_record(df):
+    """Map keyed by the identifying triple -> plant_uid."""
+    return {
+        (str(n), float(la), float(lo)): u
+        for n, la, lo, u in zip(df["plant_name"], df["lat"], df["lon"], df[cc.PLANT_UID])
+    }
+
+
+def test_derive_plant_uid_is_deterministic_and_content_addressed():
+    a = cc._derive_plant_uid("BRA", "Alpha wind farm", "-1.1000", "-2.2000")
+    b = cc._derive_plant_uid("BRA", "Alpha wind farm", "-1.1000", "-2.2000")
+    assert a == b and a.startswith("BRA-")
+    # any identifying field changing changes the uid
+    assert cc._derive_plant_uid("BRA", "Alpha wind farm", "-1.1000", "-2.2001") != a
+    assert cc._derive_plant_uid("BRA", "Alpha wind FARM", "-1.1000", "-2.2000") != a
+
+
+def test_plant_uid_is_stable_under_row_reordering(tmp_path, monkeypatch):
+    monkeypatch.setattr(cc, "ASSETS_PROCESSED", tmp_path)
+    path = tmp_path / "gem_validated_plants_Brazil.csv"
+
+    _write_plants_csv(path, _FIXTURE_ROWS)
+    before = _uid_by_record(cc.load_plants("Brazil"))
+
+    _write_plants_csv(path, list(reversed(_FIXTURE_ROWS)))
+    after_reversed = _uid_by_record(cc.load_plants("Brazil"))
+
+    shuffled = list(_FIXTURE_ROWS)
+    random.Random(123).shuffle(shuffled)
+    _write_plants_csv(path, shuffled)
+    after_shuffled = _uid_by_record(cc.load_plants("Brazil"))
+
+    assert before == after_reversed == after_shuffled
+    assert len(before) == len(_FIXTURE_ROWS)          # incl. both "Alpha wind farm" records
+
+
+def test_plant_uid_is_stable_when_a_middle_row_is_removed(tmp_path, monkeypatch):
+    monkeypatch.setattr(cc, "ASSETS_PROCESSED", tmp_path)
+    path = tmp_path / "gem_validated_plants_Brazil.csv"
+
+    _write_plants_csv(path, _FIXTURE_ROWS)
+    before = _uid_by_record(cc.load_plants("Brazil"))
+
+    trimmed = _FIXTURE_ROWS[:2] + _FIXTURE_ROWS[3:]   # drop row index 2 (an "Alpha" record)
+    _write_plants_csv(path, trimmed)
+    after = _uid_by_record(cc.load_plants("Brazil"))
+
+    # every surviving record keeps the exact uid it had before
+    for key, uid in after.items():
+        assert before[key] == uid
+    assert len(after) == len(before) - 1
+
+
+def test_load_plants_raises_on_uid_collision(tmp_path, monkeypatch):
+    monkeypatch.setattr(cc, "ASSETS_PROCESSED", tmp_path)
+    path = tmp_path / "gem_validated_plants_Brazil.csv"
+    dupe = _FIXTURE_ROWS[0]
+    _write_plants_csv(path, [dupe, dict(dupe)])       # identical name+lat+lon twice
+    with pytest.raises(ValueError, match="collision"):
+        cc.load_plants("Brazil")
+
+
+@pytest.mark.skipif(not _plants_present(), reason="validated-plant CSVs absent")
+def test_load_plants_uid_unique_across_all_three_countries():
+    for c in cc.COUNTRIES:
+        p = cc.load_plants(c)
+        assert p[cc.PLANT_UID].is_unique
+        assert p[cc.PLANT_UID].str.fullmatch(cc.COUNTRY_ISO3[c] + r"-[0-9a-f]{12}").all()
+
+
+@pytest.mark.skipif(
+    not (_rasters_present() and _plants_present()), reason="rasters or plant CSVs absent"
+)
+def test_by_gcm_row_count_matches_unique_input_rows_and_dup_name_groups_stay_distinct():
+    """Regression for the reported cross-join defect.
+
+    (a) compute_hazard_by_gcm() must produce exactly one row per
+        (individual plant x water_scenario), i.e. per plant_uid x scenario --
+        counted by plant_uid, never by plant_name.
+    (b) the (country, plant_name) groups that hold multiple GEM records must
+        appear as that many distinct rows per scenario, neither collapsed nor
+        duplicated.
+    """
+    plants = pd.concat([cc.load_plants(c) for c in cc.COUNTRIES], ignore_index=True)
+    bucketed = plants[plants["bucket"].isin(cc.BUCKETS)]
+    expected_rows = len(bucketed) * len(cc.WATER_SCENARIOS)
+
+    wide = cc.compute_hazard_by_gcm()
+
+    # (a)
+    assert len(wide) == expected_rows
+    assert wide.duplicated(cc.GCM_MERGE_KEY).sum() == 0
+    assert wide[cc.PLANT_UID].nunique() == len(bucketed)
+
+    # (b) -- the multi-record name groups
+    grp = bucketed.groupby(["country", "plant_name"]).size()
+    multi = grp[grp > 1]
+    assert len(multi) > 0, "expected some multi-record (country, plant_name) groups"
+    wide_grp = wide.groupby(["country", "plant_name"])
+    for (country, name), n_records in multi.items():
+        rows = wide_grp.get_group((country, name))
+        assert len(rows) == n_records * len(cc.WATER_SCENARIOS)
+        assert rows[cc.PLANT_UID].nunique() == n_records
 
 
 # --------------------------------------------------------------------------
@@ -258,6 +428,7 @@ def test_wd_has_no_raster_path_and_no_transform():
 
 def test_wd_never_appears_in_sampled_or_scored_columns(monkeypatch):
     fake = pd.DataFrame({
+        cc.PLANT_UID: ["T-00000"],
         "country": "T", "plant_name": ["a"], "lon": 0.0, "lat": 0.0,
         "capacity_mw": [1.0], "commissioning_year": [2000.0], "bucket": ["thermal"],
         "water_scenario": "opt", "heat_scenario": "ssp126",
