@@ -20,5 +20,8 @@ openpyxl>=3.1.0
 tqdm>=4.65.0
 python-dotenv>=1.0.0
 
+# Visualization (src/visualization/) -- CCRS figures for the article.
+matplotlib>=3.7.0
+
 # Tests
 pytest>=7.4.0

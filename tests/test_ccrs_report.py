@@ -228,3 +228,54 @@ def test_real_data_ccrs_has_no_duplicate_or_missing_plant_uid():
             # floor, or a zero-weight side); age_factor/event_multiplier are
             # always >= 1, so CCRS can never go negative.
             assert (finite >= 0.0).all()
+
+
+# --------------------------------------------------------------------------
+# 7. compute_ccrs() and the visualization module share one assembly core
+#    (docs/DECISIONS.md "Eliminate the ccrs_report/visualization
+#    CCRS-assembly duplication") -- not two implementations that happen to
+#    agree on results, one function two callers.
+# --------------------------------------------------------------------------
+def test_compute_ccrs_is_a_thin_io_wrapper_around_assemble_ccrs():
+    """compute_ccrs must contain no join/multiply logic of its own -- just
+    the CSV read and a delegation call. A hand-inspection of the source
+    (rather than only a result comparison) catches a future edit that
+    re-introduces a second implementation inside compute_ccrs itself."""
+    src = inspect.getsource(cr.compute_ccrs)
+    assert "assemble_ccrs(" in src
+    assert ".merge(" not in src          # no join logic in the wrapper
+    assert "CCRS_COLUMNS" not in src     # no multiplicative assembly in the wrapper
+
+
+def test_visualization_module_calls_the_same_assemble_ccrs_object():
+    """The visualization data layer must import and call the exact same
+    function object compute_ccrs() delegates to -- identity, not just
+    equal output -- so the two can never silently drift apart again."""
+    from src.visualization import data as vdata
+
+    assert vdata.assemble_ccrs is cr.assemble_ccrs
+
+
+def test_assemble_ccrs_matches_compute_ccrs_on_the_same_input(tmp_path):
+    """Same inputs through both entry points (the disk-facing compute_ccrs
+    and the in-memory assemble_ccrs it wraps) must produce identical output
+    -- trivially true once compute_ccrs is a pure wrapper, but locks the
+    property in as a regression guard."""
+    hazard = pd.DataFrame({
+        PLANT_UID: ["BRA-1"], "country": ["Brazil"], "water_scenario": ["opt"],
+        "hazard_gfdl_esm4": [0.30], "hazard_miroc6": [0.25],
+    })
+    hz_csv = tmp_path / "ccrs_hazard.csv"
+    hazard.to_csv(hz_csv, index=False)
+    af = pd.DataFrame({
+        PLANT_UID: ["BRA-1"], "age": [20.0], "age_factor": [1.15],
+        "age_factor_neutralized_missing_year": [False],
+    })
+    em = pd.DataFrame({
+        "country": ["Brazil"], "n_events": [239], "rate": [239 / 124],
+        "event_multiplier": [1.192122],
+    })
+
+    via_disk = cr.compute_ccrs(hz_csv, age_factors=af, event_multipliers=em)
+    via_memory = cr.assemble_ccrs(hazard.copy(), age_factors=af, event_multipliers=em)
+    pd.testing.assert_frame_equal(via_disk, via_memory)

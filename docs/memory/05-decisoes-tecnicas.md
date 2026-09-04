@@ -666,3 +666,73 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
 - **Status:** Ativa, aguardando confirmação de Douglas sobre os dois
   pontos de leitura de escopo acima (thermal drought fixo; RNG por país
   vs. país×cenário).
+
+---
+
+## 20. CCRS módulo de visualização — `src/visualization/` (11 categorias, teto de 10 conscientemente estourado)
+
+- **Contexto:** implementação do módulo de figuras do CCRS para o artigo,
+  reaproveitando a infraestrutura genérica de
+  `energy_risk_assessment/src/visualization/maps.py` (repo antigo):
+  tratamento de território disputado (Índia, GIDs `Z`-prefixados),
+  figsize dinâmico por bbox real do país, convenção de marcador
+  `sqrt(capacity/capacity.max())`, `dpi=200`/PNG+PDF.
+- **Decisão registrada — teto de 10 categorias conscientemente estourado
+  para 11, por decisão de Douglas:** a investigação inicial (Comando 5,
+  antes da integração do SPEI) propôs até 10 categorias de figura mais um
+  "bônus" citado como "fora da lista de 10, mas vale reter" — o heatmap
+  Top-N CCRS breakdown (linhas = Top-N plantas por `ccrs_gfdl_esm4`,
+  colunas = os três fatores multiplicativos: Hazard, `age_factor`,
+  `EventMultiplier`). Ao aprovar o escopo desta implementação, Douglas
+  incluiu esse item explicitamente na lista de categorias aprovadas
+  (item 11), não como sugestão a avaliar depois. **Isto não é desvio de
+  escopo** — é a lista efetivamente aprovada; registrado aqui para que uma
+  sessão futura não leia "11 categorias" como um excesso não autorizado
+  contra um teto de 10 que já não se aplica.
+- **Fonte de dado — nunca CSV cacheado:** todo o módulo (`data.py`)
+  recomputa em memória via `ccrs_calculator`/`age_factor`/
+  `event_multiplier`/`risk_bands`, nunca lê `data/outputs/tables/*.csv`
+  (mesmo padrão já adotado em `monte_carlo.py`, pelo mesmo motivo: esses
+  CSVs podem estar desatualizados em relação à metodologia corrente, ex.
+  pré-integração do SPEI). `ccrs_report.compute_ccrs()` especificamente
+  **não é chamado** — seu parâmetro `hazard_csv` lê do disco por padrão.
+  **[2026-09-04, correção de duplicação]** a primeira versão deste módulo
+  reimplementava a lógica de join/multiplicação
+  (`Hazard × age_factor × EventMultiplier`) numa função local
+  `data.assemble_ccrs()`, duplicando o que já existia em
+  `ccrs_report.compute_ccrs()` — risco real de divergência silenciosa entre
+  as duas se uma fosse alterada e a outra não. Corrigido extraindo o núcleo
+  de montagem (sem I/O) para `ccrs_report.assemble_ccrs()`;
+  `ccrs_report.compute_ccrs()` passou a ser só leitura de CSV + chamada a
+  essa função core, e `data.py` importa e chama a MESMA função
+  (`from src.index.ccrs_report import assemble_ccrs`) em vez de manter uma
+  cópia local. Identidade de objeto travada por teste
+  (`tests/test_ccrs_report.py::test_visualization_module_calls_the_same_assemble_ccrs_object`)
+  — não são duas implementações que coincidem em resultado, é uma função
+  com dois chamadores.
+  `risk_bands.compute_bands`, `ccrs_report.attach_risk_bands`,
+  `compute_water_band_shares`/`compute_heat_band_shares` são reaproveitados
+  diretamente (não leem CSV, recomputam ou recebem frame em memória).
+- **Paleta:** `RdBu_r` mantido para o único mapa divergente (delta de
+  cenário, item 2) — já apropriado (zero-centrado). Toda paleta sequencial/
+  ordinal do repo antigo (`YlOrRd`/`PuBu`/`YlGnBu`) trocada por **viridis**
+  (perceptualmente uniforme) — aplicada às bandas de risco ordinais (itens
+  3/4/8) e às duas matrizes anotadas (itens 5/11). Paleta categórica de
+  bucket (`BUCKET_COLORS`, 4 cores — hydro/thermal/wind/solar, sem `coal`
+  separado como no schema antigo de 5 buckets) mantida como paleta
+  qualitativa fixa, não sequencial (dado nominal, não ordinal).
+- **Nova dependência:** `matplotlib>=3.7.0` adicionado a `requirements.txt`
+  (ausente até esta tarefa — camada de visualização não existia antes).
+  Instalada versão 3.11.1; `matplotlib.cm.get_cmap` foi removido nessa
+  versão, usado `matplotlib.colormaps[name]` (API atual) em
+  `_common._ordinal_band_colors`.
+- **Estrutura:** `src/visualization/_common.py` (infraestrutura genérica
+  reaproveitada), `data.py` (camada de dado em memória), `maps.py`
+  (categorias 1/2/3/4/10, geoespaciais), `charts.py` (categorias
+  5/6/7/8/9/11). Categorias "Both" (per-country + combined) expostas como
+  UMA função com flag `combined: bool` (não um par de funções separadas
+  como no repo antigo) — mesma forma de saída (`dict[str, Path]`), menos
+  duplicação de código.
+- **Arquivos:** `src/visualization/{__init__,_common,data,maps,charts}.py`,
+  `tests/test_visualization.py` (17 testes).
+- **Status:** Ativa.

@@ -170,8 +170,8 @@ def capacity_sum(df: pd.DataFrame) -> float:
 # --------------------------------------------------------------------------
 # Multiplicative assembly
 # --------------------------------------------------------------------------
-def compute_ccrs(
-    hazard_csv: Path = HAZARD_CSV,
+def assemble_ccrs(
+    hazard_wide: pd.DataFrame,
     age_factors: pd.DataFrame | None = None,
     event_multipliers: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
@@ -179,39 +179,52 @@ def compute_ccrs(
     per ``(plant_uid, water_scenario)`` row, for every configured GCM's
     Hazard column (``ccrs_{gcm}``). Multiplicative only -- never summed.
 
+    This is the **core, disk-free** assembly step -- ``hazard_wide`` must
+    already be an in-memory frame (``ccrs_calculator.compute_hazard_by_gcm()``,
+    or whatever a caller already has loaded); this function never reads or
+    writes a file. It is the single source of truth for the CCRS
+    multiplicative chain: ``compute_ccrs`` below (disk-facing, T5's public
+    CLI/library entry point) and ``src/visualization/data.py`` (the
+    visualization module's in-memory data layer, which cannot use
+    ``compute_ccrs`` because its default reads
+    ``data/outputs/tables/ccrs_hazard.csv`` -- a cached file that can be
+    stale relative to the current methodology, e.g. pre-SPEI-integration)
+    both call this one function -- neither re-implements the join/multiply
+    logic. Engineering decision (not methodology), see
+    ``docs/memory/05-decisoes-tecnicas.md`` item 20's 2026-09-04 addendum.
+
     ``age_factor`` joins on ``plant_uid`` (T2); ``EventMultiplier`` joins on
     ``country`` (T3). Both joins are ``validate="many_to_one"`` plus an
     explicit row-count guard: a stale/duplicate multiplier table or a country
     with no ``EventMultiplier`` fails loud instead of silently corrupting the
     row count.
     """
-    hz = pd.read_csv(hazard_csv)
     af = age_factors if age_factors is not None else age_factor.compute_age_factors()
     em = event_multipliers if event_multipliers is not None else event_multiplier.compute_event_multipliers()
 
     af_small = af[[PLANT_UID, "age", "age_factor", "age_factor_neutralized_missing_year"]]
     em_small = em[["country", "n_events", "rate", "event_multiplier"]]
 
-    missing_af = set(hz[PLANT_UID]) - set(af_small[PLANT_UID])
+    missing_af = set(hazard_wide[PLANT_UID]) - set(af_small[PLANT_UID])
     if missing_af:
         raise ValueError(
-            f"{len(missing_af)} plant_uid in {hazard_csv.name} have no "
-            f"age_factor -- stale relative to load_plants. Regenerate with "
-            f"`python -m src.index.ccrs_calculator`."
+            f"{len(missing_af)} plant_uid in the Hazard frame have no "
+            f"age_factor -- stale relative to load_plants. Regenerate the "
+            f"Hazard frame with `ccrs_calculator.compute_hazard_by_gcm`."
         )
-    missing_em = set(hz["country"]) - set(em_small["country"])
+    missing_em = set(hazard_wide["country"]) - set(em_small["country"])
     if missing_em:
         raise ValueError(
-            f"{len(missing_em)} countries in {hazard_csv.name} have no "
+            f"{len(missing_em)} countries in the Hazard frame have no "
             f"EventMultiplier: {sorted(missing_em)}."
         )
 
-    before = len(hz)
-    out = hz.merge(af_small, on=PLANT_UID, how="left", validate="many_to_one")
+    before = len(hazard_wide)
+    out = hazard_wide.merge(af_small, on=PLANT_UID, how="left", validate="many_to_one")
     out = out.merge(em_small, on="country", how="left", validate="many_to_one")
     if len(out) != before:
         raise RuntimeError(
-            f"compute_ccrs: row count changed {before} -> {len(out)} after "
+            f"assemble_ccrs: row count changed {before} -> {len(out)} after "
             f"the age_factor/EventMultiplier joins -- one of the multiplier "
             f"tables must have a duplicate key."
         )
@@ -223,6 +236,19 @@ def compute_ccrs(
         if hazard_col in out.columns:
             out[ccrs_col] = out[hazard_col] * out["age_factor"] * out["event_multiplier"]
     return out
+
+
+def compute_ccrs(
+    hazard_csv: Path = HAZARD_CSV,
+    age_factors: pd.DataFrame | None = None,
+    event_multipliers: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Disk-facing wrapper around ``assemble_ccrs`` -- reads ``hazard_csv``
+    and delegates every bit of join/multiply logic to it. Contains no
+    assembly logic of its own; kept as the public T5 entry point (CLI,
+    ``main()`` below, and any existing caller) for backward compatibility."""
+    hz = pd.read_csv(hazard_csv)
+    return assemble_ccrs(hz, age_factors, event_multipliers)
 
 
 def attach_risk_bands(
