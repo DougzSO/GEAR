@@ -28,6 +28,7 @@ Leia os quatro, não um no lugar do outro.
 ## Estado quando isto foi escrito
 
 2026-09-03. Camadas de aquisição e de processamento de clima reconstruídas:
-`src/config.py`, 8 downloaders, 2 processors de clima, 86 testes. Nenhum
-código de índice/peso/resiliência/NAES/Monte Carlo escrito (bloqueado pelas
-verificações pós-dados V1–V6 do `ARCHITECTURE.md`).
+`src/config.py`, 9 downloaders (inclui `cds_precipitation_downloader` para
+SPEI futuro), 3 processors de clima (calor, água, variabilidade sv/iv), 122
+testes. Nenhum código de índice/peso/resiliência/NAES/Monte Carlo escrito
+(bloqueado pelas verificações pós-dados V1–V6 do `ARCHITECTURE.md`).

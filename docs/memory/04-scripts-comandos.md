@@ -11,7 +11,8 @@ python -m venv .venv
 ```
 
 Credenciais em `credentials.local` na raiz (git-ignored). Chaves lidas:
-`CDS_API_URL`, `CDS_API_KEY` (obrigatórias para cds_tasmax), `GEE_PROJECT_ID`
+`CDS_API_URL`, `CDS_API_KEY` (obrigatórias para cds_tasmax e
+cds_precipitation), `GEE_PROJECT_ID`
 (opcional — sem ela o Aqueduct é pulado). GEE também exige um token de
 autenticação local (`earthengine authenticate`), não coberto por
 `credentials.local`.
@@ -33,6 +34,13 @@ teste faz chamada de rede.
 
 # um país/cenário de calor isolado
 .venv\Scripts\python -m src.downloaders.cds_tasmax_downloader --country Brazil --scenario ssp126 [--model gfdl_esm4]
+
+# precipitação + temperatura média (pr, tas) para SPEI futuro — mesma matriz
+# do cds_tasmax (2 GCMs x 3 cenários x 3 países), espelha cds_tasmax_downloader
+# e reusa suas funções de grade. Baixa e valida a série diária bruta; grava
+# raster de média do período só como QA (não é insumo do SPEI). Sem processor.
+.venv\Scripts\python -m src.downloaders.cds_precipitation_downloader --country Brazil --scenario ssp126 [--model gfdl_esm4]
+# matriz completa: import download_all_cds_precipitation(COUNTRIES)
 
 # EM-DAT (download + filtro + contagem/cobertura)
 .venv\Scripts\python -m src.downloaders.emdat_downloader

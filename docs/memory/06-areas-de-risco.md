@@ -4,14 +4,16 @@
 
 - **Coberto (fixtures sintéticas, sem rede):** construção de path de saída,
   tratamento de credencial ausente via `require_*()`, iteração multi-modelo
-  do `cds_tasmax`, simplificação de geometria do Aqueduct; para o
+  do `cds_tasmax`, forma do request + reuso das funções de grade e conversão
+  de unidade pr/tas do `cds_precipitation` (espelha o `cds_tasmax`),
+  simplificação de geometria do Aqueduct; para o
   `assets_validator` — filtro de status, agregação por planta, fuel bucketing
   e exclusão mainland-only; para os processors — pool Min-Max conjunto entre
   cenários e modelos (calor) e entre cenários (água), guarda fail-loud de
   grade do calor com 2 modelos sintéticos, substituição da sentinela WRI 9999
   no bruto e no normalizado, passthrough do bruto de calor, preservação de
   NaN; para o `emdat_downloader` — cobertura lat/lon além de `Location` e
-  GADM. 86 testes, todos passando em 2026-09-03.
+  GADM. 122 testes, todos passando em 2026-09-03.
 - **Não coberto:** o caminho real download → arquivo em disco para qualquer
   fonte (nenhum teste toca rede, por decisão — consistente com o padrão de
   testes de processor herdado). A resposta real da API do CDS, do GEE e do
@@ -30,7 +32,9 @@
 
 - **CDS (`projections-cmip6`):** schema de request já mudou historicamente
   (ver docstring do módulo). Requisições ficam em fila; uma requisição de 30
-  anos diários por país×modelo×cenário pode levar horas e ~200 MB.
+  anos diários por país×modelo×cenário pode levar horas e ~200 MB. O
+  `cds_precipitation_downloader` faz 36 dessas em série (pr + tas × 2 GCMs ×
+  3 cenários × 3 países) — job de background longo.
 - **GEE:** exige `GEE_PROJECT_ID` **e** um token local de
   `earthengine authenticate` que não passa por `credentials.local`. Sem o
   token, `ee.Initialize` falha e a etapa é marcada como falha de init (não
@@ -90,6 +94,9 @@
   models while the guard passes).
 - Toda a camada de índice (SCI/NAES/pesos/resiliência/Monte Carlo) está
   bloqueada por V1–V6 (`ARCHITECTURE.md` Seção 9).
+- 36 CDS downloads de pr/tas em andamento para SPEI (background,
+  `logs/spei_download.log`); `spei_processor` ainda não implementado — SPEI
+  é cálculo de série temporal completa, não média de período.
 
 ## Limitações metodológicas herdadas (declarar no manuscrito — ver `ARCHITECTURE.md`)
 
