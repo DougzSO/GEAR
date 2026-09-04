@@ -13,7 +13,10 @@
   grade do calor com 2 modelos sintéticos, substituição da sentinela WRI 9999
   no bruto e no normalizado, passthrough do bruto de calor, preservação de
   NaN; para o `emdat_downloader` — cobertura lat/lon além de `Location` e
-  GADM. 122 testes, todos passando em 2026-09-03.
+  GADM; para o `ccrs_calculator` — aplicação dos pesos por bucket (um caso
+  por bucket), propagação/descarte de NaN por lado do score, separação
+  GFDL/MIROC6 em colunas distintas sem blend, exclusão de `wd`, base
+  computável V6. 141 testes, todos passando em 2026-09-04.
 - **Não coberto:** o caminho real download → arquivo em disco para qualquer
   fonte (nenhum teste toca rede, por decisão — consistente com o padrão de
   testes de processor herdado). A resposta real da API do CDS, do GEE e do
@@ -83,17 +86,27 @@
 
 ## TODOs que bloqueiam fases seguintes
 
-- **Camada de índice (CCRS) não escrita em `src/`.** V1–V6 estão **todos
-  fechados** — o desenho do CCRS está registrado em `docs/ARCHITECTURE.md`
-  Seção 5 e `analysis/climate_risk_score_spec.md`. O que falta:
-  - código de produção: módulo de transformação global por termo, montagem
-    do `CCRS_i,s`, `age_factor`, `EventMultiplier`, classificadores de banda,
-    geradores de relatório, wrapper de Monte Carlo;
+- **Camada de índice (CCRS) — só o termo Hazard escrito em `src/`.**
+  `src/index/ccrs_calculator.py` calcula `Hazard_{i,s}` (transformação global
+  por termo + pesos por bucket, bounds congelados). V1–V6 todos fechados; o
+  desenho está em `docs/ARCHITECTURE.md` Seção 5 e
+  `analysis/climate_risk_score_spec.md`. O que ainda falta:
+  - código de produção: montagem do `CCRS_i,s` (× `age_factor` ×
+    `EventMultiplier`), `age_factor`, `EventMultiplier`, classificadores de
+    banda (WaterRiskBand/HeatRiskBand), geradores de relatório, wrapper de
+    Monte Carlo;
   - itens ainda em aberto na spec: mapeamento das curvas %/ano do
     `age_factor` para multiplicador ≥ 1 (D), se um termo de SPEI é
-    adicionado (F), constantes globais de Min-Max congeladas (G), clip de
-    outlier em sv/iv (I), sensibilidade Monte Carlo dos dois parâmetros de
-    julgamento — split térmico e `k` do `EventMultiplier` (J).
+    adicionado (F), clip de outlier em sv/iv (I), sensibilidade Monte Carlo
+    dos dois parâmetros de julgamento — split térmico e `k` do
+    `EventMultiplier` (J). Item G (bounds globais congelados) foi **efetuado**
+    para os dados de 2026-09-04 em `FROZEN_BOUNDS`, com trava de regressão;
+    ver `05-decisoes-tecnicas.md` item 12 e o ⚠️ Ponto a validar ali.
+- **Trava de regressão de bounds depende dos rasters em disco.**
+  `test_ccrs_calculator::test_frozen_bounds_match_recomputed_from_data` lê os
+  rasters processados; é **pulado com motivo** (não passa em silêncio) se
+  ausentes. Num checkout sem `data/processed/` a trava não roda — rodar
+  `python -m src.index.ccrs_calculator --check-bounds` depois de reprocessar.
 - **Pool de Min-Max de calor: conjunto vs. por-modelo.** MIROC6 (V4 fechado)
   domina a escala normalizada conjunta; o CCRS contorna isso consumindo o
   raster **bruto** de calor. Manter o pool conjunto ou voltar a por-modelo

@@ -18,15 +18,17 @@ Roda localmente, sem frontend, sem CI.
   desenho SCI/NAES + resiliência de 3 fatores original. Especificação em
   `docs/ARCHITECTURE.md` Seção 5 e `analysis/climate_risk_score_spec.md`.
   As verificações pós-dados V1–V6 (`ARCHITECTURE.md` Seção 9) estão **todas
-  fechadas**; o que falta é o código de produção em `src/` (não escrito) e
-  alguns itens em aberto na spec (mapeamento do `age_factor` para
-  multiplicador, termo de SPEI, constantes de transformação congeladas,
-  clip de outlier sv/iv, sensibilidade Monte Carlo).
+  fechadas**. Primeiro módulo escrito: `src/index/ccrs_calculator.py` (termo
+  `Hazard_{i,s}`). Falta o resto do código de produção (montagem do
+  `CCRS_i,s`, `age_factor`, `EventMultiplier`, bandas, relatórios, Monte
+  Carlo) e alguns itens em aberto na spec (mapeamento do `age_factor` para
+  multiplicador D, termo de SPEI F, clip de outlier sv/iv I, Monte Carlo J;
+  item G — bounds congelados — feito em `FROZEN_BOUNDS`).
 
-## Estado atual (2026-09-03)
+## Estado atual (2026-09-04)
 
-Reconstrução da camada de aquisição e processamento de clima concluída
-(etapas 1 e 2 de 2):
+Camada de aquisição e processamento de clima concluída; camada de índice
+iniciada (termo Hazard do CCRS):
 
 - `src/config.py` reescrito.
 - `src/downloaders/` (9): `boundaries_downloader`, `coastline_downloader`,
@@ -42,14 +44,18 @@ Reconstrução da camada de aquisição e processamento de clima concluída
   `water_variability_processor` (sv/iv do Aqueduct → raster normalizado +
   bruto, Min-Max por país sobre os 3 cenários, sem log1p; espelha o
   `water_stress_processor`).
-- `tests/`: cobertura unitária dos 9 downloaders, do `assets_validator` e
-  dos 3 processors. 122 testes, todos passando.
+- `src/index/` (1): `ccrs_calculator` (termo `Hazard_{i,s}` por
+  planta/cenário/GCM; bounds globais congelados + trava de regressão; pesos
+  água/calor por bucket; GFDL/MIROC6 em campos separados).
+- `tests/`: cobertura unitária dos 9 downloaders, do `assets_validator`, dos
+  3 processors e do `ccrs_calculator`. 141 testes, todos passando.
 - Não portados: `slr_downloader`, `power_downloader`, `aneel_downloader`,
   `dgeg_downloader`, `slr_stress_processor`, `coastal_distance` (ver
   `docs/INVENTORY.md`).
-- **Não escrito:** o código do CCRS em `src/` (score, bandas, `age_factor`,
-  `EventMultiplier`, Monte Carlo, geradores de relatório). V1–V6 estão todos
-  fechados; o bloqueio agora é implementação + itens em aberto da spec.
+- **Ainda não escrito:** montagem do `CCRS_i,s` completo (× `age_factor` ×
+  `EventMultiplier`), `age_factor`, `EventMultiplier`, classificadores de
+  banda, Monte Carlo, geradores de relatório. V1–V6 todos fechados; o
+  bloqueio agora é implementação + itens em aberto da spec (D, F, I, J).
 
 ## Onde está cada tipo de decisão
 

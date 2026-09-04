@@ -18,7 +18,9 @@ src/
     water_stress_processor.py  CSV Aqueduct -> raster normalizado (Min-Max/país, pool bau/opt/pes) + raster bruto; sentinela 9999 -> country_max nos dois
     heat_stress_processor.py   raster extreme_heat_days -> raster normalizado (Min-Max/país, todos os modelos E cenários no mesmo pool: ssp126/ssp370/ssp585 x gfdl_esm4/miroc6); bruto = passthrough do downloader; itera sobre configured_models()
     water_variability_processor.py  CSV Aqueduct sv/iv -> raster normalizado (Min-Max/país, pool bau/opt/pes, SEM log1p) + raster bruto, por indicador; espelha o water_stress_processor, sem sentinela
-tests/                 pytest; fixtures sintéticas, sem chamada de API real
+  index/               camada de índice (CCRS), reconstruída do zero
+    ccrs_calculator.py  termo Hazard_{i,s} por planta/cenário/GCM: amostra os rasters brutos ws/sv/iv/heat, aplica Tlog/Tlin com bounds globais congelados (FROZEN_BOUNDS), pesos água/calor por bucket. NÃO monta o CCRS completo (age_factor = item aberto D; EventMultiplier = etapa de montagem) nem as bandas de risco.
+tests/                 pytest; fixtures sintéticas, sem chamada de API real (exceção: o teste de regressão de bounds do ccrs_calculator lê os rasters processados, pulado com motivo se ausentes)
 ```
 
 ## Convenções observadas / mantidas
@@ -48,6 +50,17 @@ pelos respectivos módulos antes do Min-Max. `water_variability` NÃO aplica
 log1p (sv/iv têm skew baixo) e não tem máquina de sentinela (WRI não usa 9999
 para sv/iv). Domínio de normalização e tratamento de sentinela:
 `docs/DECISIONS.md` (entradas de 2026-09-03).
+
+## Camada de índice (`src/index/`)
+
+Primeiro módulo escrito: `ccrs_calculator.py` (termo Hazard). Consome os
+rasters **brutos** (`water_stress_raw_*`, `seasonal_variability_raw_*`,
+`interannual_variability_raw_*`, `extreme_heat_days_*`) e
+`gem_validated_plants_{país}.csv` — não os rasters normalizados por país dos
+processors (o CCRS tem normalização global própria). Reusa os helpers
+`raw_raster_path` dos três processors e `configured_models()`. Bounds globais
+congelados em `FROZEN_BOUNDS` com trava de regressão — ver
+`05-decisoes-tecnicas.md` item 12.
 
 ## Mudanças estruturais vs. repositório anterior
 

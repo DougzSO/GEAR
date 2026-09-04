@@ -71,6 +71,22 @@ CLI própria — chamados via `climate_downloader` ou importados
 Ordem: `heat_stress_processor` → (`water_stress_processor`,
 `water_variability_processor`).
 
+## Camada de índice (CCRS)
+
+```
+# termo Hazard_{i,s} por planta/cenário, GFDL-ESM4 e MIROC6 em colunas
+# separadas -> data/outputs/tables/ccrs_hazard.csv
+.venv\Scripts\python -m src.index.ccrs_calculator
+
+# só confere os bounds globais congelados contra os rasters em disco (não escreve)
+.venv\Scripts\python -m src.index.ccrs_calculator --check-bounds
+```
+
+Depende dos três processors de clima já rodados (lê os rasters brutos deles).
+`--check-bounds` sai com código 1 se `FROZEN_BOUNDS` divergir dos dados — nesse
+caso, revisão manual antes de atualizar a constante (ver
+`05-decisoes-tecnicas.md` item 12).
+
 ## Custo/tempo observado (2026-09-03, GFDL-ESM4, 3 países)
 
 - GADM: ~450 MB no total (Brasil ~290 MB). Alguns minutos.

@@ -234,3 +234,51 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   `tests/test_cds_tasmax_downloader.py`.
 - **Status:** Ativa. Também em `docs/DECISIONS.md` (números de cobertura
   antes/depois).
+
+## 12. CCRS — bounds globais congelados e como o Hazard é montado
+
+- **Contexto:** a spec (`analysis/climate_risk_score_spec.md` §4, §8, item
+  aberto G) fixa que o Min-Max de cada termo é **global** (3 países × 3
+  cenários agrupados) e "constante fixa e documentada, não recomputada por
+  rodada". Não havia código; o único precedente era
+  `analysis/ccrs_bucket_weighted_distribution.py` (diagnóstico), que calcula
+  bounds **por-GCM** sobre linhas casadas nos 4 termos.
+- **Decisão** (`src/index/ccrs_calculator.py`):
+  - `ws`/`sv`/`iv`: **um** par `(min, max)` por termo. Os rasters de água não
+    dependem do GCM; o pool é sobre as plantas (bucket conhecido) cujo termo é
+    finito, 3 países × 3 cenários. Verificado: amostrar com GFDL ou MIROC6 dá
+    o mesmo conjunto e os mesmos números.
+  - `heat`: **um par por GCM** (`gfdl_esm4`, `miroc6` separados). MIROC6 roda
+    ~10–100× GFDL; um pool conjunto seria um blend inter-modelo, proibido pela
+    §5.4. Alinhado com a regra "GFDL primário, MIROC6 painel de sensibilidade,
+    nunca 50/50".
+  - Valores gravados em `FROZEN_BOUNDS` (constante do módulo, não em
+    `config.py` — é constante da camada de índice, e `config.py` é dependência
+    da camada de aquisição). `BOUNDS_DATA_SNAPSHOT = "2026-09-04"`.
+  - Trava de regressão: `compute_global_bounds()` recalcula dos rasters;
+    `assert_frozen_bounds_current()` / o teste `test_ccrs_calculator` comparam
+    e **falham** (`BoundsRegressionError`) se divergir. Atualizar
+    `FROZEN_BOUNDS` exige revisão manual explícita com o diff no commit —
+    nunca recalcular e aceitar em silêncio.
+  - Montagem do Hazard: `w_water[bucket]·water_sub + w_heat[bucket]·Tlog(heat)`,
+    `water_sub = 0.4164·Tlog(ws) + 0.2505·Tlin(sv) + 0.3331·Tlin(iv)`. Um lado
+    com peso 0 (`hydro` sem calor, `wind`/`solar` sem água) é descartado antes
+    da multiplicação, então um termo NaN nesse lado não contamina o score;
+    onde o peso é > 0, o NaN propaga (planta sem hazard nesse cenário).
+  - `age_factor` (item aberto D) e `EventMultiplier` **não** são aplicados
+    aqui — o módulo entrega só o termo Hazard.
+- **Consequências:** `FROZEN_BOUNDS` fica desatualizado se qualquer raster de
+  `ws`/`sv`/`iv`/`heat` for reprocessado ou se países/cenários mudarem — a
+  trava de regressão captura isso na próxima execução do teste. O CSV de saída
+  (`data/outputs/tables/ccrs_hazard.csv`) traz `hazard_gfdl_esm4` e
+  `hazard_miroc6` em colunas separadas, nunca combinadas.
+- **Arquivos:** `src/index/ccrs_calculator.py`,
+  `tests/test_ccrs_calculator.py`.
+- **Status:** Ativa (inferido nos pontos abaixo).
+
+  > ⚠️ Ponto a validar (Douglas): (a) heat com bound por-GCM e água com bound
+  > único GCM-independente — consistente com a §5.4, mas a spec item G não
+  > detalha o eixo GCM; (b) o conjunto sobre o qual o pool é tirado (plantas
+  > com o termo finito + bucket conhecido; 2 plantas/país sem
+  > `fuel_type_bucket` ficam de fora); (c) se este congelamento de G merece uma
+  > entrada em `docs/DECISIONS.md` como decisão de snapshot de dado.

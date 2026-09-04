@@ -27,12 +27,14 @@ Leia os quatro, não um no lugar do outro.
 
 ## Estado quando isto foi escrito
 
-2026-09-03. Camadas de aquisição e de processamento de clima reconstruídas:
+2026-09-04. Camadas de aquisição e de processamento de clima reconstruídas:
 `src/config.py`, 9 downloaders (inclui `cds_precipitation_downloader` para
 um termo de SPEI futuro), 3 processors de clima (calor, água, variabilidade
-sv/iv), 122 testes. As verificações pós-dados V1–V6 (`ARCHITECTURE.md`
-Seção 9) estão **todas fechadas** e a arquitetura de índice foi decidida: o
-Climate Change Risk Score (CCRS), score numérico único + duas bandas de
-risco, substitui SCI/NAES (`ARCHITECTURE.md` Seção 5,
-`analysis/climate_risk_score_spec.md`). Nenhum código do CCRS escrito em
-`src/` ainda.
+sv/iv). Camada de índice iniciada: `src/index/ccrs_calculator.py` calcula o
+termo `Hazard_{i,s}` do CCRS (transformação global por termo com bounds
+congelados + trava de regressão, pesos água/calor por bucket, GFDL-ESM4 e
+MIROC6 em campos separados). 141 testes. As verificações pós-dados V1–V6
+(`ARCHITECTURE.md` Seção 9) estão **todas fechadas**; o CCRS (score numérico
+único + duas bandas de risco) substitui SCI/NAES (`ARCHITECTURE.md` Seção 5,
+`analysis/climate_risk_score_spec.md`). Falta a montagem do `CCRS_i,s`
+completo, `age_factor`, `EventMultiplier`, bandas, Monte Carlo e relatórios.
