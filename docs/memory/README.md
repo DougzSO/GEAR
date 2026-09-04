@@ -58,8 +58,13 @@ calcula o termo de seca (SPEI-12 via Thornthwaite PET) e, desde
 `docs/DECISIONS.md` "[2026-09-04] SPEI drought term added to Hazard",
 `docs/memory/05-decisoes-tecnicas.md` item 18); `BUCKET_WEIGHTS` passou de
 `(w_water, w_heat)` para `(w_water, w_heat, w_drought)` por bucket,
-`FROZEN_BOUNDS` ganhou uma entrada `spei` por GCM. 242 testes. As
+`FROZEN_BOUNDS` ganhou uma entrada `spei` por GCM. `src/index/monte_carlo.py`
+implementa a sensibilidade Monte Carlo (item J, escopo aprovado): N=1000 ×
+3 magnitudes, perturbando a razão água/calor do bucket thermal (drought
+fixo), taxas de `age_factor` (coal/wind/hydro sobre faixas de literatura) e
+`EventMultiplier k`, com `FROZEN_BOUNDS`/cortes de `risk_bands.py`
+explicitamente fora de escopo — ver
+`docs/memory/05-decisoes-tecnicas.md` item 19. 256 testes. As
 verificações pós-dados V1–V6 (`ARCHITECTURE.md` Seção 9) estão **todas
 fechadas**; o CCRS substitui SCI/NAES. A camada de índice está completa
-exceto o wrapper de Monte Carlo (spec item J) e relatórios per-country
-adicionais.
+exceto relatórios per-country adicionais.

@@ -612,3 +612,57 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   `test_real_gcm_columns_never_blended_with_three_terms`).
 - **Status:** Ativa. Spec item F fechado. Suíte completa: 242 testes
   passando (~2m43s).
+
+---
+
+## 19. CCRS Monte Carlo sensitivity — `src/index/monte_carlo.py` (spec item J, escopo aprovado)
+
+- **Contexto:** item J (perturbação Monte Carlo dos parâmetros de
+  julgamento do CCRS) implementado sob escopo explicitamente aprovado por
+  Douglas: N=1000 iterações × 3 magnitudes (±10/20/30%), 3 parâmetros
+  perturbados (razão água/calor do bucket thermal, taxas de retenção de
+  `age_factor` para coal/wind/hydro, amplitude `k` do `EventMultiplier`),
+  `FROZEN_BOUNDS` e cortes de `risk_bands.py` explicitamente fora de
+  escopo.
+- **Decisão de engenharia — pré-computação fora do loop:** os termos
+  transformados por raster (`water_sub`, `T_heat`, `T_spei`, via
+  `ccrs_calculator.compute_hazard`, bounds congelados não perturbados) são
+  calculados **uma vez**, não a cada iteração — refazer a leitura de raster
+  3000× seria inviável. Cada sorteio recomputa só o que depende dos
+  parâmetros perturbados: `age_factor` por planta (versão vetorizada em
+  `numpy`, testada contra `age_factor.compute_age_factors()` nas taxas
+  centrais), os pesos do bucket thermal, `EventMultiplier_c`, e o produto
+  final `CCRS = Hazard × age_factor × EventMultiplier`. Simulação completa
+  (N=1000 × 3 magnitudes × 3 países, 2 GCMs): **~2m44s** (46s de
+  pré-computação + 116s de cômputo) — viável, sem necessidade de reduzir N.
+- **Duas leituras de escopo não cobertas pelo brief original (que antecede
+  a integração do SPEI) — sinalizadas explicitamente no docstring do
+  módulo, não decididas silenciosamente:**
+  - Perturbação do bucket thermal: razão água:calor perturbada e
+    renormalizada para preencher `1 - w_drought`, com `w_drought` fixo em
+    0.30 (não nomeado no escopo aprovado, que é 2-way e pré-SPEI).
+  - RNG independente **por país apenas**, não por país×cenário: nenhum dos
+    3 parâmetros aprovados depende de cenário, e a produção aplica um
+    `EventMultiplier_c` idêntico nas 3 linhas de cenário do país — um
+    stream por cenário injetaria ruído não-físico numa quantidade
+    invariante por cenário.
+- **Dois bugs encontrados e corrigidos durante a implementação:**
+  1. Plantas thermal fora de qualquer bacia Aqueduct (`water_sub` NaN,
+     comportamento esperado de `ccrs_calculator.hazard()`) contaminavam o
+     `np.bincount` do grupo inteiro (país×cenário×banda) em vez de só
+     serem excluídas da média daquele sorteio — `np.bincount` não ignora
+     NaN como `pandas.Series.sum()` ignora. Corrigido com
+     `_weighted_group_mean`, que filtra linhas NaN antes do bincount.
+  2. `None` de `risk_bands._bandize` virava `float('nan')` silenciosamente
+     no `.merge()` para anexar as bandas — `nan != None` avalia `True`,
+     então o filtro `!= None` deixava passar linhas sem banda. Corrigido
+     com `pd.notna()`.
+- **Garantia de dado atual:** roda sobre o CCRS pós-integração SPEI —
+  recomputado inteiramente em memória via `ccrs_calculator`/`risk_bands`
+  (nunca lê `data/outputs/tables/*.csv`, que na época da implementação
+  ainda estavam desatualizados/pré-SPEI).
+- **Arquivos:** `src/index/monte_carlo.py`, `tests/test_monte_carlo.py`
+  (14 testes).
+- **Status:** Ativa, aguardando confirmação de Douglas sobre os dois
+  pontos de leitura de escopo acima (thermal drought fixo; RNG por país
+  vs. país×cenário).
