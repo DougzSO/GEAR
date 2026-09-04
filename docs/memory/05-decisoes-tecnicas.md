@@ -736,3 +736,134 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
 - **Arquivos:** `src/visualization/{__init__,_common,data,maps,charts}.py`,
   `tests/test_visualization.py` (17 testes).
 - **Status:** Ativa.
+
+## 21. Revisão do módulo de visualização (2026-09-04, rodada de review de Douglas)
+
+- **Contexto:** após a implementação inicial (item 20), Douglas revisou as 11
+  figuras geradas e pediu uma rodada de correções/extensões em três blocos:
+  Parte A (estilo, aplica a todas as figuras), Parte B (correções pontuais
+  por categoria existente), Parte C (novas figuras/tabelas). Todo o módulo
+  continua consumindo `src/index/*` em memória, nunca CSV cacheado (regra
+  inalterada do item 20).
+- **Decisão — Parte A (estilo global):**
+  - PDFs isolados: `_common.save_figure` grava o PDF em `<pasta>/pdf/<nome>.pdf`
+    em vez de ao lado do PNG (`_common.pdf_path_for`).
+  - Nenhuma figura imprime título (`fig.suptitle` removido de todo o
+    módulo); o contexto que estava no título virou rodapé
+    (`_common.figure_caption_footer(_single)`), sem duplicar a legenda GADM.
+    Rótulo por painel (ex. "Brazil (n=...)") foi mantido — é rótulo de
+    painel, não título de figura — mas em negrito e com texto
+    "Power Plants=N" em vez de "n=N" (`_common.panel_title`).
+  - Fontes +20%: `_common.FONT_SCALE = 1.2`, helper `_common.fs(base)` para
+    todo `fontsize` explícito, e `plt.rcParams` elevado para os tamanhos
+    default (eixo/tick/legenda) que não passam `fontsize` explicitamente.
+  - Aproveitamento de espaço: categorias 1/3/10 passaram a usar grade
+    país×cenário (ver abaixo) com `constrained_layout=True` e altura de
+    linha proporcional ao aspect ratio real do país
+    (`maps._combined_grid_figsize`), o mesmo princípio de
+    `ccrs_overview_gfdl_esm4_bau` generalizado, corrigindo o espaço em
+    branco excessivo do HeatRiskBand antigo.
+- **Decisão — B1 (HeatRiskBand, categoria 4):** reescrito para uma figura
+  por cenário de calor (chamar `plot_heat_risk_band_map` uma vez por
+  `water_scenario`), GFDL-ESM4 apenas, 3 países lado a lado — a antiga
+  segunda linha MIROC6 (só ssp370) foi removida. **A comparação GFDL vs.
+  MIROC6 foi mantida, como tabela, não descartada**: decisão reportada e
+  aceita — `tables.heat_band_gcm_comparison_table` (uma linha por país:
+  share de capacidade em HIGH/EXTREME por GCM + diferença), porque a
+  pergunta que o segundo painel respondia ("o GCM de sensibilidade diverge
+  o bastante do primário para importar") é melhor respondida por um número
+  direto do que por comparação visual de dois mapas.
+- **Decisão — B2 (categorias 1/3/10):** geradas para os 3 cenários de água
+  numa grade único por figura — `combined=True` vira grade países (linha) x
+  cenários (coluna); `combined=False` vira 1 país x 3 cenários lado a lado.
+  Implementado em `maps._render_scenario_bubble_figure` (categorias 1 e 10,
+  reaproveitando `_draw_bubble_panel`) e replicado inline em
+  `plot_water_risk_band_map` (categoria 3, `_draw_band_panel`).
+- **Decisão — B3 (contingência WaterRiskBand×HeatRiskBand, categoria 5):**
+  heatmap substituído por barras empilhadas por país (`charts.
+  plot_water_heat_combined_risk_bars`), mesma linguagem visual de
+  `capacity_by_risk_band`. As 5×4=20 combinações de banda foram colapsadas
+  numa severidade combinada de 4 níveis (`charts._combined_risk_level` —
+  rank normalizado máximo entre WaterRiskBand e HeatRiskBand, reagrupado nos
+  mesmos 4 rótulos de HeatRiskBand) — simplificação explícita, reportada,
+  necessária para não exigir uma legenda de 20 cores ilegível. Tabela
+  complementar com os números completos (não colapsados) em
+  `tables.water_heat_contingency_capacity_table`.
+- **Decisão — B4 (Top-N breakdown, categoria 11):** reescrito de heatmap
+  único para pequeno múltiplo com um painel de barras horizontais POR
+  bucket (`charts.plot_top_n_ccrs_breakdown_by_bucket`) — nunca mistura
+  hydro/thermal/wind/solar no mesmo ranking. Escolha de gráfico justificada
+  na docstring da função: nomes de planta são texto longo (barra horizontal
+  lê sem rotação, o que um heatmap não escala além de ~15 linhas), e um
+  painel por bucket evita competir cor-de-bucket com cor-de-score na mesma
+  matriz.
+- **Decisão — B5 (figuras "fracas"):** `age_factor_by_bucket`,
+  `capacity_by_risk_band` e `ccrs_distribution_by_bucket` MANTIDAS (carregam
+  conteúdo metodológico/de resultado real) mas realocadas para
+  `combined/secondary/` (`charts.SECONDARY_DIR`);
+  `ccrs_distribution_by_bucket` passou a ser gerável para os 3 cenários
+  (antes só bau). `plot_event_multiplier_by_country` (categoria 9) foi
+  **removida do código**, não apenas realocada — 3 números por país são
+  mais bem lidos numa tabela do que num gráfico de 3 barras com duas linhas
+  de anotação por barra; substituída por `tables.event_multiplier_table`
+  (mesmos números).
+- **Decisão — C1/C2 (CCRS nacional agregado com IC):** nova função
+  `monte_carlo.run_country_scenario_simulation` (agrupamento só por país x
+  cenário, sem banda — reaproveita `compute_draw_ccrs`/
+  `_weighted_group_mean` já testados, não é um novo mecanismo de
+  perturbação) alimenta `charts.plot_national_ccrs_with_ci` (pontos + barra
+  de erro IC 2.5/50/97.5%, GFDL-ESM4 primário) e
+  `tables.national_ccrs_summary_table` (mesmos números + ranking).
+  **Decisão sobre MIROC6, reportada:** entra no MESMO painel como marcador
+  secundário (losango, mais claro, levemente deslocado), não como painel
+  separado — resultado central compacto, ao contrário do mapa de
+  HeatRiskBand (item B1) que é inerentemente espacial. As 3 magnitudes de
+  perturbação aprovadas (±10/20/30%) são agrupadas (pooled) numa única
+  distribuição empírica por grupo para esta figura "manchete" — decisão
+  explícita para não exigir que o leitor escolha uma magnitude; o detalhe
+  por magnitude não se perde, fica na tabela C5.
+- **Decisão — C3 (tabela de pesos com proveniência):**
+  `tables.hazard_weight_provenance_table` consolida os pesos internos de
+  `water_sub` (ws/sv/iv, 0.4164/0.2505/0.3331 — fechado, derivado das
+  larguras de categoria do WRI Aqueduct 4.0) e os pesos por bucket
+  (water/heat/drought) com a proveniência exatamente como documentada em
+  `docs/DECISIONS.md` ("SPEI drought term added to Hazard", 2026-09-04):
+  julgamento qualitativo explícito de Douglas, não calibração. Nenhuma
+  proveniência foi inventada.
+- **Decisão — C4 (contribuição relativa dos termos de Hazard):** nova
+  `tables.hazard_term_contribution_table` (participação capacity-weighted
+  de water_sub/heat/drought no Hazard final, por país x cenário, a partir de
+  `ccrs_calculator.compute_hazard`) + `charts.plot_hazard_term_contribution`
+  (barras empilhadas).
+- **Decisão — C5 (tabelas do Monte Carlo):** `tables.
+  monte_carlo_parameter_summary_table` — país x cenário x magnitude de
+  perturbação, ponto + IC — chama `run_country_scenario_simulation` uma vez
+  por magnitude (não pooled, ao contrário de C1) para preservar a dimensão
+  de magnitude como tabela em vez de colapsá-la.
+- **Decisão — C6 (validação espacial EM-DAT), NÃO implementada:**
+  investigação de viabilidade feita e reportada antes de qualquer código
+  (`tables.C6_INVESTIGATION_NOTE`), conforme exigido. Achado, a partir de
+  `data/outputs/inspection/emdat_coverage.csv`: cobertura de Latitude/
+  Longitude pontual é 5.3-12.1% dos eventos (Portugal só 2 eventos) —
+  insuficiente para sobreposição pontual; cobertura de `GADM Admin Units`
+  (nível admin-1, poligonal) é 50.3-52.6% em todos os 3 países — suficiente
+  para uma sobreposição poligonal, não pontual. Desenho proposto (não
+  codado): atribuir cada evento geocodificado ao(s) polígono(s) admin-1 via
+  `GADM Admin Units`, agregar o termo de Hazard relevante por tipo de
+  desastre dentro desse polígono, comparar via teste de Mann-Whitney U
+  (não paramétrico, N pequeno por país) entre polígonos com e sem evento
+  registrado, mostrado como box/strip plot com estatística e p-valor
+  anotados — nunca um score único combinado. Ressalvas registradas: ~50% de
+  não-cobertura não é amostra aleatória (eventos mais documentados/urbanos
+  provavelmente sobrerrepresentados), N=38 de Portugal limita qualquer corte
+  por tipo de desastre, formato exato de `GADM Admin Units` (pode cobrir
+  múltiplos polígonos/níveis) não verificado, e associação não implica
+  causação com 3 países e múltiplos tipos de desastre comparados. Aguardando
+  aprovação de Douglas antes de qualquer implementação.
+- **Arquivos:** `src/visualization/_common.py`, `maps.py`, `charts.py`
+  (reescritos), `src/visualization/tables.py` (novo),
+  `src/index/monte_carlo.py` (nova função
+  `run_country_scenario_simulation`), `tests/test_visualization.py`
+  (reescrito, 35 testes).
+- **Status:** Ativa. C6 permanece em aberto (exploratório, aguardando
+  decisão de Douglas).

@@ -102,6 +102,32 @@ NATIONAL_FACECOLOR = "#f5f5f0"
 ADMIN1_LINE_COLOR = "#999999"
 ADMIN1_LINE_WIDTH = 0.35
 
+# --------------------------------------------------------------------------
+# Fonts -- every figure text (axis labels, legends, annotations, footers) is
+# 20% larger than the pre-review baseline (Douglas's review round,
+# 2026-09-04). ``fs()`` scales any literal fontsize passed explicitly at a
+# call site; ``plt.rcParams`` below raises the *default* sizes matplotlib
+# applies where no explicit fontsize is passed (axis tick labels, unlabelled
+# ax.set_xlabel/ax.set_ylabel calls).
+# --------------------------------------------------------------------------
+FONT_SCALE = 1.2
+
+
+def fs(base: float) -> float:
+    return round(base * FONT_SCALE, 1)
+
+
+plt.rcParams.update({
+    "font.size": fs(10),
+    "axes.titlesize": fs(11),
+    "axes.labelsize": fs(10),
+    "xtick.labelsize": fs(9),
+    "ytick.labelsize": fs(9),
+    "legend.fontsize": fs(9),
+    "figure.titlesize": fs(13),
+})
+
+TITLE_FONTWEIGHT = "bold"
 DISPUTED_GID_PREFIX = "Z"
 DISPUTED_LINE_COLOR = "#bbbbbb"
 DISPUTED_LINE_STYLE = "--"
@@ -126,6 +152,43 @@ def bucket_legend_handles():
                       markeredgecolor="none", markersize=9, label=bucket)
         for bucket, color in BUCKET_COLORS.items()
     ]
+
+
+def panel_title(ax, text: str, n_power_plants: int, n_excluded: int | None = None) -> None:
+    """Bold text above a map panel -- ``Power Plants=N`` (never ``n=N``), plus
+    ``excluded=M`` when the panel distinguishes computable-base membership.
+    No figure in this module prints a title (``fig.suptitle``/figure-level
+    caption text is a footer, see ``figure_caption_footer``) -- this is the
+    per-panel label only (Douglas's 2026-09-04 review)."""
+    label = f"{text} (Power Plants={n_power_plants:,}"
+    if n_excluded is not None:
+        label += f", excluded={n_excluded:,}"
+    label += ")"
+    ax.set_title(label, fontweight=TITLE_FONTWEIGHT, fontsize=fs(10))
+
+
+def figure_caption_footer(fig, artists, caption: str, countries: list[str] | None = None) -> None:
+    """Figure-level context (what the old code put in ``fig.suptitle``) is
+    printed as a footer instead -- no figure carries a printed title
+    (Douglas's 2026-09-04 review). Appends the GADM disclaimer, if any of
+    ``countries`` has disputed admin-1 territory, onto the same footer line
+    rather than a second one."""
+    text = caption
+    if countries:
+        disclaimer = footer_with_gadm_disclaimer("", countries)
+        if disclaimer:
+            text = f"{text} — {disclaimer}" if text else disclaimer
+    footer_below_panels(fig, artists, text)
+
+
+def figure_caption_footer_single(fig, ax, caption: str, countries: list[str] | None = None) -> None:
+    """Single-panel equivalent of ``figure_caption_footer``."""
+    text = caption
+    if countries:
+        disclaimer = footer_with_gadm_disclaimer("", countries)
+        if disclaimer:
+            text = f"{text} — {disclaimer}" if text else disclaimer
+    footer_below_artist(fig, ax, text)
 
 
 def not_computable_legend_handle():
@@ -259,7 +322,7 @@ def multi_panel_figsize(countries: list[str], base_height: float = 9.0) -> tuple
 # --------------------------------------------------------------------------
 # Footer / legend positioning (reused pattern)
 # --------------------------------------------------------------------------
-FOOTER_FONTSIZE = 8.5
+FOOTER_FONTSIZE = fs(8.5)
 _FOOTER_CHAR_WIDTH_IN = 0.063
 
 
@@ -302,11 +365,19 @@ def legend_below_artists(fig, artists, handles, margin: float = 0.015, **legend_
 
 
 # --------------------------------------------------------------------------
-# Save (PNG+PDF, dpi=200)
+# Save (PNG in the output dir, PDF isolated in a "pdf/" subfolder -- Douglas's
+# 2026-09-04 review: every output directory keeps PNGs alongside a /pdf/
+# subfolder holding only the PDFs, instead of interleaving both formats)
 # --------------------------------------------------------------------------
+def pdf_path_for(out_path: pathlib.Path) -> pathlib.Path:
+    return out_path.parent / "pdf" / out_path.with_suffix(".pdf").name
+
+
 def save_figure(fig, out_path: pathlib.Path) -> pathlib.Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=MAP_DPI, bbox_inches="tight")
-    fig.savefig(out_path.with_suffix(".pdf"), bbox_inches="tight")
+    pdf_path = pdf_path_for(out_path)
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(pdf_path, bbox_inches="tight")
     plt.close(fig)
     return out_path

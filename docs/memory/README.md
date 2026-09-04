@@ -64,7 +64,22 @@ implementa a sensibilidade Monte Carlo (item J, escopo aprovado): N=1000 ×
 fixo), taxas de `age_factor` (coal/wind/hydro sobre faixas de literatura) e
 `EventMultiplier k`, com `FROZEN_BOUNDS`/cortes de `risk_bands.py`
 explicitamente fora de escopo — ver
-`docs/memory/05-decisoes-tecnicas.md` item 19. 256 testes. As
-verificações pós-dados V1–V6 (`ARCHITECTURE.md` Seção 9) estão **todas
-fechadas**; o CCRS substitui SCI/NAES. A camada de índice está completa
-exceto relatórios per-country adicionais.
+`docs/memory/05-decisoes-tecnicas.md` item 19. `src/visualization/`
+(`_common.py`, `data.py`, `maps.py`, `charts.py`, `tables.py`) gera as
+figuras/tabelas do CCRS a partir de `src/index/*` em memória, nunca de CSV
+cacheado; `ccrs_report.assemble_ccrs()` é o núcleo único de montagem
+compartilhado entre `compute_ccrs()` (disco) e `data.py` (memória) — ver
+item 20. Revisado em 2026-09-04 (rodada de review de Douglas): sem título
+impresso em nenhuma figura, PDFs isolados em `pdf/`, fontes +20%,
+categorias 1/3/10 geradas para os 3 cenários de água numa grade país×
+cenário, HeatRiskBand reescrito (GFDL-ESM4 apenas, comparação com MIROC6
+virou tabela), contingência WaterRiskBand×HeatRiskBand virou barras
+empilhadas, Top-N breakdown virou pequeno múltiplo por bucket, EventMultiplier
+por país virou tabela (gráfico removido), e cinco tabelas/figuras novas:
+CCRS nacional agregado com IC do Monte Carlo, tabela de pesos com
+proveniência, contribuição relativa dos termos de Hazard, e tabelas do
+Monte Carlo por magnitude — ver item 21. Validação espacial EM-DAT contra
+hazard (C6) foi investigada e reportada, não implementada — aguarda decisão
+de Douglas. 294 testes. As verificações pós-dados V1–V6 (`ARCHITECTURE.md`
+Seção 9) estão **todas fechadas**; o CCRS substitui SCI/NAES. A camada de
+índice está completa exceto relatórios per-country adicionais.

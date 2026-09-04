@@ -1,12 +1,15 @@
-"""Tests for src/visualization -- the 11 approved CCRS figure categories.
+"""Tests for src/visualization -- the CCRS figure/table modules, including
+Douglas's 2026-09-04 review round (Parts A-C).
 
 Covers: one test per figure category running on small synthetic data (no
 rendering validation, just "runs without raising and produces the expected
 file/object"), disputed-territory handling (India) still works against the
 new schema, computable-base plants are always marked (never omitted),
-per-country + combined produce the right file counts, and the module never
-reads a CSV from data/outputs/tables/ (mocks src/index/* and confirms the
-result tracks the mock, not a pre-existing file).
+per-country + combined produce the right file counts, the module never reads
+a CSV from data/outputs/tables/, the Part A style rules (PDF isolated in a
+pdf/ subfolder, no printed title, Power Plants=X wording), the B1/B2
+scenario-grid generation, and the new C1-C5 figures/tables. C6 is not
+implemented (exploratory only, see ``test_c6_investigation_documented``).
 
 Figure-generating tests are skipped (never silently passed) when the GADM
 boundary files are absent -- they are raw source data, not stale-methodology
@@ -22,9 +25,9 @@ import pandas as pd
 import pytest
 
 from src.config import COUNTRIES
-from src.index.ccrs_calculator import BUCKETS
+from src.index.ccrs_calculator import BUCKETS, WATER_SCENARIOS
 from src.index.risk_bands import HEAT_RISK_BANDS, PRIMARY_GCM, WATER_RISK_BANDS, BandTable
-from src.visualization import _common, charts, data as vdata, maps
+from src.visualization import _common, charts, data as vdata, maps, tables as vtables
 
 
 def _boundaries_present() -> bool:
@@ -97,6 +100,19 @@ def _synthetic_event_multipliers() -> pd.DataFrame:
     })
 
 
+def _synthetic_national_ci(scenarios=("opt", "bau", "pes"), seed=0) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    rows = []
+    for country in COUNTRIES:
+        for scen in scenarios:
+            point = rng.uniform(0.3, 0.9)
+            rows.append({
+                "country": country, "water_scenario": scen, "point_estimate": point,
+                "p2.5": point * 0.85, "p50.0": point, "p97.5": point * 1.15,
+            })
+    return pd.DataFrame(rows)
+
+
 @pytest.fixture(scope="module")
 def synth():
     final = _synthetic_final()
@@ -106,6 +122,21 @@ def synth():
         "age_factors": _synthetic_age_factors(final),
         "event_multipliers": _synthetic_event_multipliers(),
     }
+
+
+def _capture_figures(monkeypatch, module):
+    """Intercepts every ``save_figure`` call made by ``module`` so the test
+    can inspect the ``Figure`` object before it is closed (the public
+    plotting functions save-and-close internally)."""
+    captured = []
+    real_save = _common.save_figure
+
+    def _spy(fig, out_path):
+        captured.append(fig)
+        return real_save(fig, out_path)
+
+    monkeypatch.setattr(module, "save_figure", _spy)
+    return captured
 
 
 # --------------------------------------------------------------------------
@@ -136,39 +167,53 @@ def test_category_3_water_risk_band_map(synth, tmp_path, monkeypatch):
 def test_category_4_heat_risk_band_map(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     paths = maps.plot_heat_risk_band_map(countries=["Portugal"], final=synth["final"])
-    assert paths["Portugal"].exists()
+    assert paths["combined"].exists()
 
 
-def test_category_5_contingency_heatmap(synth, tmp_path, monkeypatch):
+def test_category_5_water_heat_combined_risk_bars(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
-    paths = charts.plot_contingency_heatmap(countries=["Portugal"], bands=synth["bands"])
+    paths = charts.plot_water_heat_combined_risk_bars(countries=["Portugal"], bands=synth["bands"])
     assert paths["Portugal"].exists()
 
 
 def test_category_6_ccrs_distribution_by_bucket(synth, tmp_path, monkeypatch):
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
     path = charts.plot_ccrs_distribution_by_bucket(final=synth["final"])
     assert path.exists()
 
 
+def test_category_6_ccrs_distribution_covers_all_scenarios(synth, tmp_path, monkeypatch):
+    """B5: category 6 must be generatable for all three water scenarios,
+    not bau only."""
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
+    paths = {ws: charts.plot_ccrs_distribution_by_bucket(final=synth["final"], water_scenario=ws)
+             for ws in WATER_SCENARIOS}
+    assert len(paths) == 3
+    for p in paths.values():
+        assert p.exists()
+
+
 def test_category_7_age_factor_by_bucket(synth, tmp_path, monkeypatch):
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
     path = charts.plot_age_factor_by_bucket(age_factors=synth["age_factors"])
     assert path.exists()
 
 
 def test_category_8_capacity_by_risk_band(synth, tmp_path, monkeypatch):
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
     water_shares = vdata.load_water_band_shares(synth["bands"])
     heat_shares = vdata.load_heat_band_shares(synth["bands"])
     path = charts.plot_capacity_by_risk_band(water_shares=water_shares, heat_shares=heat_shares)
     assert path.exists()
 
 
-def test_category_9_event_multiplier_by_country(synth, tmp_path, monkeypatch):
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
-    path = charts.plot_event_multiplier_by_country(event_multipliers=synth["event_multipliers"])
-    assert path.exists()
+def test_category_9_event_multiplier_removed_replaced_by_table():
+    """B5: the 3-bar EventMultiplier chart is removed, not relocated --
+    replaced by ``tables.event_multiplier_table``."""
+    assert not hasattr(charts, "plot_event_multiplier_by_country")
+    table = vtables.event_multiplier_table(synth_em := _synthetic_event_multipliers())
+    assert list(table["country"]) == sorted(COUNTRIES)
+    assert set(table.columns) == {"country", "n_events", "rate", "event_multiplier"}
 
 
 @boundaries_needed
@@ -178,10 +223,10 @@ def test_category_10_computable_base_map(synth, tmp_path, monkeypatch):
     assert paths["Brazil"].exists()
 
 
-def test_category_11_top_n_ccrs_breakdown(synth, tmp_path, monkeypatch):
+def test_category_11_top_n_ccrs_breakdown_by_bucket(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
-    path = charts.plot_top_n_ccrs_breakdown(final=synth["final"], n=5)
-    assert path.exists()
+    paths = charts.plot_top_n_ccrs_breakdown_by_bucket(countries=["Portugal"], final=synth["final"], n=3)
+    assert paths["Portugal"].exists()
 
 
 # --------------------------------------------------------------------------
@@ -216,8 +261,6 @@ def test_excluded_plants_are_marked_never_dropped(synth):
     assert len(excluded) > 0, "fixture must contain at least one excluded plant to test this"
 
     frame_country = final[(final["country"] == "Brazil") & (final["water_scenario"] == "bau")]
-    # Direct check on the panel-drawing helper's bookkeeping instead of
-    # pixel inspection: it must count every excluded row, not drop any.
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots()
     try:
@@ -229,12 +272,9 @@ def test_excluded_plants_are_marked_never_dropped(synth):
     assert expected_excluded > 0
 
 
+@boundaries_needed
 def test_computable_base_map_includes_excluded_in_footer_count(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
-    if not _boundaries_present():
-        pytest.skip("GADM boundary files absent")
-    # Regression guard: rendering must not silently filter the excluded rows
-    # out of the input frame before drawing.
     final = synth["final"]
     frame_country = final[(final["country"] == "Brazil") & (final["water_scenario"] == "bau")]
     assert (~frame_country["computable"]).any()
@@ -252,23 +292,18 @@ def test_per_country_and_combined_file_counts(synth, tmp_path, monkeypatch):
     assert len(per_country) == len(COUNTRIES)
     assert set(per_country) == set(COUNTRIES)
     for p in per_country.values():
-        assert p.exists() and p.with_suffix(".pdf").exists()
+        assert p.exists() and _common.pdf_path_for(p).exists()
 
     combined = maps.plot_ccrs_overview_map(final=synth["final"], combined=True)
     assert len(combined) == 1
     assert "combined" in combined
-    assert combined["combined"].exists() and combined["combined"].with_suffix(".pdf").exists()
+    assert combined["combined"].exists() and _common.pdf_path_for(combined["combined"]).exists()
 
 
 # --------------------------------------------------------------------------
 # 5. No dependency on cached CSVs in data/outputs/tables/
 # --------------------------------------------------------------------------
 def test_load_ccrs_final_never_reads_a_cached_csv(monkeypatch, tmp_path):
-    """Patches every src/index/* entry point data.py calls with in-memory
-    fakes and confirms the result tracks the fakes -- if the module fell
-    back to reading a CSV from data/outputs/tables/, the assertions below
-    (which check the OUTPUT matches the FAKE, not whatever happens to be on
-    disk) would fail."""
     from src.index import age_factor, ccrs_calculator as ccrs, event_multiplier, risk_bands
 
     fake_hazard = pd.DataFrame({
@@ -307,3 +342,212 @@ def test_load_ccrs_final_never_reads_a_cached_csv(monkeypatch, tmp_path):
     assert list(final["plant_uid"]) == ["X-01"]
     assert final["ccrs_gfdl_esm4"].iloc[0] == pytest.approx(0.42 * 1.3 * 1.05)
     assert final["water_risk_band"].iloc[0] == "Low"
+
+
+# --------------------------------------------------------------------------
+# 6. Part A -- style rules: PDF subfolder, no title, Power Plants=X, bold
+# --------------------------------------------------------------------------
+def test_save_figure_isolates_pdf_in_a_subfolder(tmp_path):
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1])
+    out_path = tmp_path / "some_figure.png"
+    _common.save_figure(fig, out_path)
+    assert out_path.exists()
+    pdf_path = tmp_path / "pdf" / "some_figure.pdf"
+    assert pdf_path.exists()
+    assert pdf_path == _common.pdf_path_for(out_path)
+    assert not (tmp_path / "some_figure.pdf").exists()
+
+
+@boundaries_needed
+def test_no_figure_prints_a_title(synth, tmp_path, monkeypatch):
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    maps.plot_ccrs_overview_map(countries=["Portugal"], final=synth["final"], combined=False)
+    assert len(captured) == 1
+    assert captured[0]._suptitle is None
+
+
+def test_panel_title_uses_power_plants_wording_and_is_bold():
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots()
+    try:
+        _common.panel_title(ax, "Portugal", 12, 3)
+        title = ax.get_title()
+        assert "Power Plants=12" in title
+        assert "n=" not in title
+        assert "excluded=3" in title
+        assert ax.title.get_fontweight() in ("bold", 700)
+    finally:
+        plt.close(fig)
+
+
+# --------------------------------------------------------------------------
+# 7. B1/B2 -- scenario-grid generation
+# --------------------------------------------------------------------------
+@boundaries_needed
+def test_overview_map_combined_is_a_country_by_scenario_grid(synth, tmp_path, monkeypatch):
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    maps.plot_ccrs_overview_map(countries=["Brazil", "Portugal"], final=synth["final"], combined=True)
+    fig = captured[0]
+    assert len(fig.axes) == 2 * len(WATER_SCENARIOS)  # 2 countries x 3 scenarios
+
+
+@boundaries_needed
+def test_overview_map_per_country_has_one_panel_per_scenario(synth, tmp_path, monkeypatch):
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    maps.plot_ccrs_overview_map(countries=["Portugal"], final=synth["final"], combined=False)
+    fig = captured[0]
+    assert len(fig.axes) == len(WATER_SCENARIOS)
+
+
+@boundaries_needed
+def test_water_risk_band_map_generated_for_all_scenarios(synth, tmp_path, monkeypatch):
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    paths = maps.plot_water_risk_band_map(countries=["Portugal"], final=synth["final"], combined=False)
+    assert paths["Portugal"].exists()
+
+
+@boundaries_needed
+def test_computable_base_map_generated_for_all_scenarios(synth, tmp_path, monkeypatch):
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    maps.plot_computable_base_map(countries=["Portugal"], final=synth["final"], combined=False)
+    fig = captured[0]
+    assert len(fig.axes) == len(WATER_SCENARIOS)
+
+
+@boundaries_needed
+def test_heat_risk_band_map_gfdl_only_three_countries(synth, tmp_path, monkeypatch):
+    """B1: no more MIROC6 panel row -- one figure, GFDL-ESM4 only, one panel
+    per country."""
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    maps.plot_heat_risk_band_map(countries=["Brazil", "Portugal", "India"], final=synth["final"])
+    fig = captured[0]
+    assert len(fig.axes) == 3  # one per country, no GCM row split
+
+
+def test_heat_band_gcm_comparison_table_replaces_the_second_panel(synth):
+    """B1's decision: the dropped MIROC6 map panel is replaced by a compact
+    per-country comparison table, not silently dropped."""
+    table = vtables.heat_band_gcm_comparison_table(bands=synth["bands"], water_scenario="bau")
+    assert set(table["country"]) == set(COUNTRIES)
+    assert {"share_high_or_extreme_gfdl_esm4", "share_high_or_extreme_miroc6",
+            "difference_miroc6_minus_gfdl"} <= set(table.columns)
+
+
+# --------------------------------------------------------------------------
+# 8. B3 -- combined-risk stacked bars + complementary table
+# --------------------------------------------------------------------------
+def test_water_heat_contingency_capacity_table(synth):
+    table = vtables.water_heat_contingency_capacity_table(bands=synth["bands"])
+    assert {"country", "water_scenario", "water_risk_band", "heat_risk_band", "capacity_mw"} <= set(table.columns)
+    assert (table["capacity_mw"] >= 0).all()
+
+
+# --------------------------------------------------------------------------
+# 9. C1/C2 -- national aggregate CCRS with CI, figure + table
+# --------------------------------------------------------------------------
+def test_national_ccrs_with_ci_figure(tmp_path, monkeypatch):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    ci_primary = _synthetic_national_ci()
+    ci_secondary = _synthetic_national_ci(seed=1)
+    path = charts.plot_national_ccrs_with_ci(ci_primary=ci_primary, ci_secondary=ci_secondary)
+    assert path.exists()
+
+
+def test_national_ccrs_summary_table_ranks_within_scenario():
+    ci = _synthetic_national_ci()
+    table = vtables.national_ccrs_summary_table(ci)
+    assert set(table.columns) >= {"country", "water_scenario", "point_estimate", "rank_within_scenario"}
+    for scen in ("opt", "bau", "pes"):
+        ranks = sorted(table.loc[table["water_scenario"] == scen, "rank_within_scenario"])
+        assert ranks == list(range(1, len(COUNTRIES) + 1))
+
+
+# --------------------------------------------------------------------------
+# 10. C3 -- weight provenance table (no invented provenance)
+# --------------------------------------------------------------------------
+def test_hazard_weight_provenance_table_covers_every_weight():
+    from src.index.ccrs_calculator import BUCKET_WEIGHTS
+
+    table = vtables.hazard_weight_provenance_table()
+    n_bucket_weights = sum(len(w) for w in BUCKET_WEIGHTS.values())
+    assert len(table) == 3 + n_bucket_weights  # 3 within-water weights + every bucket weight
+    assert table["provenance"].notna().all()
+    assert (table["provenance"].str.len() > 0).all()
+    # every bucket weight row must carry the "judgment call" provenance, never a fabricated calibration claim
+    bucket_rows = table[table["bucket"] != "n/a (applies inside every bucket's water_sub)"]
+    assert bucket_rows["provenance"].str.contains("judgment call").all()
+
+
+# --------------------------------------------------------------------------
+# 11. C4 -- relative Hazard-term contribution
+# --------------------------------------------------------------------------
+def _synthetic_contribution() -> pd.DataFrame:
+    rows = []
+    for country in COUNTRIES:
+        for scen in ("opt", "bau", "pes"):
+            rows.append({
+                "country": country, "water_scenario": scen,
+                "water_share": 0.5, "heat_share": 0.3, "drought_share": 0.2,
+            })
+    return pd.DataFrame(rows)
+
+
+def test_hazard_term_contribution_figure(tmp_path, monkeypatch):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    path = charts.plot_hazard_term_contribution(contribution=_synthetic_contribution())
+    assert path.exists()
+
+
+# --------------------------------------------------------------------------
+# 12. C5 -- Monte Carlo national summary table (mocked, no raster pipeline)
+# --------------------------------------------------------------------------
+def test_monte_carlo_parameter_summary_table_shape(monkeypatch):
+    from src.index import monte_carlo as mc
+
+    class _FakePre:
+        pass
+
+    def _fake_sim(magnitudes, n, pre, model):
+        (magnitude,) = magnitudes
+        rows = [{"country": c, "water_scenario": ws, "point_estimate": 0.5,
+                 "p2.5": 0.4, "p50.0": 0.5, "p97.5": 0.6}
+                for c in COUNTRIES for ws in ("opt", "bau", "pes")]
+        return pd.DataFrame(rows)
+
+    monkeypatch.setattr(mc, "run_country_scenario_simulation", _fake_sim)
+    table = vtables.monte_carlo_parameter_summary_table(magnitudes=(0.10, 0.20, 0.30), n=5, pre=_FakePre())
+    assert len(table) == 3 * len(COUNTRIES) * 3  # magnitudes x countries x scenarios
+    assert set(table["magnitude"]) == {0.10, 0.20, 0.30}
+
+
+# --------------------------------------------------------------------------
+# 13. C6 -- exploratory only, not implemented (feasibility reported instead)
+# --------------------------------------------------------------------------
+def test_c6_investigation_documented():
+    """C6 (EM-DAT spatial overlay validation) was investigated but NOT
+    implemented -- Douglas's brief required reporting feasibility and a
+    design proposal before any code. This test only guards that the finding
+    is recorded (``tables.C6_INVESTIGATION_NOTE``), not that a figure/table
+    exists -- there is deliberately none yet."""
+    assert not hasattr(vtables, "plot_emdat_spatial_validation")
+    assert not hasattr(vtables, "emdat_spatial_validation_table")
+    assert "not implemented" in vtables.C6_INVESTIGATION_NOTE.lower()
+    assert "GADM Admin Units" in vtables.C6_INVESTIGATION_NOTE
+
+
+# --------------------------------------------------------------------------
+# 14. B4 -- Top-N breakdown never mixes buckets in the same ranking
+# --------------------------------------------------------------------------
+def test_top_n_breakdown_by_bucket_never_mixes_buckets(synth, tmp_path, monkeypatch):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    captured = _capture_figures(monkeypatch, charts)
+    charts.plot_top_n_ccrs_breakdown_by_bucket(countries=["Portugal"], final=synth["final"], n=3)
+    fig = captured[0]
+    assert len(fig.axes) == len(BUCKETS)  # one panel per bucket, never combined

@@ -510,6 +510,51 @@ def run_simulation(
     return {"water": water_df, "heat": heat_df}
 
 
+def run_country_scenario_simulation(
+    magnitudes: tuple[float, ...] = MAGNITUDES, n: int = N_ITERATIONS,
+    pre: "_Precomputed | None" = None, model: str | None = None,
+) -> pd.DataFrame:
+    """National-aggregate CI, grouped by (country, water_scenario) only --
+    no risk-band split. Added for the visualization module's C1/C2 figure
+    and table (Douglas's 2026-09-04 review): "one CCRS score per country x
+    scenario, with the Monte Carlo CI already implemented" is a coarser
+    grouping than ``run_simulation``'s (country, scenario, band) groups,
+    not a new perturbation mechanism -- every draw is produced by the same
+    ``compute_draw_ccrs`` this module already uses and tests.
+
+    Pools every ``magnitude`` in ``magnitudes`` into ONE empirical
+    distribution per group (default: all three approved magnitudes, 3000
+    draws) rather than reporting one CI per magnitude -- reported here as
+    the deliberate choice for a single "headline" figure that does not
+    require the reader to pick a magnitude first. The magnitude-resolved
+    breakdown is not lost: pass a single-element ``magnitudes`` tuple (see
+    ``src/visualization/tables.py``'s ``monte_carlo_parameter_summary_table``,
+    which calls this once per magnitude for the C5 table).
+
+    Uses ``model`` (default ``risk_bands.PRIMARY_GCM``) only -- this
+    function does not blend or average across GCMs (ARCHITECTURE.md
+    Section 5.4); call it once per GCM if a MIROC6 comparison is wanted."""
+    pre = pre or _Precomputed()
+    model = model or risk_bands.PRIMARY_GCM
+    h = pre.haz[model]
+    mask = h["computable"]
+    group_ids, index = _group_ids(h["country"][mask], h["water_scenario"][mask])
+    n_groups = len(index)
+    capacity = h["capacity_mw"][mask]
+
+    pooled_draws = []
+    for magnitude in magnitudes:
+        params_by_country = {c: draw_country_params(c, magnitude, n) for c in COUNTRIES}
+        draws = np.empty((n, n_groups), dtype="float64")
+        for i in range(n):
+            ccrs_vals = compute_draw_ccrs(pre, model, params_by_country, i)[mask]
+            draws[i] = _weighted_group_mean(group_ids, n_groups, capacity, ccrs_vals)
+        pooled_draws.append(draws)
+
+    pooled = np.concatenate(pooled_draws, axis=0)
+    return _draws_to_ci_frame(pooled, index, ["country", "water_scenario"])
+
+
 def _draws_to_ci_frame(draws: np.ndarray, index: pd.MultiIndex, key_names: list[str]) -> pd.DataFrame:
     rows = []
     for col, key in enumerate(index):
