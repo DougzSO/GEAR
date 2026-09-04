@@ -101,11 +101,12 @@
   (`docs/DECISIONS.md`, entrada de normalização de calor). `_assert_consistent_grid`
   já falha alto (`GridMismatchError`) se rasters a agrupar divergirem em
   grade.
-- **SPEI:** os 36 downloads de pr/tas (2 GCMs × 3 cenários × 3 países) rodam
-  em background via `cds_precipitation_downloader`
-  (`logs/spei_download.log`); `spei_processor` **não** implementado — SPEI
-  é cálculo de série temporal completa, não média de período, e é meta
-  separada a definir.
+- **SPEI:** os 36 downloads de pr/tas (2 GCMs × 3 cenários × 3 países) estão
+  **concluídos** — 36/36 `.nc` validados, série diária 2041–2070 completa
+  (GFDL-ESM4 `n=10950` noleap, MIROC6 `n=10957`), 72 rasters QA de média do
+  período gravados (`logs/spei_download_report.json`). `spei_processor`
+  **não** implementado — SPEI é cálculo de série temporal completa, não
+  média de período, e é meta separada a definir.
 
 ## Limitações metodológicas herdadas (declarar no manuscrito — ver `ARCHITECTURE.md`)
 
