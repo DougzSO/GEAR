@@ -219,7 +219,40 @@ Log of every methodological and data-source decision made during this project, i
   open-air raw coal stockpile over 330 days, not power-plant ageing.
   Neither supports a physical age_factor and both are excluded from
   the manuscript.
-- Status: active
+- Status: superseded by [2026-09-03] Age factor curves revised with additional literature (V1 revision) — numeric curves for coal/wind/solar/bioenergy revised; nuclear/gas/mixed-fuel rule unchanged.
+
+## [2026-09-03] Age factor curves revised with additional literature (V1 revision)
+
+- Decision: age_factor curves updated for coal, wind, solar and
+  bioenergy with newly verified literature; nuclear confirmed at
+  neutral baseline (1.0); gas curve unchanged.
+- Coal: 0.25%/year heat-consumption deterioration (unchanged rate,
+  IEA 2010), now cross-validated by a second independent source --
+  Sagaf (2020), two 660 MW units, 0.19-0.44%/year boiler efficiency
+  deterioration (mean ~0.32%/year), consistent order of magnitude.
+- Wind: 0.15 percentage points of capacity factor decline per year
+  (Olauson, Edström & Rydén, 2017, Wind Energy, Swedish turbine
+  fleet -- verified). Converted to age_factor via
+  age_factor = 1 - (0.0015 x age / CF_initial). Fallback of 0.4%/year
+  relative if per-turbine capacity factor data is unavailable,
+  documented as a placeholder.
+- Solar: 0.7%/year at plant level (module physics 0.5%/year plus
+  soiling/downtime/inverter losses), compound decay
+  age_factor = (1-0.007)^age. Sources: Deline et al. (NREL, 2020,
+  2024), Boretti & Castellotto (2024).
+- Nuclear: confirmed at 1.0 (neutral) -- no change from original V1,
+  reinforced by Blake (1992) and Simola (1999): US capacity factors
+  improved with fleet age, aging is component-level and
+  non-predictable at fleet scale.
+- Bioenergy: changed to 1.0 (neutral). Original V1 used the coal curve
+  as a proxy (0.25%/year) on shared combustion-plant ageing grounds;
+  that proxy is dropped for want of fleet-level longitudinal evidence
+  (Ghenai & Hachicha, 2017, is a fuel-mix effect study, not an aging
+  study), aligning bioenergy with nuclear at the neutral baseline.
+- Mixed-fuel plants: unchanged, simple average of component curves
+  (capacity-weighted if per-fuel capacity data available).
+- Status: active (supersedes 0861754's numeric curves for coal/wind/
+  solar/bioenergy; nuclear/gas/mixed-fuel rule unchanged)
 
 ## [2026-09-03] Second CMIP6 GCM: MIROC6 (V4 closed); SSP3-7.0 added as intermediate scenario (V3 closed)
 
