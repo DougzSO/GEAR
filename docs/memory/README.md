@@ -40,8 +40,12 @@ idade `≥ 1` (`age_factor = 2 - clip(retention(age), 0, 1)` ∈ `[1,2]` —
 convenção confirmada como definitiva pelo autor, item D fechado,
 `docs/DECISIONS.md` 2026-09-04; coal com overhaul assumido dente-de-serra,
 wind uniforme 0,4%/ano sem `CF_initial`) e multiplica o Hazard por
-`plant_uid`. 189 testes. As
+`plant_uid`; `src/index/event_multiplier.py` calcula o multiplicador de
+frequência de desastres `≥ 1` por país (`EventMultiplier_c = 1 +
+0,5·rate_c/rate_max`, `rate_c = N_events(c)/124` a partir de
+`emdat_{país}.csv`, item C sem divergência spec/ARCHITECTURE) e multiplica o
+Hazard por `country`, sem duplicar/derrubar `plant_uid`. 201 testes. As
 verificações pós-dados V1–V6 (`ARCHITECTURE.md` Seção 9) estão **todas
-fechadas**; o CCRS substitui SCI/NAES. Falta a montagem do `CCRS_i,s`
-(Hazard × age_factor × EventMultiplier), `EventMultiplier`, Monte Carlo e
-relatórios per-country.
+fechadas**; o CCRS substitui SCI/NAES. Os três fatores multiplicativos
+existem; falta a montagem final do `CCRS_i,s` (produto Hazard × age_factor ×
+EventMultiplier numa coluna única), Monte Carlo e relatórios per-country.

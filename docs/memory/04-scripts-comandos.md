@@ -88,12 +88,20 @@ Ordem: `heat_stress_processor` → (`water_stress_processor`,
 # age_factor (>= 1, 2 - retention(age)) por plant_uid + Hazard multiplicado.
 # -> ccrs_age_factors.csv, ccrs_hazard_aged.csv, age_factor_report.md
 .venv\Scripts\python -m src.index.age_factor
+
+# EventMultiplier_c (>= 1, 1 + 0.5*rate_c/rate_max) por país, a partir de
+# data/raw/validation/emdat_{país}.csv -> ccrs_event_multipliers.csv
+.venv\Scripts\python -m src.index.event_multiplier
 ```
 
 `risk_bands` depende dos rasters brutos (via `ccrs_calculator.sample_terms`).
 `--heat-gcm miroc6` gera o painel de sensibilidade (percentis do próprio
 MIROC6, nunca blend). O relatório sempre traz o aviso literal de que o
 HeatRiskBand não é comparável entre rodadas com pool diferente.
+
+`event_multiplier` depende de `data/raw/validation/emdat_{país}.csv` já
+baixado (`python -m src.downloaders.emdat_downloader`) — não roda o
+downloader sozinho.
 
 Depende dos três processors de clima já rodados (lê os rasters brutos deles).
 `--check-bounds` sai com código 1 se `FROZEN_BOUNDS` divergir dos dados — nesse

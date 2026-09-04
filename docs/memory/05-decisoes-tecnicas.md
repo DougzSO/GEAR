@@ -436,3 +436,46 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   5 anos / recuperação de 70% é parâmetro assumido e revisável (não é "open"
   no sentido de bloquear item D — é estimativa documentada). `EventMultiplier`
   e a montagem do `CCRS_i,s` completo seguem pendentes.
+
+## 15. CCRS `EventMultiplier_c` — `src/index/event_multiplier.py` (spec item C, sem divergência)
+
+- **Contexto:** spec §7 e `ARCHITECTURE.md` §7.2 dão a mesma fórmula, a mesma
+  base de `N_events` (239/38/622) e a mesma aplicação a nível de país — sem
+  divergência (checado antes de codar, item 0 da tarefa). Item C da spec já
+  estava "Set"; esta é a implementação.
+- **Decisão:** `EventMultiplier_c = 1 + EVENT_MULTIPLIER_K·(rate_c/rate_max)`,
+  `EVENT_MULTIPLIER_K = 0,5` (parâmetro de julgamento, não re-derivado — item
+  J de Monte Carlo, ainda não implementado). `rate_c = N_events(c) /
+  EMDAT_ARCHIVE_SPAN_YEARS`, `EMDAT_ARCHIVE_SPAN_YEARS = 124` (1900–2024, span
+  do EM-DAT Archive; cancela exatamente na razão `rate_c/rate_max`, mantido só
+  por fidelidade aos documentos-fonte e legibilidade). `rate_max` = maior
+  `rate_c` entre os países passados (Índia, hoje).
+- **`N_events(c)` — sem normalização inventada.** É a contagem de linhas de
+  `data/raw/validation/emdat_{país}.csv` (`emdat_downloader.country_csv_path`)
+  — o arquivo **já** está filtrado por ISO do país e pelos 4 tipos de desastre
+  climáticos (`emdat_downloader.DISASTER_TYPES`), então já É a "contagem
+  elegível filtrada por tipo" que spec/ARCHITECTURE citam. Nenhum filtro,
+  peso, ou normalização por capacidade/nº de plantas adicional. Confirmado
+  contra os dados: 239 (BR) / 38 (PT) / 622 (IN) linhas — batendo exatamente
+  com os dois documentos-fonte.
+- **Aplicação — join por `country`, multiplicativo, nunca somado.**
+  `EventMultiplier_c` é geocodificado só a nível de país (V2 fechado) — todo
+  `plant_uid` de um país recebe o mesmo valor. `apply_to_hazard` faz o join em
+  `country` (nunca em `plant_uid`), `merge(..., validate="many_to_one")` +
+  checagem explícita de contagem de linha (levanta se o join mudar o total —
+  guarda contra fan-out por país duplicado na tabela de multiplicadores, ou
+  drop por país ausente). Multiplica cada coluna de Hazard
+  (`{col}_x_event`), mesmo padrão de `age_factor.apply_to_hazard`
+  (`{col}_aged`) — nunca soma.
+- **Regressão (fixture antiga BR 1,192 / PT 1,031 / IN 1,500):** recalculado
+  BR 1,192122 / PT 1,030547 / IN 1,500000 — diffs 0,000122 / 0,000453 / 0 —
+  todas ≤ 0,01 → **aceitas**, fixture do teste usa os valores de precisão
+  plena.
+- **Não monta o `CCRS_i,s` completo** — só prova/testa o passo de join+
+  multiplicação do `EventMultiplier` isoladamente, como `age_factor.py` faz
+  para o age factor. A montagem final (produto dos três fatores numa coluna)
+  segue como módulo separado, ainda não escrito.
+- **Idioma:** módulo e teste em inglês.
+- **Arquivos:** `src/index/event_multiplier.py`, `tests/test_event_multiplier.py`.
+- **Status:** Ativa. `k = 0,5` é o único parâmetro em aberto para a
+  sensibilidade Monte Carlo do item J (spec), não para re-derivação.

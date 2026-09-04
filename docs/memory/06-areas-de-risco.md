@@ -27,7 +27,12 @@
   múltiplos ciclos), wind uniforme 0,4%/ano + checagem de inalcançabilidade do
   branch morto de `CF_initial` (inspeção de `inspect.getsource`), mixed fuel,
   `commissioning_year` ausente, aplicação multiplicativa por `plant_uid`,
-  guarda de CSV desatualizado. 189 testes, todos passando em 2026-09-04.
+  guarda de CSV desatualizado; para o `event_multiplier` — os 3 países contra
+  a fixture de regressão, `rate_max`/`>= 1`, join por `country` sem duplicar
+  nem derrubar linha de `plant_uid` (reembaralhamento de contagem por
+  planta), guarda contra país ausente e contra país duplicado na tabela de
+  multiplicadores (`MergeError` do `validate="many_to_one"`). 201 testes,
+  todos passando em 2026-09-04.
 - **Não coberto:** o caminho real download → arquivo em disco para qualquer
   fonte (nenhum teste toca rede, por decisão — consistente com o padrão de
   testes de processor herdado). A resposta real da API do CDS, do GEE e do
@@ -97,20 +102,25 @@
 
 ## TODOs que bloqueiam fases seguintes
 
-- **Camada de índice (CCRS) — Hazard, bandas de risco e age_factor escritos.**
-  `ccrs_calculator.py` (Hazard), `risk_bands.py` (Water/HeatRiskBand),
-  `age_factor.py` (multiplicador `≥ 1`). V1–V6 todos fechados. O que ainda
-  falta:
+- **Camada de índice (CCRS) — Hazard, bandas de risco, age_factor e
+  EventMultiplier escritos.** `ccrs_calculator.py` (Hazard), `risk_bands.py`
+  (Water/HeatRiskBand), `age_factor.py` (multiplicador `≥ 1`),
+  `event_multiplier.py` (multiplicador `≥ 1` por país). V1–V6 todos
+  fechados. O que ainda falta:
   - código de produção: **montagem do `CCRS_i,s` = Hazard × age_factor ×
-    EventMultiplier**, `EventMultiplier`, relatórios per-country de share de
-    capacidade por banda, wrapper de Monte Carlo;
+    EventMultiplier** numa coluna única (os três fatores já existem
+    isoladamente, com `apply_to_hazard` provando o join/multiplicação de cada
+    um), relatórios per-country de share de capacidade por banda, wrapper de
+    Monte Carlo;
   - itens ainda em aberto na spec: termo de SPEI (F), clip de outlier em sv/iv
     (I), sensibilidade Monte Carlo do split térmico e do `k` do
     `EventMultiplier` (J). Fechados na implementação: G (bounds congelados,
-    `FROZEN_BOUNDS` + trava, item 12) e **D** (`age_factor ≥ 1`,
+    `FROZEN_BOUNDS` + trava, item 12), **D** (`age_factor ≥ 1`,
     `2 - retention(age)`, convenção confirmada como definitiva pelo autor —
     `docs/DECISIONS.md` 2026-09-04, entrada final; ver item 14 de
-    `05-decisoes-tecnicas.md` para o histórico das três entradas).
+    `05-decisoes-tecnicas.md` para o histórico das três entradas) e **C**
+    (`EventMultiplier_c`, sem divergência entre spec e ARCHITECTURE — item 15
+    de `05-decisoes-tecnicas.md`).
 - **`age_factor` wind — sem branch de `CF_initial`, código morto verificado.**
   `CF_initial` (fator de capacidade inicial) não existe em nenhum arquivo GEM
   (confirmado nas 1986 usinas: BR 1126 / PT 225 / IN 635). `age_factor` usa
