@@ -31,7 +31,7 @@ Single continuous weighted sum, used for overall ranking and the per-plant map. 
 
 ## 2. WaterRiskBand — absolute WRI-anchored bands
 
-`S_water = 0.4164·ws_raw + 0.2505·sv_raw + 0.3331·iv_raw`; cuts 0.208 / 0.415 / 0.667 / 0.999 (derivation in `water_risk_band_classification.md`). % of installed capacity per band, per country x scenario. GCM-independent by construction; the plant set differs slightly between GCM columns (MIROC6 drops coastal plants).
+`S_water = 0.4164·ws_raw + 0.2505·sv_raw + 0.3331·iv_raw`; cuts 0.208 / 0.415 / 0.667 / 0.999 (derivation in `water_risk_band_classification.md`). % of installed capacity per band, per country x scenario. GCM-independent by construction; the plant set differs slightly between GCM columns (MIROC6 drops coastal plants). Portugal loses 34 plants / 804 MW (3.7% of declared capacity) under MIROC6, driven by the ~1.4-degree native grid resolution issue documented in DECISIONS.md's V4 update entry — the largest cross-country coverage divergence in this report, though it does not change Portugal's compound-risk figures (both remain 0.0%).
 
 
 **gfdl_esm4 plant set**
@@ -101,7 +101,23 @@ _Note: under GFDL-ESM4 the pooled p25 is ~0.03 days/yr — 24 % of plants have e
 
 ## 4. Joint reading — WaterRiskBand × HeatRiskBand by country
 
-% of a country's installed capacity in each (water band, heat band) cell, three scenarios pooled. This crossing is not visible in any of the single-band reports.
+% of a country's **matched** installed capacity in each (water band, heat band) cell, three scenarios pooled. **Matched** = plants with a finite value in all four terms (ws, sv, iv, heat); each country's row is normalised to its own matched capacity, **not** to total declared capacity. This crossing is not visible in any of the single-band reports.
+
+
+### Capacity coverage — declared vs. matched
+
+Plants drop out when they fall outside an Aqueduct basin (ws/sv/iv, GCM-independent) or outside the heat raster (heat, GCM-dependent). The excluded share is the difference between each country's declared installed capacity and the denominator used in the cross-tabs below.
+
+| GCM | country | declared MW | matched MW | excluded MW | matched % |
+| --- | --- | --- | --- | --- | --- |
+| gfdl_esm4 | Brazil | 218,286 | 217,316 | 971 | 99.6% |
+| gfdl_esm4 | Portugal | 21,803 | 21,778 | 25 | 99.9% |
+| gfdl_esm4 | India | 483,110 | 481,730 | 1,380 | 99.7% |
+| miroc6 | Brazil | 218,286 | 217,084 | 1,203 | 99.4% |
+| miroc6 | Portugal | 21,803 | 20,998 | 804 | 96.3% |
+| miroc6 | India | 483,110 | 481,730 | 1,380 | 99.7% |
+
+Under GFDL-ESM4 the matched/declared distinction is immaterial (99.6–99.9% everywhere). Under MIROC6 it is immaterial for Brazil (99.4%) and India (99.7%) but material for Portugal (96.3% — 34 plants / 804 MW excluded by the coarse native grid, per §2). Portugal's compound-risk cells are 0.0% regardless, so no headline number changes.
 
 
 ### gfdl_esm4
