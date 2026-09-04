@@ -9,8 +9,16 @@ be reviewed before any of it becomes a DECISIONS.md entry or `src/` code.
 The **band structure** (Section 8) is closed: absolute `WaterRiskBand`,
 sample-relative `HeatRiskBand`, replacing the single-combined-score band.
 The `sv`/`iv` rasteriser it depends on is built and tested
-(`src/processors/water_variability_processor.py`). Everything else in
-Section 10 is still open.
+(`src/processors/water_variability_processor.py`). The **per-bucket
+`(w_water, w_heat)` split** (Section 5) is now set — hydro (1.0, 0.0),
+thermal (0.75, 0.25), wind (0.0, 1.0), solar (0.0, 1.0) — replacing the flat
+`w = 0.25` of the earlier diagnostics. The **`EventMultiplier` functional
+form** (Section 7) is now set: `EventMultiplier_c = 1 + k·(rate_c/rate_max)`,
+`k = 0.5`, country-level per V2. Still open in Section 10: `age_factor`
+mapping/code (D), `fuel_factor`/V5 (E), a SPEI term (F), frozen transform
+constants (G), sv/iv outlier clip (I), and the Monte Carlo sensitivity of
+the two judgment-call constants — thermal `w_water`/`w_heat` and
+`EventMultiplier` `k` (J).
 
 Provisional name: **Climate Change Risk Score (CCRS)**. One value **per
 plant, per scenario** (`ssp126`/`opt`, `ssp370`/`bau`, `ssp585`/`pes`).
@@ -39,10 +47,12 @@ For plant `i` under scenario `s`:
 ```
 CCRS_i,s  =  Hazard_i,s  ×  age_factor_i  ×  EventMultiplier_i
 
-Hazard_i,s =  w_water · Tlog(WaterStress_raw_i,s)
-            + w_heat  · Tlog(HeatStress_raw_i,s)
-            + w_sv    · Tlin(SeasonalVariability_raw_i,s)
-            + w_iv    · Tlin(InterannualVariability_raw_i,s)
+Hazard_i,s =  w_water[bucket_i] · water_sub_i,s
+            + w_heat[bucket_i]  · Tlog(HeatStress_raw_i,s)
+
+water_sub_i,s =  w_ws · Tlog(WaterStress_raw_i,s)
+               + w_sv · Tlin(SeasonalVariability_raw_i,s)
+               + w_iv · Tlin(InterannualVariability_raw_i,s)
 ```
 
 - `Tlog(x)` = `MinMax( log1p(x) )` — the log1p option from
@@ -51,16 +61,24 @@ Hazard_i,s =  w_water · Tlog(WaterStress_raw_i,s)
 - `MinMax` bounds are **global** — pooled over all three countries and all
   three scenarios, one fixed `(min, max)` per term (Section 8). Not
   per-country, not per-scenario.
-- `w_water + w_heat + w_sv + w_iv = 1` within each technology bucket
-  (`hydro`, `wind`, `solar`, `thermal`), consistent with §6's definition of
-  a weight. **Values not set here** (Section 10, item A).
+- **`water_sub` uses the within-water weights `(w_ws, w_sv, w_iv) =
+  (0.4164, 0.2505, 0.3331)`** derived from the WRI category step widths in
+  §8.1 — the same three numbers, here applied to the *transformed* terms for
+  the numeric score (they act on *raw* values in the absolute
+  `WaterRiskBand`).
+- **`(w_water, w_heat)` is per technology bucket** and set in Section 5:
+  `hydro` (1.0, 0.0), `thermal` (0.75, 0.25), `wind` (0.0, 1.0), `solar`
+  (0.0, 1.0). For `wind`/`solar` the entire water side — `ws`, `sv` **and**
+  `iv` — is weighted to zero. This replaces the flat `w = 0.25` on every
+  term used in the earlier `analysis/ccrs_*` diagnostics.
 - `age_factor_i ≥ 1`, multiplicative (Section 6).
 - `EventMultiplier_i ≥ 1`, multiplicative (Section 7).
 
-`Hazard_i,s` lies in `[0, 1]` only if a single term carries all the weight;
-in general it lies in `[0, max Σw·T]` and is **not** re-normalised — its
-scale is fixed by the global per-term transforms, which is what keeps
-countries comparable.
+`w_water + w_heat = 1` per bucket and `w_ws + w_sv + w_iv = 1` within
+`water_sub`, and every transformed term is in `[0, 1]`, so `Hazard_i,s ∈
+[0, 1]`. It is **not** re-normalised after the weighted sum — the scale is
+fixed by the global per-term transforms, which is what keeps countries
+comparable.
 
 ---
 
@@ -160,21 +178,44 @@ Consequences to weigh in review:
 
 ---
 
-## 5. Buckets and weights — unchanged derivation principle
+## 5. Buckets and weights — per-bucket water/heat split
 
-The weight vector `(w_water, w_heat, w_sv, w_iv)` is **per technology
-bucket** (`hydro`, `wind`, `solar`, `thermal`), summing to 1, exactly as
-§6 defines a weight. The §6 derivation procedure — project each hazard's
-literature coefficient onto its expected magnitude in this study, normalise
-within the bucket — is unchanged; it now has two more terms to place.
+The numeric `Hazard_i,s` has **two** weighted sides: a water side
+(`water_sub`, itself the fixed §8.1 `ws`/`sv`/`iv` combination) and a heat
+side (`Tlog(heat)`). The `(w_water, w_heat)` split between them is **per
+technology bucket** and set here; it replaces the flat `w = 0.25` on every
+term used in the earlier diagnostics.
 
-Open, not decided here (Section 10 item A): whether `sv`/`iv` get non-zero
-weight for buckets with no water-cooling or reservoir dependence (`wind`,
-`solar`). The physical-mechanism screen in §6.1 currently gives `wind–water`
-and `solar–water` Tier 3 ("no plausible mechanism"); the same screen would
-presumably zero `w_sv`/`w_iv` for those buckets, leaving them as
-`hydro`/`thermal` terms only. This must be argued in the weight derivation,
-not assumed here.
+| Bucket | `w_water` | `w_heat` | Justification |
+|---|---|---|---|
+| Hydro | 1.0 | 0.0 | ARCHITECTURE.md §6.1: no independent heat coefficient for hydro — reservoir-evaporation mechanism already subsumed under water stress. |
+| Thermal | 0.75 | 0.25 | Van Vliet et al. (water: 81–86 % capacity reduction under acute stress, a *total outcome*) is an order of magnitude larger effect than Ibrahim & Attia (heat: −0.12 to −0.44 %/°C, a *marginal rate*) — qualitative judgment call, not a computed ratio. |
+| Wind | 0.0 | 1.0 | ARCHITECTURE.md §6.1: no plausible physical water mechanism for wind. |
+| Solar | 0.0 | 1.0 | ARCHITECTURE.md §6.1: no plausible physical water mechanism for solar. |
+
+**These weights replace the single flat weight** (`w = 0.25` on each of the
+four terms) used in `analysis/ccrs_preliminary_distribution`,
+`analysis/ccrs_band_classification` and `analysis/ccrs_final_summary`. Those
+reports remain valid as **exploration of the distribution shape**, not as a
+final weight result. The bucket-weighted re-run is
+`analysis/ccrs_bucket_weighted_distribution.md`.
+
+**`sv`/`iv` follow the water side.** The weights above apply to the whole
+water part of the CCRS (`water_sub = 0.4164·ws + 0.2505·sv + 0.3331·iv`,
+§8.1). So for `wind`/`solar`, `sv` and `iv` are zeroed **together with**
+`ws` — `sv`/`iv` measure the variability of *water availability*, the same
+mechanism that is absent for those buckets. There is no separate
+`w_sv`/`w_iv` question for `wind`/`solar` any more.
+
+**Monte Carlo (Section 9), open item:** the `thermal` `0.75 / 0.25` pair is
+a candidate for sensitivity perturbation (±10/20/30 %, the same design as
+ARCHITECTURE.md Section 8) once Monte Carlo is implemented — **not
+implemented now**, documented as open item J. `hydro`/`wind`/`solar` do not
+need perturbation: `0.0 / 1.0` (and `1.0 / 0.0`) is a direct consequence of
+"no mechanism", not an uncertain estimate.
+
+The §8.1 within-water weights `(w_ws, w_sv, w_iv)` are **not** open — they
+are fixed by the WRI category-width derivation.
 
 ---
 
@@ -219,16 +260,44 @@ into the resilience factor as `event_factor` was.
   structured sub-national location is present for only ~30–37 % of events
   at adm1 (`analysis/emdat_coverage_diagnostics.md`); an adm1
   `EventMultiplier` would silently reopen that decision. V2 stays closed.
-- **Functional form:** `EventMultiplier_i = f( N_events(country(i)) )`, where
-  `N_events` is the type-filtered eligible EM-DAT event count on the same
-  data base V2 uses — **239 (Brazil), 38 (Portugal), 622 (India)** eligible
-  events (severity signal present in 95.0 % / 63.2 % / 98.6 % of them).
-- **`f()` is an open item** (Section 10 item C): linear in the count,
-  stepped/banded, or with a cap — plus whether the count is used raw or
-  normalised by fleet capacity / plant-count exposure, or expressed as a
-  rate over the EM-DAT 1900–2024 archive span. Same open question the V2
-  entry already carries. Not decided here, alongside the combined-score
-  weights (item A).
+- **Event base:** the type-filtered eligible EM-DAT event count on the same
+  data base V2 uses — **`N_events` = 239 (Brazil), 38 (Portugal), 622
+  (India)** (severity signal present in 95.0 % / 63.2 % / 98.6 % of them).
+
+- **Functional form (closes Section 10 item C):**
+
+  ```
+  rate_c            = N_events(c) / 124          # events per year over the
+                                                 # EM-DAT archive span 1900–2024
+  EventMultiplier_c = 1 + k · (rate_c / rate_max)
+  ```
+
+  - `rate_max = max_c rate_c` — the highest national rate among the three
+    study countries (India). The `/124` cancels in `rate_c / rate_max`, so
+    the ratio is simply `N_events(c) / N_events(India)`; the rate is
+    reported for interpretability, not because the span enters the result.
+  - `k = 0.5` — amplitude ceiling: the country with the most frequent
+    disaster record has its score lifted by at most +50 %, the rest scale
+    linearly below that. `k` is a **Monte Carlo sensitivity parameter**
+    (perturbed ±10/20/30 %, same design as Section 8 / open item J); it is
+    not re-derived from data.
+  - `EventMultiplier_c ≥ 1` always (the reference country sits at `1 + k`,
+    not at 1; no country is scored *down*).
+
+  | country | `N_events` | `rate_c` (yr⁻¹) | `rate_c / rate_max` | **`EventMultiplier_c`** (`k = 0.5`) |
+  |---|---|---|---|---|
+  | Brazil | 239 | 1.927 | 0.3842 | **1.192** |
+  | Portugal | 38 | 0.306 | 0.0611 | **1.031** |
+  | India | 622 | 5.016 | 1.0000 | **1.500** |
+
+- **Country-level, per V2 (not reopened).** `EventMultiplier_i =
+  EventMultiplier_{country(i)}` — constant across every plant in a country.
+  It shifts a whole country's scores up uniformly and does **not**
+  differentiate the intra-country ranking (the same observation already
+  recorded for the former `Resilience_i` / `event_factor`, which was also
+  country-uniform). Choosing a rate over raw count, and normalising by the
+  cross-country maximum rather than by fleet/exposure, are the resolutions
+  of the sub-questions the V2 entry left to this implementation.
 
 ---
 
@@ -367,11 +436,19 @@ inside `CCRS_i,s`. A joint cross-tabulation (capacity in each
 
 ## 9. Monte Carlo
 
-Unchanged in principle from §8: N = 1000, perturbing the calibrated weights
-and `age_factor` (and `EventMultiplier` if its form has free parameters) at
+Unchanged in principle from §8: N = 1000, perturbing free parameters at
 ±10/20/30 %. CCRS and both output reports are recomputed inside each
 iteration, giving a distribution per plant and per country×scenario band
 share rather than a point estimate.
+
+Free parameters to perturb (item J): the **thermal `w_water`/`w_heat`
+split** (`0.75 / 0.25`, §5), the **`EventMultiplier` amplitude `k`**
+(`0.5`, §7) — the two constants that are judgment calls rather than
+derivations — plus `age_factor` once its multiplier mapping exists.
+**Not** perturbed: the hydro/wind/solar `(1.0, 0.0)` / `(0.0, 1.0)` splits
+(consequence of "no mechanism"), the within-water `(w_ws, w_sv, w_iv)`
+(fixed by the WRI category-width derivation, §8.1), and the `EventMultiplier`
+event base (`N_events` counts, and India as `rate_max`).
 
 ---
 
@@ -379,15 +456,16 @@ share rather than a point estimate.
 
 | # | item | status / precedent |
 |---|---|---|
-| A | **Weights in the combined numeric `CCRS_i,s`** (`w_water`/`w_heat`/`w_sv`/`w_iv` per bucket) | Open. Same status as the original §6.1 weight matrix and V5. To be derived by projected-magnitude normalisation (§6). Includes: do `wind`/`solar` get non-zero `w_sv`/`w_iv` at all. **Note:** the *within-water* weights for `WaterRiskBand` (ws/sv/iv relative) are separately fixed in §8.1 from the WRI category widths — that derivation is for the absolute water band only, not the combined-score weight vector. |
+| A | **Weights in the combined numeric `CCRS_i,s`** | ~~Open~~ **Set** (Section 5). Per-bucket `(w_water, w_heat)`: hydro (1.0, 0.0), thermal (0.75, 0.25), wind (0.0, 1.0), solar (0.0, 1.0). `sv`/`iv` follow the water side (zeroed for wind/solar). Within-water `(w_ws, w_sv, w_iv) = (0.4164, 0.2505, 0.3331)` fixed in §8.1. The only residual freedom is the thermal `0.75 / 0.25` pair — a qualitative judgment, flagged for Monte Carlo perturbation (item J), not for re-derivation. |
 | B | **Band cutoffs** | ~~Open~~ **Closed** (Section 8). `WaterRiskBand` = absolute WRI Aqueduct 4.0 category cuts on `S_water` (0.208 / 0.415 / 0.667 / 1.0); `HeatRiskBand` = sample-relative pooled p25/p75/p95 of `extreme_heat_days`, GFDL-ESM4 primary, with a declared limitation. The single-combined-CCRS band is dropped. |
-| C | **`EventMultiplier` functional form `f()`** | Open. Linear / stepped / capped; count raw vs normalised by exposure vs rate over 1900–2024 — same open question as the V2 entry. Geocoding level is **not** open: country, per closed V2 (Section 7). |
+| C | **`EventMultiplier` functional form `f()`** | ~~Open~~ **Set** (Section 7). `EventMultiplier_c = 1 + k·(rate_c/rate_max)` with `rate_c = N_events(c)/124`, `rate_max` the cross-country max (India), `k = 0.5`. Values: Brazil 1.192, Portugal 1.031, India 1.500. Country-level per closed V2. Only `k` remains free — as a Monte Carlo sensitivity parameter (item J), not for re-derivation. |
 | D | **`age_factor` → ≥ 1 multiplier mapping** | Open. Convert §7.1 %/year curves into a multiplicative factor; confirm sign convention. |
 | E | **`fuel_factor` (V5)** | Open (V5). If it survives review it becomes a second multiplier; if removed, CCRS is unaffected as drafted. |
 | F | **Drought / SPEI term — whether to add it, and its weight** | Open. Method is settled if it is added: SPEI with **Thornthwaite** PET (`pr`+`tas`), one method across both GCMs (Section 3). Catalogue constraint in `analysis/spei_catalog_check.md`. |
 | G | **Global `(min, max)` constants per term** | To be computed once from a dated data snapshot and frozen in config; not a per-run quantity. |
 | H | **sv/iv processing path** | ~~New~~ **Done.** `src/processors/water_variability_processor.py` rasterises `sv_x_r`/`iv_x_r` into `seasonal_variability[_raw]_*` / `interannual_variability[_raw]_*` on the heat grid, mirroring `water_stress_processor` (per-country per-indicator Min-Max, no log, no sentinel). |
 | I | **Outlier handling for `Tlin` (sv/iv)** | Open. Whether a p99 clip precedes the linear Min-Max. |
+| J | **Monte Carlo perturbation of the judgment-call constants** | Open (not implemented now). Two parameters that are qualitative choices rather than derivations: the thermal `w_water`/`w_heat` split (`0.75 / 0.25`, §5) and the `EventMultiplier` amplitude `k` (`0.5`, §7). Both perturbed at ±10/20/30 %, same design as ARCHITECTURE.md Section 8. `hydro`/`wind`/`solar` splits, the within-water weights, and the event *base* (`N_events`, `rate_max` country) are not perturbed. |
 
 ---
 
@@ -399,11 +477,21 @@ and sample-relative `HeatRiskBand` (with its declared limitation). The
 single-combined-CCRS band is dropped. `sv`/`iv` rasterisation is built
 (`water_variability_processor.py`).
 
-Not settled (Section 10): the combined numeric `CCRS_i,s` weight vector
-(item A), `EventMultiplier` functional form (item C), `age_factor` →
-multiplier mapping and its code (item D), `fuel_factor` / V5 (item E),
-whether a SPEI term is added (item F), the frozen global transform constants
-(item G).
+Settled here (Section 5): the **per-bucket `(w_water, w_heat)` split** for
+the numeric `CCRS_i,s` — hydro (1.0, 0.0), thermal (0.75, 0.25), wind
+(0.0, 1.0), solar (0.0, 1.0), replacing the flat `w = 0.25` of the earlier
+diagnostics. Bucket-weighted re-run:
+`analysis/ccrs_bucket_weighted_distribution.md`.
+
+Settled here (Section 7): the **`EventMultiplier` functional form** —
+`EventMultiplier_c = 1 + k·(rate_c/rate_max)`, `k = 0.5`, country-level per
+closed V2. Values: Brazil 1.192, Portugal 1.031, India 1.500.
+
+Not settled (Section 10): `age_factor` → multiplier mapping and its code
+(item D), `fuel_factor` / V5 (item E), whether a SPEI term is added
+(item F), the frozen global transform constants (item G), the sv/iv outlier
+clip (item I), and the Monte Carlo sensitivity of the two judgment-call
+constants — thermal split and `EventMultiplier` `k` (item J).
 
 Also: this draft does not reopen or close any V-item (`EventMultiplier` is
 country-level, so V2 stays closed), and does not by itself supersede
@@ -421,7 +509,8 @@ If this spec is accepted roughly as-is, the index layer would still need:
 2. A `CCRS_i,s` assembly module — weighted sum × `age_factor` ×
    `EventMultiplier`, per plant per scenario.
 3. `age_factor` implementation with the V1 fuel sub-curves (item D).
-4. `EventMultiplier` implementation (item C; country-level per closed V2).
+4. `EventMultiplier` implementation — a 3-row country lookup
+   (`1 + 0.5·N_events(c)/622`), trivial; form fixed in §7.
 5. `WaterRiskBand` + `HeatRiskBand` classifiers promoted from the `analysis/`
    diagnostics (`water_risk_band_classification.py`, the heat-percentile cut
    in `ccrs_final_summary.py`) into `src/`.
