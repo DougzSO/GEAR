@@ -2,12 +2,14 @@
 
 ## Propósito deste documento
 
-Especifica o que o GEAR fará: escopo, índices, pesos, resiliência e
-incerteza. As decisões aqui registradas estão tomadas, exceto onde
-explicitamente marcadas como **verificação pós-dados** — itens que só
-podem ser resolvidos após a reconstrução da camada de aquisição e
-processamento e visualização dos dados reais. Nenhum código de índice
-deve ser escrito antes desse revisit.
+Especifica o que o GEAR fará: escopo, o score de risco (CCRS), pesos,
+fatores de condição do ativo (idade, evento) e incerteza. As decisões aqui
+registradas estão tomadas, exceto onde explicitamente marcadas como
+**verificação pós-dados** — itens que só podem ser resolvidos após a
+reconstrução da camada de aquisição e processamento e visualização dos
+dados reais. Dessas, apenas **V5 (`fuel_factor`)** segue em aberto; o
+desenho do CCRS (Seção 5) está fechado e registrado em `docs/DECISIONS.md`.
+Nenhum código de índice foi escrito ainda.
 
 ---
 
@@ -96,51 +98,156 @@ countries); MIROC6's realisation member is confirmed `r1i1p1f1` (grid `gn`).
 
 ---
 
-## 5. Arquitetura de índices
+## 5. Index architecture — the Climate Change Risk Score (CCRS)
 
-Dois outputs, separados e não intercambiáveis.
+*(This section was rewritten in English on 2026-09-03 when the CCRS replaced
+the SCI/NAES design. The original architecture is kept as a historical note
+in §5.6.)*
 
-### 5.1 Spatial Criticality Index (SCI)
+One score. A single continuous **Climate Change Risk Score (CCRS)** per plant
+per scenario, on one cross-country scale, replaces the two
+non-interchangeable outputs of the original design (within-country SCI,
+cross-country NAES). Capacity is **not** in the per-plant score; it enters
+only at the per-country reporting roll-up (§5.5).
 
-Ranking dentro do país. Compara plantas apenas contra outras plantas do
-mesmo país.
+Closed design of record: `analysis/climate_risk_score_spec.md`. This section
+is the ARCHITECTURE-level summary; the spec carries the full derivations and
+`docs/DECISIONS.md` the decision history.
 
-$$SCI_i = \left(\frac{Risk_i}{Risk_{max,c}}\right)^{1/3}
-\times \left(\frac{Capacity_i}{Capacity_{total,c}}\right)^{1/3}
-\times \left(1 - Resilience_{norm,i}\right)^{1/3}$$
+### 5.1 The numeric score
 
-$$Risk_i = w_{water} \cdot WaterStress_i + w_{heat} \cdot HeatStress_i$$
+For plant `i` under scenario `s`:
 
-A média geométrica é usada porque o coeficiente de variação do termo de
-participação de capacidade é várias vezes maior que o dos outros dois
-termos numa formulação linear, o que faria esse termo dominar a cauda
-superior do ranking de forma desproporcional.
+$$CCRS_{i,s} = Hazard_{i,s} \times age\_factor_i \times EventMultiplier_{c(i)}$$
 
-$Capacity_{total,c}$ é calculado sobre a base de ativos com SCI
-computável (coordenadas válidas e ano de comissionamento disponível),
-não sobre a capacidade total declarada do portfólio.
+$$Hazard_{i,s} = w_{water}[bucket_i]\cdot water\_sub_{i,s}
+             + w_{heat}[bucket_i]\cdot T_{log}(HeatStress^{raw}_{i,s})$$
 
-### 5.2 National Aggregate Exposure Score (NAES)
+$$water\_sub_{i,s} = 0.4164\cdot T_{log}(WaterStress^{raw}_{i,s})
+                  + 0.2505\cdot T_{lin}(SeasonalVar^{raw}_{i,s})
+                  + 0.3331\cdot T_{lin}(InterannualVar^{raw}_{i,s})$$
 
-Comparação entre países. Construído inteiramente sobre valores brutos
-de hazard — nunca passa pela normalização Min-Max por país que torna o
-SCI intrapaís.
+- `Tlog(x) = MinMax(log1p(x))`, `Tlin(x) = MinMax(x)`. `log1p` is applied to
+  `ws` and `heat` (severe right skew at plant level); `sv`/`iv` are
+  near-symmetric and get linear Min-Max only.
+- **Min-Max bounds are global** — one fixed `(min, max)` per term over all
+  three countries and all three scenarios pooled. No per-country Min-Max
+  anywhere in the aggregate. This is the property that makes a CCRS of 0.4
+  mean the same exposure in Lisbon and in Chennai — the property NAES had and
+  SCI deliberately gave up.
+- Four hazard terms: `ws` = Aqueduct water stress; `sv`/`iv` = Aqueduct
+  seasonal / interannual variability of blue-water supply; `heat` = mean
+  days/yr with tasmax > 40 °C. Water depletion (`wd`) is **excluded** —
+  plant-level Spearman `ws × wd` is 0.98–0.998, so `wd` carries no
+  independent rank information
+  (`analysis/aqueduct_indicator_correlation.md`).
+- The within-`water_sub` weights `(0.4164, 0.2505, 0.3331)` are **not** the
+  §6.1 magnitude derivation. They come from the WRI Aqueduct 4.0 category
+  step widths ($w_k \propto 1/\tau_k$, spec §8.1) — the same weights the
+  absolute WaterRiskBand uses.
+- `age_factor_i ≥ 1` (§7.1) and `EventMultiplier_c ≥ 1` (§7.2) **multiply**
+  the hazard score; they are not added as terms.
 
-$$NAES_{c,s} = \sum_{i \in c}
-\left(\frac{Capacity_i}{Capacity_{total,c}}\right)
-\times \left(w_{water} \cdot WaterStress^{raw}_{i,s}
-+ w_{heat} \cdot HeatStress^{raw}_{i,s}\right)$$
+`w_water + w_heat = 1` per bucket, `Σ w_k = 1` inside `water_sub`, and every
+transformed term is in `[0, 1]`, so `Hazard_i,s ∈ [0, 1]`. It is not
+re-normalised after the weighted sum.
 
-$Capacity_{total,c}$ usa a mesma base computável do SCI, pela mesma
-razão: valores brutos de hazard não podem ser produzidos para ativos sem
-coordenadas ou ano de comissionamento.
+### 5.2 Two classification bands
 
-O NAES é recomputado dentro de cada iteração de Monte Carlo, produzindo
-uma distribuição por par país–cenário em vez de uma estimativa pontual.
+The discrete risk classification is **two independently-cut bands**, not one
+band on `CCRS_i,s`. Water and heat rest on very different evidentiary bases;
+a single combined band forces the whole classification onto the weaker of
+the two (tried and rejected — `analysis/ccrs_band_classification*.py`).
 
-A limitação do raster bruto de água (bacias sentinela substituídas por
-`country_max`, Índia mais afetada) é declarada explicitamente no
-manuscrito como restrição conhecida do NAES.
+- **WaterRiskBand_i — absolute, WRI-anchored.** A combined water score
+  $S_{water,i} = 0.4164\cdot ws^{raw}_i + 0.2505\cdot sv^{raw}_i +
+  0.3331\cdot iv^{raw}_i$ (raw values), cut at the value of $S_{water}$ when
+  all three indicators sit on the same WRI Aqueduct 4.0 category boundary:
+  **0.208 / 0.415 / 0.667 / 1.0** → Low / Low-Medium / Medium-High / High /
+  Extremely-High. The `ws` thresholds trace to Raskin et al. 1997 (SEI); the
+  `sv`/`iv` CV cutoffs are WRI's own operational values (weaker but
+  published — `analysis/absolute_threshold_research.md`).
+- **HeatRiskBand_i — sample-relative.** `extreme_heat_days` classified on its
+  own at the **pooled p25 / p75 / p95 of this study's plant sample**
+  (`analysis/ccrs_preliminary_distribution.md`), GFDL-ESM4 primary. There is
+  no published absolute threshold for the annual frequency of 40 °C days —
+  this is a declared scope limit (§10), not an implementation flaw.
+
+The per-country report gives **two separate capacity shares** — "% capacity
+in [band] water risk" and "% capacity in [band] heat risk" — never summed
+into one number.
+
+### 5.3 Per-bucket water/heat weights
+
+$(w_{water}, w_{heat})$ is per technology bucket, closed:
+
+| bucket | `w_water` | `w_heat` | basis |
+|---|---|---|---|
+| hydro | 1.00 | 0.00 | §6.1: no independent heat coefficient — reservoir-evaporation channel already inside water stress |
+| thermal | 0.75 | 0.25 | §6.1: Van Vliet water outcome (81–86 % capacity loss, a *total* outcome) an order of magnitude above the Ibrahim & Attia heat rate (−0.12…−0.44 %/°C, a *marginal* rate) — informed judgment, not a computed ratio |
+| wind | 0.00 | 1.00 | §6.1: no plausible physical water mechanism |
+| solar | 0.00 | 1.00 | §6.1: no plausible physical water mechanism |
+
+For `wind`/`solar` the whole water side — `ws`, `sv` **and** `iv` — is
+weighted to zero (`sv`/`iv` measure variability of water availability, the
+same absent mechanism). These four splits replace the flat `w = 0.25` used
+in the exploratory diagnostics
+(`analysis/ccrs_bucket_weighted_distribution.md`). Only the thermal
+`0.75 / 0.25` pair is a judgment call open to Monte Carlo perturbation (§8);
+hydro/wind/solar follow directly from the §6.1 "no mechanism" rows.
+
+### 5.4 One primary GCM, one sensitivity panel
+
+The heat term is computed for two GCMs; they are **not** an equal-weight
+ensemble (§4).
+
+- **GFDL-ESM4 is the primary GCM for every CCRS figure** — numeric score,
+  both bands, and any "% of installed capacity in band …" quoted as a
+  headline result.
+- **MIROC6 is always a sensitivity panel beside the primary result** — an
+  extra column or a separate section — **never** averaged or 50/50-blended
+  with GFDL-ESM4.
+- Why not a blend: for the same physical wind/solar plants the
+  bucket-weighted hazard is ~0.006–0.03 under GFDL-ESM4 and saturates near
+  ~0.78 under MIROC6 — two orders of magnitude apart
+  (`analysis/ccrs_bucket_weighted_distribution.md`). Any average would be an
+  inter-model-weighting artifact, not a climate result.
+
+### 5.5 Capacity and the reporting roll-up
+
+Capacity enters only here, never inside `CCRS_i,s`. The per-country base is
+the computable base (valid coordinates + `commissioning_year`), the V6
+decision, unchanged. The raw-water-layer limitation (Aqueduct sentinel
+basins substituted by `country_max`, India most affected) is a declared
+manuscript limitation of the cross-country water term. A joint
+`WaterRiskBand × HeatRiskBand` capacity cross-tabulation is an auxiliary
+output (`analysis/ccrs_final_summary.md`).
+
+### 5.6 Historical note — the original SCI / NAES architecture
+
+The design of record until 2026-09-03 was two separate, non-interchangeable
+outputs:
+
+- **SCI (Spatial Criticality Index)** — within-country ranking,
+  $SCI_i = (Risk_i/Risk_{max,c})^{1/3} \times
+  (Capacity_i/Capacity_{total,c})^{1/3} \times (1 - Resilience_{norm,i})^{1/3}$,
+  per-country Min-Max, with $Risk_i = w_{water}\cdot WaterStress_i +
+  w_{heat}\cdot HeatStress_i$ (two terms). The geometric mean was used
+  because the capacity-share term's coefficient of variation dominates a
+  linear form — that rationale is why capacity was moved *out* of the
+  per-plant CCRS entirely rather than kept as a third linear term.
+- **NAES (National Aggregate Exposure Score)** — cross-country,
+  capacity-weighted sum of the *raw* hazard per country–scenario, never
+  through the per-country Min-Max. The CCRS inherits the raw-layer /
+  no-per-country-normalisation principle and carries the cross-country role
+  NAES had; the standalone NAES metric is replaced by the per-country "%
+  capacity by risk band" report.
+
+Replaced by the CCRS — see `docs/DECISIONS.md`, entry "CCRS replaces
+SCI/NAES as the unified risk architecture", for the full reason (among them:
+SCI's per-country normalisation made the country-uniform `event_factor`
+cancel algebraically out of the within-country ranking, so a country-level
+disaster signal did no work anywhere in the original outputs).
 
 ---
 
@@ -175,6 +282,20 @@ O delta de referência é fixo por tecnologia — não recomputado por país
 ou cenário. Variação por país e cenário entra pelos dados de hazard,
 não pelos pesos. Isso mantém a matriz de pesos estável e auditável.
 
+**Cross-reference — how these coefficients feed the CCRS (added 2026-09-03).**
+The CCRS per-bucket water/heat weights (Section 5.3) were set from the §6.1
+matrix by **informed qualitative judgment**, not a mechanical conversion
+formula. The magnitude-normalisation procedure above is the framework for
+that judgment — e.g. thermal's `0.75 / 0.25` reflects that Van Vliet's water
+figure is a *total-outcome* coefficient roughly an order of magnitude larger
+than the *marginal* heat rate — but the exact fractions are a documented
+judgment call, flagged for Monte Carlo sensitivity (Section 8), not the
+output of an equation. Hydro/wind/solar collapse to `1.0 / 0.0` or
+`0.0 / 1.0` directly from the §6.1 "no independent mechanism" rows. The
+within-water `ws/sv/iv` weights are derived separately, from the WRI
+Aqueduct 4.0 category widths (Section 5.1). The `sv`/`iv` hazard terms
+themselves are not in the §6.1 matrix — only the water/heat split is.
+
 ### 6.1 Matriz de pesos — estado atual das evidências
 
 | Bucket | Hazard | Coeficiente / intervalo | Tipo | Tier | Fonte |
@@ -202,96 +323,158 @@ declarada explicitamente no manuscrito.
 bucket `thermal` para derivação de pesos de água e calor. O mecanismo
 físico é o mesmo (dependência de água de refrigeração e sensibilidade
 à temperatura dessa água). A fusão cria uma tensão na curva de idade
-da resiliência, tratada na Seção 7.
+(`age_factor`), tratada na Seção 7.
 
 ---
 
-## 7. Fator de resiliência
+## 7. Asset-condition factors (age, and — pending V5 — fuel)
 
-$$Resilience_i = \max\!\left(
-age_{factor,i} \times fuel_{factor,i} \times event_{factor,i},\ 0.1
-\right)$$
+*(Rewritten in English on 2026-09-03. The original design multiplied three
+sub-factors into a single normalised `Resilience_i`; the CCRS dissolves that
+product — see below and `docs/DECISIONS.md`.)*
 
-Normalizado pelo teto empiricamente observado dentro de cada par
-país–cenário, recomputado dentro de cada iteração de Monte Carlo.
+The original design was
+$Resilience_i = \max(age_{factor,i}\times fuel_{factor,i}\times
+event_{factor,i},\ 0.1)$, normalised by the empirically observed ceiling
+within each country–scenario pair. **That product is dissolved under the
+CCRS.** `age_factor` becomes a direct multiplier on `Hazard_i,s` (§7.1),
+`event_factor` becomes the separate `EventMultiplier` (§7.2), `fuel_factor`
+stays with verification item V5 (§7.3), and the 0.1 floor and per-country
+ceiling normalisation are gone.
 
-### 7.1 Fator de idade (`age_factor`)
+**Why the product is dissolved, not just relabelled.** `event_factor` was
+country-uniform (every plant in a country shared it) and `fuel_factor` was
+bucket-uniform. SCI normalised `Resilience_i` by the per-country ceiling
+$\max_{j\in c}Resilience_j$, so the country-uniform `event_factor` appeared
+identically in the numerator and the ceiling and **cancelled exactly** out
+of `Resilience_norm,i` (modulo the rarely-binding 0.1 floor) — it contributed
+nothing to the within-country SCI ranking. NAES used no resilience term at
+all. A country-level disaster-frequency signal therefore did no work
+anywhere in the original outputs. It only does work on a score that is
+**not** per-country normalised — which is what the CCRS aggregate is (§5.1),
+so `event_factor` moves out of the resilience product and becomes
+`EventMultiplier`, a multiplier on the absolute CCRS score where a
+country-uniform factor genuinely shifts that country's plants relative to
+the other two.
 
-| Tecnologia | Curva | Fonte |
+### 7.1 Age factor (`age_factor`)
+
+`age_factor_i ≥ 1`, a direct multiplier on `Hazard_i,s` (§5.1), increasing
+with cumulative age-driven performance loss (a plant that has lost ~20 % to
+age → ≈ ×1.2). This is the opposite sign convention to the old
+`1 − Resilience_norm`; the mapping from the %/year curves below to a ≥ 1
+multiplier is set in the CCRS implementation.
+
+Curves per technology (V1 closed, then revised — see `docs/DECISIONS.md`
+entries "Age factor for thermal bucket … (V1 closed)" and "Age factor curves
+revised with additional literature (V1 revision)"):
+
+| Technology | Curve | Source |
 |---|---|---|
-| Eólica | 1,6 %/ano | Literatura existente, retida |
-| Solar | 0,6 %/ano | Literatura existente, retida |
-| Hidro | ~0,5–0,6 %/ano | Turner, S. W. D. et al. *Nature Communications*, 2024 — declínio cumulativo de 23% em 610 plantas nos EUA entre 1980 e 2022; apenas 21% desse declínio é atribuível à disponibilidade hídrica, mantendo este fator distinto do hazard de estresse hídrico já capturado separadamente |
-| Thermal | *Item V1 — RESOLVIDO: sub-curvas por `fuel_type` (ver Seção 9 e `docs/DECISIONS.md`)* | Usinas a carvão perdem eficiência com a idade; usinas a gás natural ganham eficiência com a idade no mesmo período (estudo US, 2001–2018) — sinais opostos dentro do bucket fusionado |
+| Wind | 0.15 pp of capacity factor per year (fallback 0.4 %/yr relative if per-turbine CF data unavailable) | Olauson, Edström & Rydén 2017, *Wind Energy* (Swedish fleet) |
+| Solar | 0.7 %/yr at plant level (0.5 %/yr module physics + soiling / downtime / inverter), compound decay | Deline et al. (NREL) 2020/2024; Boretti & Castellotto 2024 |
+| Hydro | ~0.5–0.6 %/yr | Turner et al. 2024, *Nature Communications* — 23 % cumulative over 610 US plants 1980–2022; only 21 % of that attributable to water availability, keeping this distinct from the water-stress hazard captured separately |
+| Coal | 0.25 %/yr heat-rate deterioration | IEA / CIAB 2010; cross-validated by Sagaf 2020 (0.19–0.44 %/yr, two 660 MW units) |
+| Gas / oil-gas | efficiency *gain* with age (opposite sign to coal), US data 2001–2018 | on record since the original V1 |
+| Nuclear | 1.0 (neutral) | licensing- / decommissioning-governed, not gradual physical decay; Blake 1992, Simola 1999 |
+| Bioenergy | 1.0 (neutral) | coal-proxy dropped for want of fleet-level longitudinal evidence (V1 revision) |
+| Mixed-fuel | average of component curves (capacity-weighted where per-fuel capacity is known) | — |
 
-### 7.2 Event factor (`event_factor`)
+The `thermal` fusion is kept for the **hazard weights** (§6.1 — shared
+cooling-water dependence) but not for `age_factor`, which tracks a
+fuel-specific physical process.
 
-(This subsection has been updated to English to reflect the closed V2
-decision.)
+### 7.2 Event multiplier (`EventMultiplier`)
 
-Historical placeholder: fixed at 1.0 for every asset (EM-DAT point
-geocoding covers only ~10.7% of events in the study region).
+`EventMultiplier_c ≥ 1`, built from EM-DAT disaster frequency, **country-
+level** (V2 closed — see `docs/DECISIONS.md`), applied as a multiplier on the
+CCRS score, not folded into a resilience factor:
 
-**RESOLVED (V2):** replaced by a per-country event-frequency factor built
-from EM-DAT — **not** a state/district factor. Structured sub-national
-administrative data is present for only 50-54% of events per country and
-splits low and evenly between adm1/state (~30-37%) and adm2/district
-(~18-30%), too sparse to support a defensible finer factor; building one
-would drop roughly two-thirds of events from its evidence base. This trades
-spatial granularity (assets within one country are not differentiated) for
-full coverage instead of a small, unrepresentative sample. See
-`docs/DECISIONS.md` and `analysis/emdat_coverage_diagnostics.md`. The exact
-form of the country factor (raw count, capacity- or exposure-normalised, or
-a rate over the 1900-2024 archive span) is left to the `event_factor`
-implementation, once V1-V6 are all closed.
+$$rate_c = N_{events}(c)\ /\ 124 \quad\text{(events/yr, EM-DAT 1900–2024)}$$
+$$EventMultiplier_c = 1 + k\cdot(rate_c / rate_{max}), \qquad k = 0.5$$
 
-### 7.3 Fator de combustível (`fuel_factor`)
+with $N_{events}$ = 239 (Brazil) / 38 (Portugal) / 622 (India) — the same
+type-filtered eligible counts as V2 — and $rate_{max}$ the highest national
+rate (India). The `/124` cancels in the ratio. Values: **Brazil 1.192,
+Portugal 1.031, India 1.500**. Every plant in a country shares its country's
+value: it shifts a whole country's scores uniformly and does not
+differentiate the intra-country ranking. `k` is a judgment-call amplitude
+ceiling, flagged for Monte Carlo perturbation (§8), not re-derived from data.
+The V2 sub-question (raw count vs rate vs exposure-normalised) is resolved
+here in favour of the rate; country-level granularity is unchanged (V2 not
+reopened).
 
-Representa diferenças de robustez estrutural por tecnologia não capturadas
-pela idade nem pelo hazard diretamente medido. A justificativa original
-dos valores deste fator foi construída parcialmente com referência ao SLR,
-que está fora do escopo ativo. Os valores precisam ser revisados e
-rejustificados exclusivamente a partir dos hazards água e calor, ou o
-fator precisa ser removido se essa justificativa não puder ser construída.
+### 7.3 Fuel factor (`fuel_factor`) — verification item V5, still open
 
-Esta revisão é verificação pós-dados (item V5).
+`fuel_factor` was meant to carry technology-level structural robustness not
+captured by age or by the measured hazard. Its original justification leaned
+partly on SLR, which is out of active scope. It is removed from the
+(now-dissolved) resilience product; **whether it exists at all as a CCRS
+factor is verification item V5** (§9), still open:
+
+- if the V5 review re-derives defensible values for every bucket (`hydro`,
+  `wind`, `solar`, `thermal`) from water and heat alone, `fuel_factor`
+  enters the CCRS as a *second* multiplicative factor alongside `age_factor`;
+- if it cannot, `fuel_factor` is dropped and the simplification is declared
+  in the manuscript.
+
+The CCRS as drafted does not include it. This is resolved by V5, not by the
+SCI → CCRS change.
 
 ---
 
-## 8. Incerteza — Monte Carlo
+## 8. Uncertainty — Monte Carlo
 
-N = 1.000 iterações, perturbando pesos calibrados e subfatores de
-resiliência em magnitudes de ±10 %, ±20 % e ±30 %.
+*(Rewritten in English on 2026-09-03 to reflect the CCRS. N = 1000 and the
+±10/20/30 % structure are unchanged.)*
 
-A perturbação é uniforme entre tiers, não tier-dependente. O tier já
-codifica o nível de confiança no momento da derivação do peso; variar
-também a magnitude de perturbação por tier testaria dois efeitos através
-de um único parâmetro.
+N = 1000 iterations, perturbing the free parameters at ±10 %, ±20 % and
+±30 %. Perturbation is uniform across confidence tiers, not tier-dependent —
+a tier already encodes confidence at derivation time; varying the
+perturbation magnitude by tier as well would test two effects through one
+parameter.
 
-O NAES é recomputado dentro de cada iteração — seu intervalo de confiança
-reflete a mesma incerteza de parâmetros que a métrica de estabilidade de
-ranking dos ativos.
+Free parameters: the thermal `w_water` / `w_heat` split (`0.75 / 0.25`,
+§5.3) and the `EventMultiplier` amplitude `k` (`0.5`, §7.2) — the two
+constants that are judgment calls rather than derivations — plus
+`age_factor`, and any free parameter of the weight matrix (§6.1) once it is
+derived. **Not** perturbed: the hydro/wind/solar splits, the within-water
+`ws/sv/iv` weights (fixed by the WRI category widths), and the
+`EventMultiplier` event base (`N_events` counts, India as `rate_max`).
+
+The CCRS and both per-country band reports are recomputed inside each
+iteration, giving a distribution per plant and per country×scenario band
+share rather than a point estimate.
 
 ---
 
 ## 9. Post-data verification items
 
 > Section language note: items V1–V4 and V6 are resolved and have been
-> rewritten in English pointing to their `docs/DECISIONS.md` entries; the
-> original observation/criterion text is kept beneath each as the record of
-> what drove the decision. **V5 is still open and is left exactly as it was,
-> in Portuguese.**
+> rewritten in English pointing to their `docs/DECISIONS.md` entries (V1 was
+> resolved, then revised — see below); the original observation/criterion
+> text is kept beneath each as the record of what drove the decision.
+> **V5 is still open — the only unresolved item.** Its Portuguese criterion
+> text is kept verbatim, with a short English status note added on top.
 
 These items could not be settled by upfront reasoning. Each had an explicit
 decision criterion to apply after the acquisition/processing layer was
-rebuilt and the real data inspected. No index code is written until all are
-resolved.
+rebuilt and the real data inspected. **V5 (`fuel_factor`) is the only one
+still open;** the CCRS index design (Section 5) is otherwise closed and
+recorded in `docs/DECISIONS.md`.
 
 **V1 — Age curve for the thermal bucket**
-- **Status: RESOLVED.** See `docs/DECISIONS.md`, entry "Age factor for
-  thermal bucket: fuel-specific curves (V1 closed)". Sub-curves per
-  `fuel_type` within thermal (coal, gas, nuclear, bioenergy, mixed); the
-  thermal fusion is kept only for the water/heat hazard weights.
+- **Status: RESOLVED, then REVISED.** Closed by `docs/DECISIONS.md` entry
+  "Age factor for thermal bucket: fuel-specific curves (V1 closed)"
+  (sub-curves per `fuel_type` within thermal; the thermal fusion is kept
+  only for the water/heat hazard weights). **Revised 2026-09-03** by the
+  follow-up entry "Age factor curves revised with additional literature
+  (V1 revision)": coal cross-validated (Sagaf 2020), wind given a verified
+  rate (Olauson et al. 2017) replacing a placeholder, solar a plant-level
+  rate, bioenergy moved from the coal proxy to a neutral 1.0. The current
+  curves — coal/gas/nuclear/bioenergy/wind/solar/hydro/mixed — are the table
+  in Section 7.1; use that table, not the original V1 entry, as the live
+  reference.
 - *Original observation (kept as historical context):* distribution of coal
   versus natural gas within the `thermal` bucket per country, in
   `gem_validated_plants_{country}.csv`.
@@ -348,6 +531,11 @@ resolved.
   cases and declare the limitation.
 
 **V5 — Fator de combustível (`fuel_factor`)**
+- **Status: still open** — the one unresolved verification item. Under the
+  CCRS the "resilience formula" mentioned below no longer exists (Section 7);
+  V5 now decides whether `fuel_factor` becomes a *second* multiplier on the
+  CCRS score alongside `age_factor`, or is dropped. The review criterion is
+  unchanged. (Portuguese text kept verbatim, per the section note above.)
 - **O que revisar:** literatura de robustez estrutural por tecnologia
   para os hazards água e calor, independentemente de SLR.
 - **Critério:** se valores defensáveis puderem ser derivados para cada
@@ -356,12 +544,14 @@ resolved.
   não produzir justificativa defensável, o fator é removido da fórmula
   de resiliência e a simplificação é declarada no manuscrito.
 
-**V6 — NAES denominator (computable base vs. total capacity)**
+**V6 — Per-country capacity roll-up base (computable base vs. total capacity)**
 - **Status: RESOLVED.** See `docs/DECISIONS.md`, entry "NAES/SCI
   computable-capacity denominator (V6 closed)". Asymmetry of 3.76
   percentage points (Brazil 98.22% / Portugal 99.59% / India 95.83%),
   below the 5-point threshold -- declared as a manuscript footnote, no
-  sensitivity check run.
+  sensitivity check run. Under the CCRS this base is the denominator of the
+  per-country "% capacity by risk band" report (Section 5.5); the decision
+  is unchanged, only the name "NAES denominator" is superseded.
 - *Original observation (kept as historical context):* fraction of GEM
   assets with valid coordinates and a `commissioning_year` over total
   declared capacity, per country.
@@ -374,25 +564,41 @@ resolved.
 
 ---
 
-## 10. O que o GEAR não faz (limites de escopo declarados)
+## 10. What GEAR does not do (declared scope limits)
 
-Estes limites são declarados no manuscrito, não omitidos.
+*(Translated to English on 2026-09-03; the HeatRiskBand limit was added in
+the same pass.)*
 
-- **SLR:** excluído por falta de base empírica defensável para a frota
-  terrestre estudada. Extensão natural quando coeficientes por tecnologia
-  para inundação costeira e ressaca estiverem disponíveis.
-- **Ativos planejados e em construção:** apenas ativos operacionais
-  entram no pipeline principal. Ativos anunciados ou em construção não
-  são incluídos.
-- **Transmissão e distribuição:** apenas geração. A exposição de linhas
-  de transmissão e subestações não é modelada.
-- **Eventos extremos agudos:** o framework modela exposição crônica
-  (condições médias 2041–2070). Eventos de cauda (ondas de calor
-  pontuais, secas extremas interanuais) não são capturados.
-- **Bias correction do GCM:** os rasters de calor usam a saída do modelo
-  diretamente, sem correção de viés sistemático. A sensibilidade a esse
-  artefato é parcialmente capturada pelo segundo GCM obrigatório (MIROC6),
-  mas não eliminada.
-- **Capacidade de adaptação:** o fator de resiliência captura
-  características estruturais do ativo (idade, histórico de eventos),
-  não capacidade prospectiva de adaptação de operadores ou reguladores.
+These limits are declared in the manuscript, not omitted.
+
+- **SLR:** excluded for lack of a defensible empirical basis for the
+  land-based fleet studied. A natural extension once per-technology
+  coefficients for coastal flooding and storm surge are available.
+- **Planned and under-construction assets:** only operating assets enter the
+  main pipeline. Announced or under-construction assets are not included.
+- **Transmission and distribution:** generation only. The exposure of
+  transmission lines and substations is not modelled.
+- **Acute extreme events:** the framework models chronic exposure (2041–2070
+  mean conditions). Tail events (single heatwaves, extreme interannual
+  droughts) are not captured.
+- **GCM bias correction:** the heat rasters use model output directly, with
+  no systematic bias correction. Sensitivity to that artifact is partly
+  captured by the mandatory second GCM (MIROC6), not eliminated.
+- **HeatRiskBand absolute threshold:** there is no published absolute
+  threshold that classifies the annual frequency of days above 40 °C into
+  risk categories (the literature classifies single-day intensity, WBGT /
+  ISO 7243, or the presence/absence of a temperature threshold, not
+  cumulative annual frequency; heat-mortality epidemiology deliberately
+  avoids fixed cuts because they do not carry across baseline climates).
+  `HeatRiskBand` (Section 5.2) therefore uses cuts relative to this study's
+  own plant sample (pooled percentiles) and is sensitive to the GCM used
+  (~10–100× difference between GFDL-ESM4 and MIROC6 in the underlying
+  values). `WaterRiskBand` is not affected — it is cut at absolute
+  WRI Aqueduct 4.0 thresholds. Declared limitation, not an implementation
+  flaw — it is the state of the art for this indicator.
+- **Adaptive capacity:** `age_factor` and `EventMultiplier` capture
+  structural characteristics of the asset (age, and the country's disaster
+  history) — not the prospective adaptive capacity of operators or
+  regulators. The CCRS measures hazard × exposure × `age_factor`, a
+  *partial* vulnerability proxy, not the full hazard × exposure ×
+  vulnerability triangle.

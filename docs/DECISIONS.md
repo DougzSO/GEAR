@@ -140,6 +140,7 @@ Log of every methodological and data-source decision made during this project, i
 - Decision: `water_stress_processor` produces a normalised layer with `risk_norm = clip((v - min) / (max - min), 0, 1)`, where `min`/`max` are computed PER COUNTRY over the three Aqueduct scenarios (bau, opt, pes) pooled together, never across countries (`compute_country_minmax`). It also writes the raw physical layer (consumption-to-availability ratio) on the same grid.
 - Reason: Ported from the prior repository. The normalised layer answers "ranking within this country"; "1.0" is this country's most water-stressed basin in any scenario and is not comparable in absolute level between countries. The NAES (not built yet) must use the raw layer, never the normalised one.
 - Status: active
+- Update (2026-09-03): the raw consumption-to-availability layer is the CCRS input (ARCHITECTURE.md Section 5.1) -- "NAES" above is the superseded name for that consumer. The per-country normalised layer is retained as a standalone within-country product, not on the CCRS path. See "CCRS replaces SCI/NAES as the unified risk architecture".
 
 ## [2026-09-03] Water stress WRI sentinel (9999) handling
 - Decision: Basins with `RAW_SENTINEL_VALUE = 9999.0` in the raw column are excluded from the Min-Max max calculation, then substituted with the real per-country max in BOTH the normalised and the raw output. They are NOT removed from the dataset.
@@ -157,6 +158,7 @@ Log of every methodological and data-source decision made during this project, i
 - Guard: `_assert_consistent_grid` raises `GridMismatchError` (never a silent pass) if the model rasters to be pooled disagree on shape, resolution/transform or CRS. No-op with one model; present so that adding the second GCM under V4 fails loudly instead of silently misaligning the normalised stack.
 - Open question (tied to V4): joint pooling is the current default. Whether to keep it or switch to per-model normalisation once real second-GCM data exists is not resolved here — it depends on how different the second GCM's extremes turn out to be, and is part of verification item V4.
 - Status: active
+- Update (2026-09-03): the raw `extreme_heat_days` layer is the CCRS heat input (ARCHITECTURE.md Section 5.1); the per-country normalised layer is a standalone within-country product, not on the CCRS path. The V4-tied joint-vs-per-model open question is unaffected. See "CCRS replaces SCI/NAES as the unified risk architecture".
 
 ## [2026-09-03] Heat stress raw layer is a passthrough of the downloader output
 - Decision: `heat_stress_processor.raw_raster_path()` returns `cds_tasmax_downloader.resampled_raster_path()` — the raw heat layer is the `extreme_heat_days_*_1km.tif` the downloader already wrote, not a new file. The processor references it, never copies or recomputes it.
@@ -167,9 +169,9 @@ Log of every methodological and data-source decision made during this project, i
 - Scope: index architecture / open question (ARCHITECTURE.md Section 6), not a resolved decision. The index layer is not built yet; this records a direction and a rejected alternative, not an implemented result.
 - Decision: `Risk_i` keeps the linear form `w_water · WaterStress_i + w_heat · HeatStress_i`. No non-linear interaction term between water and heat is introduced.
 - Reason: `analysis/normalization_diagnostics.md` task 4 found plant-level Spearman correlations between the two hazards (3-scenario pooled pairing: ssp126/opt + ssp585/pes + ssp370/bau) of about -0.45 (Brazil), +0.08 (Portugal), +0.41 (India) — India moderately compounding (the same plants tend to face both), Brazil moderately offsetting, Portugal largely independent. These reflect geographic co-location of arid/hot regions, not a documented physical mechanism by which water stress amplifies heat sensitivity (or vice versa) for a given power plant. Fitting an interaction term to this sample-specific correlation would be a category error — mistaking spatial correlation for causal compounding — and would either break cross-country comparability (if the term were country-specific) or ignore the observed country differences (if fixed).
-- Status: active — open to revision only if literature-based (not sample-derived) evidence of physical compound risk for energy infrastructure is found during the methodology revisit.
-- Companion note: per-hazard decomposition (water-only and heat-only contribution to `Risk_i`) will be considered as an auxiliary diagnostic output alongside the combined SCI, not as a replacement for it — final decision deferred to the Section 5/6 methodology revisit.
-- Note: this entry may be revisited if `Risk_i`'s formulation changes under the unified climate-risk-score redesign (see forthcoming DECISIONS.md entry).
+- Status: active — the linear, no-interaction decision is carried into "CCRS replaces SCI/NAES as the unified risk architecture"; still open to revision only if literature-based (not sample-derived) evidence of physical compound risk for energy infrastructure is found.
+- Companion note: per-hazard decomposition (water-only and heat-only contribution) remains an auxiliary diagnostic output alongside the combined score, not a replacement for it.
+- Update (2026-09-03): superseded framing, not decision. `Risk_i` is now `Hazard_i,s` (ARCHITECTURE.md Section 5.1) with **four** hazard terms (ws, sv, iv, heat) and per-bucket weights; "combined SCI" above is the superseded SCI-era name. The linear weighted sum with no water×heat interaction term is unchanged. The Spearman citation in the Reason line is the plant-level water/heat correlation and stands.
 
 ## [2026-09-03] Age factor for thermal bucket: fuel-specific curves (V1 closed)
 
@@ -334,6 +336,7 @@ Log of every methodological and data-source decision made during this project, i
   under the 5-point threshold set in ARCHITECTURE.md Section 9 (V6),
   so the criterion for a footnote-only treatment is met.
 - Status: active
+- Update (2026-09-03): "NAES/SCI denominator" is now the per-country capacity roll-up base of the CCRS "% capacity by risk band" report (ARCHITECTURE.md Section 5.5). The 3.76-point asymmetry finding and the footnote-only treatment are unchanged; only the NAES/SCI name is superseded. See "CCRS replaces SCI/NAES as the unified risk architecture".
 
 ## [2026-09-03] Event factor: country-level EM-DAT frequency (V2 closed)
 
@@ -361,3 +364,66 @@ Log of every methodological and data-source decision made during this project, i
   EM-DAT archive's 1900-2024 span. This is deferred to the event_factor
   implementation itself, once all of V1-V6 are closed.
 - Status: active
+- Update (2026-09-03): under the CCRS this becomes `EventMultiplier_c`
+  (ARCHITECTURE.md Section 7.2) -- a multiplier on the CCRS score, not a
+  sub-factor of `Resilience_i` (which is dissolved). Functional form set:
+  `EventMultiplier_c = 1 + 0.5 * (rate_c / rate_max)`, `rate_c =
+  N_events(c) / 124`, resolving the open raw-count-vs-rate sub-question
+  above in favour of the rate. Values: Brazil 1.192, Portugal 1.031, India
+  1.500. Country-level granularity unchanged -- V2 is not reopened. See
+  "CCRS replaces SCI/NAES as the unified risk architecture".
+
+## [2026-09-03] CCRS replaces SCI/NAES as the unified risk architecture
+
+- Decision: The two non-interchangeable index outputs -- the within-country
+  Spatial Criticality Index (SCI) and the cross-country National Aggregate
+  Exposure Score (NAES) -- are replaced by a single Climate Change Risk
+  Score (CCRS): one continuous value per plant per scenario on one
+  cross-country scale. `CCRS_i,s = Hazard_i,s * age_factor_i *
+  EventMultiplier_c`, with `Hazard_i,s = w_water[bucket] * water_sub +
+  w_heat[bucket] * Tlog(heat)` and `water_sub = 0.4164 * Tlog(ws) + 0.2505 *
+  Tlin(sv) + 0.3331 * Tlin(iv)`. Four hazard terms (ws, sv, iv from
+  Aqueduct; heat from CMIP6); `wd` excluded as rank-redundant with `ws`
+  (Spearman 0.98-0.998). All transforms use global (all-country,
+  all-scenario) Min-Max -- no per-country normalisation in the aggregate.
+  Per-bucket water/heat weights closed: hydro (1.0, 0.0), thermal
+  (0.75, 0.25), wind (0.0, 1.0), solar (0.0, 1.0); the within-water
+  ws/sv/iv weights come from the WRI Aqueduct 4.0 category-step widths.
+  Classification is two independent bands: WaterRiskBand (ws+sv+iv,
+  absolute WRI Aqueduct 4.0 cuts 0.208 / 0.415 / 0.667 / 1.0) and
+  HeatRiskBand (heat alone, sample-relative pooled p25/p75/p95, declared
+  limitation -- no published absolute threshold for annual 40 C day
+  frequency). `age_factor` is a >= 1 multiplier (curves per fuel_type, V1
+  + V1 revision). `EventMultiplier_c = 1 + 0.5 * (rate_c / rate_max)`,
+  country-level per V2 (Brazil 1.192, Portugal 1.031, India 1.500).
+  GFDL-ESM4 is the primary GCM for every cited figure; MIROC6 is a
+  sensitivity panel, never a 50/50 blend. Capacity enters only at the
+  per-country roll-up (computable base, V6). `fuel_factor` is not included;
+  its fate stays with V5 (open). Closed design of record:
+  `analysis/climate_risk_score_spec.md`; summary in ARCHITECTURE.md
+  Section 5.
+- Reason: SCI normalised both `Risk_i` and `Resilience_i` per country, and
+  the `event_factor` inside `Resilience_i` was country-uniform, so it
+  appeared identically in the numerator and the per-country ceiling and
+  cancelled exactly (modulo the rarely-binding 0.1 floor) -- it contributed
+  nothing to the within-country SCI ranking. NAES used no resilience term at
+  all. A country-level disaster-frequency signal therefore did no work
+  anywhere in the original outputs. NAES also gave a cross-country number
+  with no per-plant visibility, so ranking and cross-country comparison
+  lived in two disconnected metrics. A single absolute score with global
+  Min-Max gives both at once -- the same CCRS value means the same exposure
+  in any country, plants rank on one list, and the EM-DAT signal (as
+  `EventMultiplier`, on a non-per-country-normalised score) actually moves a
+  country's plants. The two-term `Risk_i` also could not carry the Aqueduct
+  variability indicators (sv, iv), which the plant-level diagnostics showed
+  were distinct from the stress level; the CCRS has four terms.
+- Status: active. Supersedes the SCI/NAES index architecture (ARCHITECTURE.md
+  Section 5, rewritten in this commit) and the 3-factor `Resilience_i`
+  product (Section 7, dissolved). Related entries are carried forward with
+  update notes, none deleted: "Water stress normalisation ...", "Heat stress
+  normalisation ...", "Hazard combination -- linear sum retained ...",
+  "NAES/SCI computable-capacity denominator (V6 closed)", "Event factor:
+  country-level EM-DAT frequency (V2 closed)". The linear no-interaction
+  hazard combination and the country-level event factor are unchanged in
+  substance. `fuel_factor` (V5) and the frozen global Min-Max constants
+  remain open.
