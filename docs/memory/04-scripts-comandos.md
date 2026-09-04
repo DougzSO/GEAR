@@ -80,7 +80,16 @@ Ordem: `heat_stress_processor` → (`water_stress_processor`,
 
 # só confere os bounds globais congelados contra os rasters em disco (não escreve)
 .venv\Scripts\python -m src.index.ccrs_calculator --check-bounds
+
+# WaterRiskBand + HeatRiskBand por planta (colunas separadas) + relatório
+# -> data/outputs/tables/ccrs_risk_bands.csv e ccrs_risk_bands_report.md
+.venv\Scripts\python -m src.index.risk_bands [--heat-gcm gfdl_esm4|miroc6]
 ```
+
+`risk_bands` depende dos rasters brutos (via `ccrs_calculator.sample_terms`).
+`--heat-gcm miroc6` gera o painel de sensibilidade (percentis do próprio
+MIROC6, nunca blend). O relatório sempre traz o aviso literal de que o
+HeatRiskBand não é comparável entre rodadas com pool diferente.
 
 Depende dos três processors de clima já rodados (lê os rasters brutos deles).
 `--check-bounds` sai com código 1 se `FROZEN_BOUNDS` divergir dos dados — nesse

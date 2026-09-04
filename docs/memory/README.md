@@ -30,11 +30,13 @@ Leia os quatro, não um no lugar do outro.
 2026-09-04. Camadas de aquisição e de processamento de clima reconstruídas:
 `src/config.py`, 9 downloaders (inclui `cds_precipitation_downloader` para
 um termo de SPEI futuro), 3 processors de clima (calor, água, variabilidade
-sv/iv). Camada de índice iniciada: `src/index/ccrs_calculator.py` calcula o
-termo `Hazard_{i,s}` do CCRS (transformação global por termo com bounds
-congelados + trava de regressão, pesos água/calor por bucket, GFDL-ESM4 e
-MIROC6 em campos separados). 141 testes. As verificações pós-dados V1–V6
-(`ARCHITECTURE.md` Seção 9) estão **todas fechadas**; o CCRS (score numérico
-único + duas bandas de risco) substitui SCI/NAES (`ARCHITECTURE.md` Seção 5,
-`analysis/climate_risk_score_spec.md`). Falta a montagem do `CCRS_i,s`
-completo, `age_factor`, `EventMultiplier`, bandas, Monte Carlo e relatórios.
+sv/iv). Camada de índice: `src/index/ccrs_calculator.py` calcula o termo
+`Hazard_{i,s}` (transformação global por termo com bounds congelados + trava
+de regressão, pesos água/calor por bucket, GFDL-ESM4 e MIROC6 separados);
+`src/index/risk_bands.py` calcula WaterRiskBand (cortes absolutos WRI fixos)
+e HeatRiskBand (percentis p25/p75/p95 de GFDL-ESM4) como colunas separadas,
+nunca um score único. 167 testes. As verificações pós-dados V1–V6
+(`ARCHITECTURE.md` Seção 9) estão **todas fechadas**; o CCRS substitui
+SCI/NAES (`ARCHITECTURE.md` Seção 5, `analysis/climate_risk_score_spec.md`).
+Falta a montagem do `CCRS_i,s` numérico completo, `age_factor`,
+`EventMultiplier`, Monte Carlo e relatórios per-country.

@@ -20,6 +20,7 @@ src/
     water_variability_processor.py  CSV Aqueduct sv/iv -> raster normalizado (Min-Max/país, pool bau/opt/pes, SEM log1p) + raster bruto, por indicador; espelha o water_stress_processor, sem sentinela
   index/               camada de índice (CCRS), reconstruída do zero
     ccrs_calculator.py  termo Hazard_{i,s} por planta/cenário/GCM: amostra os rasters brutos ws/sv/iv/heat, aplica Tlog/Tlin com bounds globais congelados (FROZEN_BOUNDS), pesos água/calor por bucket. NÃO monta o CCRS completo (age_factor = item aberto D; EventMultiplier = etapa de montagem) nem as bandas de risco.
+    risk_bands.py       WaterRiskBand (cortes absolutos WRI fixos 0,208/0,415/0,667/1,0 sobre S_water = 0,4164·ws_raw + 0,2505·sv_raw + 0,3331·iv_raw) e HeatRiskBand (p25/p75/p95 de extreme_heat_days, GFDL-ESM4 primário, 3 cenários pooled) como colunas SEPARADAS — nunca um score único. Tabela de contingência WaterRiskBand×HeatRiskBand como saída auxiliar. Depende só de ccrs_calculator. Aviso literal de não-comparabilidade do HeatRiskBand em todo relatório gerado.
 tests/                 pytest; fixtures sintéticas, sem chamada de API real (exceção: o teste de regressão de bounds do ccrs_calculator lê os rasters processados, pulado com motivo se ausentes)
 ```
 

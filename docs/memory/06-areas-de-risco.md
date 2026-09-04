@@ -13,10 +13,15 @@
   grade do calor com 2 modelos sintéticos, substituição da sentinela WRI 9999
   no bruto e no normalizado, passthrough do bruto de calor, preservação de
   NaN; para o `emdat_downloader` — cobertura lat/lon além de `Location` e
-  GADM; para o `ccrs_calculator` — aplicação dos pesos por bucket (um caso
-  por bucket), propagação/descarte de NaN por lado do score, separação
-  GFDL/MIROC6 em colunas distintas sem blend, exclusão de `wd`, base
-  computável V6. 141 testes, todos passando em 2026-09-04.
+  GADM; para o `ccrs_calculator` — pesos por bucket, propagação/descarte de
+  NaN por lado do score, separação GFDL/MIROC6 sem blend, exclusão de `wd`,
+  base computável V6, estabilidade do `plant_uid` (reembaralhar/remover linha),
+  ausência de cross-join no merge por-GCM; para o `risk_bands` — cortes
+  absolutos do WaterRiskBand (limites exatos + valor por faixa), p25/p75/p95
+  do HeatRiskBand em amostra sintética, HeatRiskBand só GFDL-ESM4 (nunca
+  MIROC6/blend), chave `plant_uid`, ausência de score único combinando as
+  bandas, aviso literal de não-comparabilidade no relatório. 167 testes,
+  todos passando em 2026-09-04.
 - **Não coberto:** o caminho real download → arquivo em disco para qualquer
   fonte (nenhum teste toca rede, por decisão — consistente com o padrão de
   testes de processor herdado). A resposta real da API do CDS, do GEE e do
@@ -86,15 +91,14 @@
 
 ## TODOs que bloqueiam fases seguintes
 
-- **Camada de índice (CCRS) — só o termo Hazard escrito em `src/`.**
-  `src/index/ccrs_calculator.py` calcula `Hazard_{i,s}` (transformação global
-  por termo + pesos por bucket, bounds congelados). V1–V6 todos fechados; o
-  desenho está em `docs/ARCHITECTURE.md` Seção 5 e
+- **Camada de índice (CCRS) — termo Hazard e bandas de risco escritos.**
+  `src/index/ccrs_calculator.py` calcula `Hazard_{i,s}`;
+  `src/index/risk_bands.py` calcula WaterRiskBand + HeatRiskBand. V1–V6 todos
+  fechados; o desenho está em `docs/ARCHITECTURE.md` Seção 5 e
   `analysis/climate_risk_score_spec.md`. O que ainda falta:
   - código de produção: montagem do `CCRS_i,s` (× `age_factor` ×
-    `EventMultiplier`), `age_factor`, `EventMultiplier`, classificadores de
-    banda (WaterRiskBand/HeatRiskBand), geradores de relatório, wrapper de
-    Monte Carlo;
+    `EventMultiplier`), `age_factor`, `EventMultiplier`, relatórios
+    per-country de share de capacidade por banda, wrapper de Monte Carlo;
   - itens ainda em aberto na spec: mapeamento das curvas %/ano do
     `age_factor` para multiplicador ≥ 1 (D), se um termo de SPEI é
     adicionado (F), clip de outlier em sv/iv (I), sensibilidade Monte Carlo
@@ -107,6 +111,13 @@
   rasters processados; é **pulado com motivo** (não passa em silêncio) se
   ausentes. Num checkout sem `data/processed/` a trava não roda — rodar
   `python -m src.index.ccrs_calculator --check-bounds` depois de reprocessar.
+- **HeatRiskBand não é comparável entre rodadas.** Cortes p25/p75/p95
+  dependem do pool de amostra (GFDL-ESM4, 3 cenários) — reprocessar rasters de
+  calor, mudar cenário/GCM ou o conjunto de plantas move os cortes
+  silenciosamente. `risk_bands.HEAT_BAND_WARNING` avisa disso em todo
+  relatório. WaterRiskBand não tem esse problema (cortes absolutos fixos). Não
+  há trava de regressão de cortes de HeatRiskBand — por design, os cortes são
+  amostrais, não uma constante a congelar.
 - **Pool de Min-Max de calor: conjunto vs. por-modelo.** MIROC6 (V4 fechado)
   domina a escala normalizada conjunta; o CCRS contorna isso consumindo o
   raster **bruto** de calor. Manter o pool conjunto ou voltar a por-modelo

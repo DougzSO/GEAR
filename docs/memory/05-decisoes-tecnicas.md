@@ -312,3 +312,42 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   > por bucket ausente. As únicas exclusões por termo são amostras NaN
   > (planta fora de bacia/raster), que são "sem valor a contribuir", não
   > exclusão de planta.
+
+## 13. CCRS bandas de risco — `risk_bands.py`
+
+- **Contexto:** o CCRS classifica cada planta com **duas bandas discretas
+  independentes** (spec §8, `ARCHITECTURE.md` §5.2). Sem divergência entre
+  spec e ARCHITECTURE nos cortes/fórmulas. Precedente de diagnóstico:
+  `analysis/water_risk_band_classification.py` e `analysis/ccrs_final_summary.py`.
+- **Decisão** (`src/index/risk_bands.py`, depende só de `ccrs_calculator`):
+  - **WaterRiskBand:** `S_water = 0,4164·ws_raw + 0,2505·sv_raw + 0,3331·iv_raw`
+    (valores **brutos**, `ws_raw` com sentinela já substituída), cortes
+    **absolutos fixos** `WATER_BAND_CUTS = (0.208, 0.415, 0.667, 1.0)` — o
+    corte de topo publicado é 0,999385, arredondado para 1,0 em
+    `ARCHITECTURE.md` §5.2 e usado como 1,0 aqui. Bandas
+    `Low / Low-Medium / Medium-High / High / Extremely-High`. Cortes
+    **left-closed** (valor exatamente no corte vai para a banda de cima).
+    Não dependem de pool nem de GCM → estáveis entre rodadas.
+  - **HeatRiskBand:** p25/p75/p95 de `extreme_heat_days` sobre **GFDL-ESM4**
+    (`PRIMARY_GCM`, `configured_models()[0]`), pool = toda linha
+    `(plant_uid, cenário)` com heat finito, 3 países × 3 cenários juntos.
+    Bandas `LOW / MEDIUM / HIGH / EXTREME` (rótulos do precedente
+    `ccrs_final_summary.py`). `compute_bands("miroc6")` gera o painel de
+    sensibilidade com os percentis do **próprio** MIROC6 — nunca blend
+    (`docs/DECISIONS.md`, entrada de bounds per-GCM). Pool de percentil inclui
+    as ~123 plantas fora de bacia Aqueduct (têm heat válido) — difere levemente
+    do diagnóstico `ccrs_final_summary` (que usou só o conjunto "matched").
+  - **Nunca um score único** combinando as duas (spec §8.4/§8.5): saem como
+    colunas separadas `water_risk_band` / `heat_risk_band`; a tabela de
+    contingência `WaterRiskBand × HeatRiskBand` (`contingency_table`) é
+    auxiliar. Rótulos Title-case vs UPPER são conjuntos disjuntos.
+  - **Chave de identidade:** `plant_uid` em todo join/groupby/output.
+  - **Capacidade:** qualquer share no relatório é sobre a base computável V6
+    (`ccrs_calculator.computable_base`).
+  - **Aviso literal:** `HEAT_BAND_WARNING` (HeatRiskBand não comparável entre
+    rodadas com pool diferente; WaterRiskBand estável) é emitido **verbatim**
+    em todo relatório (`build_summary`) e no log da CLI, não só em comentário.
+- **Idioma:** módulo e teste em inglês (convenção do `src/`).
+- **Arquivos:** `src/index/risk_bands.py`, `tests/test_risk_bands.py`.
+- **Status:** Ativa. `age_factor` (D), `EventMultiplier` e a montagem do
+  `CCRS_i,s` numérico completo seguem pendentes.
