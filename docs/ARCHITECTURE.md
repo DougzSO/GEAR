@@ -8,7 +8,16 @@ registradas estão tomadas. Os itens de **verificação pós-dados** (V1–V6),
 que só podiam ser resolvidos após a reconstrução da camada de aquisição e a
 inspeção dos dados reais, estão **todos fechados** (V5 fechado em
 2026-09-03). O desenho do CCRS (Seção 5) está fechado e registrado em
-`docs/DECISIONS.md`. Nenhum código de índice foi escrito ainda.
+`docs/DECISIONS.md`.
+
+The index layer is now implemented and committed: `src/index/ccrs_calculator.py`
+(T1, the Hazard term and the frozen global Min-Max bounds), `src/index/age_factor.py`
+(T2), `src/index/event_multiplier.py` (T3), `src/index/risk_bands.py` (T4) and
+`src/index/ccrs_report.py` (T5/T6, the multiplicative assembly and the
+per-country capacity-share report) — see `docs/DECISIONS.md` for the closing
+entries and `analysis/climate_risk_score_spec.md` for the full derivations.
+Only the Monte Carlo wrapper (Section 8) and spec items F/I/J (Section 10)
+remain unimplemented.
 
 ---
 
@@ -133,7 +142,14 @@ $$water\_sub_{i,s} = 0.4164\cdot T_{log}(WaterStress^{raw}_{i,s})
   three countries and all three scenarios pooled. No per-country Min-Max
   anywhere in the aggregate. This is the property that makes a CCRS of 0.4
   mean the same exposure in Lisbon and in Chennai — the property NAES had and
-  SCI deliberately gave up.
+  SCI deliberately gave up. For `heat` the pair is computed **per GCM** —
+  GFDL-ESM4 and MIROC6 never pooled together, applying the §5.4 no-blend rule
+  to the bounds computation itself, not only to the final Hazard value; for
+  `ws`/`sv`/`iv` there is a single pair per term, since the water rasters
+  carry no GCM axis. Frozen as `ccrs_calculator.FROZEN_BOUNDS` (data snapshot
+  2026-09-04), regression-locked against the data on disk — see
+  `docs/DECISIONS.md`, "CCRS global Min-Max bounds: heat per-GCM, water
+  GCM-independent".
 - Four hazard terms: `ws` = Aqueduct water stress; `sv`/`iv` = Aqueduct
   seasonal / interannual variability of blue-water supply; `heat` = mean
   days/yr with tasmax > 40 °C. Water depletion (`wd`) is **excluded** —
@@ -175,6 +191,10 @@ the two (tried and rejected — `analysis/ccrs_band_classification*.py`).
 The per-country report gives **two separate capacity shares** — "% capacity
 in [band] water risk" and "% capacity in [band] heat risk" — never summed
 into one number.
+
+Implemented in `src/index/risk_bands.py` (both bands, the auxiliary
+`WaterRiskBand × HeatRiskBand` contingency table) and reported per country in
+`src/index/ccrs_report.py`.
 
 ### 5.3 Per-bucket water/heat weights
 
@@ -221,6 +241,17 @@ basins substituted by `country_max`, India most affected) is a declared
 manuscript limitation of the cross-country water term. A joint
 `WaterRiskBand × HeatRiskBand` capacity cross-tabulation is an auxiliary
 output (`analysis/ccrs_final_summary.md`).
+
+The per-country "% capacity by risk band" roll-up (this section) is
+implemented in `src/index/ccrs_report.py`, which asserts every row it sums
+already is the V6 computable base (`ccrs_calculator.computable_base`) before
+summing `capacity_mw` — a hard failure, not a silent fallback, if a raw-fleet
+row without `commissioning_year` reaches the sum. `src/index/risk_bands.py`
+draws on the same computable base for its own optional per-band capacity
+summaries (the WaterRiskBand/HeatRiskBand distributions and contingency
+table), so the V6 base is not exclusive to the final report module — both
+consumers go through `ccrs_calculator.computable_base`, never raw
+`capacity_mw`.
 
 ### 5.6 Historical note — the original SCI / NAES architecture
 
@@ -362,8 +393,15 @@ the other two.
 `age_factor_i ≥ 1`, a direct multiplier on `Hazard_i,s` (§5.1), increasing
 with cumulative age-driven performance loss (a plant that has lost ~20 % to
 age → ≈ ×1.2). This is the opposite sign convention to the old
-`1 − Resilience_norm`; the mapping from the %/year curves below to a ≥ 1
-multiplier is set in the CCRS implementation.
+`1 − Resilience_norm`. **Confirmed final** (`docs/DECISIONS.md`, 2026-09-04,
+"age_factor: >=1 multiplier via `2 - retention(age)`, with corrected
+coal/hydro/wind retention curves (final)"):
+`age_factor = 2 - clip(retention(age), 0, 1)`, where `retention(age) ≤ 1` is
+the technology's capacity/efficiency retention curve below and
+`age = year_target(2050) - commissioning_year`. Observed range on the current
+data: 1.0000–1.7480. A plant with a missing `commissioning_year` (~5.6 % of
+plants, concentrated in India's wind and solar fleet) gets a neutral
+`age_factor` of 1.0 — kept, flagged, never dropped.
 
 Curves per technology (V1 closed, then revised — see `docs/DECISIONS.md`
 entries "Age factor for thermal bucket … (V1 closed)" and "Age factor curves
@@ -371,14 +409,16 @@ revised with additional literature (V1 revision)"):
 
 | Technology | Curve | Source |
 |---|---|---|
-| Wind | 0.15 pp of capacity factor per year (fallback 0.4 %/yr relative if per-turbine CF data unavailable) | Olauson, Edström & Rydén 2017, *Wind Energy* (Swedish fleet) |
+| Wind | 0.4 %/yr relative retention rate, applied uniformly to every wind plant (no conditional branch) | Olauson, Edström & Rydén 2017, *Wind Energy* (Swedish fleet); Shin, Ko & Huh 2015; Byrne, Astolfi, Castellani & Hewitt 2020 — midpoint of the 0.3–0.5 %/yr range. The capacity-factor-based form (`retention = 1 - 0.0015·age/CF_initial`) exists in the source as documented dead code, never called: no GEM file carries an initial capacity factor for any of the 1986 wind plants across the three countries |
 | Solar | 0.7 %/yr at plant level (0.5 %/yr module physics + soiling / downtime / inverter), compound decay | Deline et al. (NREL) 2020/2024; Boretti & Castellotto 2024 |
-| Hydro | ~0.5–0.6 %/yr | Turner et al. 2024, *Nature Communications* — 23 % cumulative over 610 US plants 1980–2022; only 21 % of that attributable to water availability, keeping this distinct from the water-stress hazard captured separately |
-| Coal | 0.25 %/yr heat-rate deterioration | IEA / CIAB 2010; cross-validated by Sagaf 2020 (0.19–0.44 %/yr, two 660 MW units) |
-| Gas / oil-gas | efficiency *gain* with age (opposite sign to coal), US data 2001–2018 | on record since the original V1 |
+| Hydro | 0.55 %/yr (midpoint of "~0.5–0.6 %/yr"), linear | Turner et al. 2024, *Nature Communications* — 23 % cumulative over 610 US plants 1980–2022; only 21 % of that attributable to water availability, keeping this distinct from the water-stress hazard captured separately |
+| Coal | 0.25 %/yr heat-rate deterioration, **sawtooth**: decays within an **assumed** 5-year overhaul cycle, recovering 70 % of that cycle's accumulated loss at each cycle boundary (30 % permanent) | IEA/CIAB 2010; Kim & Moon 2012 (500 MW unit); cross-validated by Sagaf 2020 (0.19–0.44 %/yr, two 660 MW units). The 5-year cycle length and the 70 % recovery fraction are a modelling premise, not values from the cited sources — no GEM file carries a per-plant overhaul date; provisional, revisable if one appears |
+| Gas / oil-gas | 1.0 (neutral), **provisional** | No literature-backed rate or functional form exists in any project document — the original V1 note of an "efficiency gain with age" (US data 2001–2018) has no citable number attached to it. Pinned neutral until a defensible source is found; a genuinely improving-with-age curve could not be represented under the `age_factor ≥ 1` convention regardless |
 | Nuclear | 1.0 (neutral) | licensing- / decommissioning-governed, not gradual physical decay; Blake 1992, Simola 1999 |
 | Bioenergy | 1.0 (neutral) | coal-proxy dropped for want of fleet-level longitudinal evidence (V1 revision) |
-| Mixed-fuel | average of component curves (capacity-weighted where per-fuel capacity is known) | — |
+| Mixed-fuel | average of component curves (capacity-weighted where per-fuel capacity is known; simple average used here — no per-fuel capacity in the source data) | — |
+
+Implemented in `src/index/age_factor.py`.
 
 The `thermal` fusion is kept for the **hazard weights** (§6.1 — shared
 cooling-water dependence) but not for `age_factor`, which tracks a
@@ -403,6 +443,12 @@ ceiling, flagged for Monte Carlo perturbation (§8), not re-derived from data.
 The V2 sub-question (raw count vs rate vs exposure-normalised) is resolved
 here in favour of the rate; country-level granularity is unchanged (V2 not
 reopened).
+
+Implemented in `src/index/event_multiplier.py`. The regression fixture
+recomputes the three values at full precision (Brazil 1.192122, Portugal
+1.030547, India 1.500000) against the 1.192/1.031/1.500 figures above —
+differences under 0.0005, well inside the 0.01 acceptance threshold (the
+published figures are 3-decimal roundings of the recomputed ones).
 
 ### 7.3 Fuel factor (`fuel_factor`) — removed (V5 closed)
 
@@ -466,8 +512,9 @@ share rather than a point estimate.
 These items could not be settled by upfront reasoning. Each had an explicit
 decision criterion to apply after the acquisition/processing layer was
 rebuilt and the real data inspected. **All six are now resolved;** the CCRS
-index design (Section 5) is closed and recorded in `docs/DECISIONS.md`. No
-index code is written yet.
+index design (Section 5) is closed and recorded in `docs/DECISIONS.md`, and
+the index code implementing it is written and committed (`src/index/`, see
+"Propósito deste documento" above).
 
 **V1 — Age curve for the thermal bucket**
 - **Status: RESOLVED, then REVISED.** Closed by `docs/DECISIONS.md` entry
@@ -480,7 +527,13 @@ index code is written yet.
   rate, bioenergy moved from the coal proxy to a neutral 1.0. The current
   curves — coal/gas/nuclear/bioenergy/wind/solar/hydro/mixed — are the table
   in Section 7.1; use that table, not the original V1 entry, as the live
-  reference.
+  reference. **Confirmed final 2026-09-04** (`docs/DECISIONS.md`, "age_factor:
+  >=1 multiplier via `2 - retention(age)`, with corrected coal/hydro/wind
+  retention curves (final)"): the `≥ 1` sign convention, the coal
+  overhaul-cycle sawtooth, wind's fixed 0.4 %/yr rate (the `CF_initial` form
+  kept only as dead code) and hydro's 0.55 %/yr (no 0.79 scaling) are the
+  current, non-reopened state — Section 7.1 reflects it. Implemented in
+  `src/index/age_factor.py`.
 - *Original observation (kept as historical context):* distribution of coal
   versus natural gas within the `thermal` bucket per country, in
   `gem_validated_plants_{country}.csv`.

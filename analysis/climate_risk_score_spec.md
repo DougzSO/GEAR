@@ -1,26 +1,39 @@
-# Climate Change Risk Score (CCRS) — formula specification (DRAFT)
+# Climate Change Risk Score (CCRS) — formula specification
 
-**Status: draft for review. Not a decision, not production `src/` code.**
-ARCHITECTURE.md Section 9 still requires every verification item closed
-before index code is written, and the SCI/NAES → unified-score redesign is
-not yet formalised in `docs/DECISIONS.md`. This document is the proposal to
-be reviewed before any of it becomes a DECISIONS.md entry or `src/` code.
+**Status: implemented and committed.** `src/index/` (T1–T6, all committed —
+`ccrs_calculator.py`, `age_factor.py`, `event_multiplier.py`, `risk_bands.py`,
+`ccrs_report.py`) implements the closed items of this document: the Hazard
+term and its frozen global bounds, `age_factor`, `EventMultiplier`, both risk
+bands, and the final multiplicative assembly with its per-country
+capacity-share report. ARCHITECTURE.md Section 9's V1–V6 verification items
+are all resolved and the SCI/NAES → CCRS redesign is formalised in
+`docs/DECISIONS.md`. This document remains the full derivation reference;
+`docs/DECISIONS.md` is authoritative on decision history, and the code in
+`src/index/` is authoritative on what actually runs.
 
 The **band structure** (Section 8) is closed: absolute `WaterRiskBand`,
-sample-relative `HeatRiskBand`, replacing the single-combined-score band.
-The `sv`/`iv` rasteriser it depends on is built and tested
-(`src/processors/water_variability_processor.py`). The **per-bucket
-`(w_water, w_heat)` split** (Section 5) is now set — hydro (1.0, 0.0),
-thermal (0.75, 0.25), wind (0.0, 1.0), solar (0.0, 1.0) — replacing the flat
-`w = 0.25` of the earlier diagnostics. The **`EventMultiplier` functional
-form** (Section 7) is now set: `EventMultiplier_c = 1 + k·(rate_c/rate_max)`,
-`k = 0.5`, country-level per V2. The **primary-GCM rule** (Section 8.6) is
-set: `GFDL-ESM4` is the cited figure, `MIROC6` a sensitivity panel, never a
-blend. **V5 is closed** — `fuel_factor` removed entirely (E). Still open in
-Section 10: `age_factor` mapping/code (D), a SPEI term (F), frozen transform
-constants (G), sv/iv outlier clip (I), and the Monte Carlo sensitivity of
-the two judgment-call constants — thermal `w_water`/`w_heat` and
-`EventMultiplier` `k` (J).
+sample-relative `HeatRiskBand`, replacing the single-combined-score band —
+implemented in `src/index/risk_bands.py`. The `sv`/`iv` rasteriser it depends
+on is built and tested (`src/processors/water_variability_processor.py`).
+The **per-bucket `(w_water, w_heat)` split** (Section 5) is set — hydro
+(1.0, 0.0), thermal (0.75, 0.25), wind (0.0, 1.0), solar (0.0, 1.0) —
+replacing the flat `w = 0.25` of the earlier diagnostics. The
+**`EventMultiplier` functional form** (Section 7) is set:
+`EventMultiplier_c = 1 + k·(rate_c/rate_max)`, `k = 0.5`, country-level per
+V2 — implemented in `src/index/event_multiplier.py`, regression-fixture
+validated. The **primary-GCM rule** (Section 8.6) is set: `GFDL-ESM4` is the
+cited figure, `MIROC6` a sensitivity panel, never a blend. **V5 is closed** —
+`fuel_factor` removed entirely (E). The **`age_factor` mapping** (item D) is
+closed — `age_factor = 2 - clip(retention(age), 0, 1)`, confirmed final
+2026-09-04 (Section 6, `docs/DECISIONS.md`), implemented in
+`src/index/age_factor.py`. The **frozen global transform bounds** (item G)
+are closed — `ccrs_calculator.FROZEN_BOUNDS`, one pair per term for
+`ws`/`sv`/`iv` (GCM-independent), one pair **per GCM** for `heat` (never
+pooled between GFDL-ESM4 and MIROC6), data snapshot 2026-09-04. Still open
+in Section 10: a SPEI term (F), the sv/iv outlier clip (I), and the Monte
+Carlo sensitivity of the two judgment-call constants — thermal
+`w_water`/`w_heat` and `EventMultiplier` `k` (J). None of these three is
+implemented.
 
 Provisional name: **Climate Change Risk Score (CCRS)**. One value **per
 plant, per scenario** (`ssp126`/`opt`, `ssp370`/`bau`, `ssp585`/`pes`).
@@ -35,10 +48,12 @@ mean of risk × capacity share × inverse resilience) and the **NAES**
 (cross-country, capacity-weighted sum of *raw* hazard).
 
 CCRS collapses these into a **single per-plant score on one cross-country
-scale**, with capacity applied only at the reporting roll-up (Section 9),
-not inside the score. If adopted, this replaces §5.1 and §5.2 and forces a
-rewrite of §6's `Risk_i` definition. That is the "unified climate-risk-score
-redesign" the `Hazard combination` DECISIONS.md entry now points to.
+scale**, with capacity applied only at the reporting roll-up (Section 8.5),
+not inside the score. This has been adopted: it replaces the former §5.1 and
+§5.2 (now ARCHITECTURE.md Section 5, rewritten 2026-09-03) and the former
+§6's `Risk_i` definition. This is the "unified climate-risk-score redesign"
+the `Hazard combination` DECISIONS.md entry points to, formalised by "CCRS
+replaces SCI/NAES as the unified risk architecture".
 
 ---
 
@@ -172,8 +187,15 @@ Consequences to weigh in review:
   within-country product but are not on the CCRS path.
 - **The global `(min, max)` is a fixed, documented constant** once computed,
   not recomputed per run — otherwise adding a country or scenario would
-  silently move every plant's score. It should be stored in `config.py` or
-  a versioned constants file, with the data snapshot it was derived from.
+  silently move every plant's score. Implemented as `ccrs_calculator.FROZEN_BOUNDS`
+  (a module-level constant, not `config.py`), data snapshot 2026-09-04,
+  regression-locked against the data on disk (`tests/test_ccrs_calculator.py`
+  fails on drift). **Heat gets one pair per GCM** — GFDL-ESM4 and MIROC6 are
+  never pooled into the same bound, applying the Section 8.6 no-blend rule to
+  the bounds computation itself; `ws`/`sv`/`iv` get a single pair per term,
+  since the water rasters carry no GCM axis. This GCM split was not spelled
+  out when this item was first drafted (see `docs/DECISIONS.md`, "CCRS global
+  Min-Max bounds: heat per-GCM, water GCM-independent").
 - **Min-Max is not outlier-robust.** One extreme basin sets the max for all
   three countries. The `log1p` in `Tlog` mitigates this for ws/heat; for
   sv/iv (linear) a p99 clip before Min-Max may be needed — flag for review.
@@ -225,14 +247,42 @@ are fixed by the WRI category-width derivation.
 
 `age_factor_i` is retained from §7.1 (with the V1 fuel-specific sub-curves
 for the `thermal` bucket: coal, gas, nuclear, bioenergy, mixed). In CCRS it
-**multiplies** `Hazard_i,s` — it is not added as another term.
+**multiplies** `Hazard_i,s` — it is not added as another term. Implemented in
+`src/index/age_factor.py`; closes item D (Section 10).
 
-- Convention: `age_factor_i ≥ 1`, increasing with the cumulative
-  age-driven performance loss implied by the bucket's curve (a plant that
-  has lost ~20 % to age → ≈ ×1.2). This is the opposite sign convention to
-  §7's `Resilience_i` (which is subtracted as `1 − Resilience_norm`); the
-  review needs to confirm the mapping from the existing %/year curves to a
-  ≥ 1 multiplier.
+- **Convention (closed, confirmed final 2026-09-04 —
+  `docs/DECISIONS.md`):** `age_factor_i = 2 - clip(retention(age), 0, 1) ≥ 1`,
+  increasing with the cumulative age-driven performance loss implied by the
+  bucket's `retention(age) ≤ 1` curve (a plant that has lost ~20 % to age →
+  ×1.2, exactly this section's example). `age = 2050 - commissioning_year`
+  (`config.YEAR_TARGET`). This is the opposite sign convention to §7's
+  `Resilience_i` (which is subtracted as `1 − Resilience_norm`) — an earlier
+  session briefly reverted this module to a `≤ 1` retention multiplier on a
+  mistaken premise about which document was authoritative; that reversal is
+  itself superseded, and `≥ 1` is definitive.
+- **Coal** decays 0.25 pp/yr in a sawtooth, not a plain curve: within an
+  **assumed** 5-year overhaul cycle (`COAL_OVERHAUL_CYCLE_YEARS`), 70 % of
+  that cycle's accumulated loss is recovered at the boundary
+  (`COAL_OVERHAUL_RECOVERY`, 30 % permanent). The cycle length and recovery
+  fraction are a modelling premise, not values from the cited literature — no
+  GEM file carries a per-plant overhaul date; provisional, revisable if one
+  appears.
+- **Wind** uses a fixed 0.4 %/yr relative retention rate for every plant,
+  unconditionally — there is no runtime branch on an initial capacity
+  factor. The alternative form,
+  `retention = 1 - 0.0015·age/CF_initial`, is kept in
+  `src/index/age_factor.py` as documented dead code (never called): no GEM
+  file carries a `CF_initial` for any of the 1986 wind plants across the
+  three countries.
+- **Hydro** uses 0.55 %/yr (linear), the midpoint of the ~0.5–0.6 %/yr range;
+  the 0.79 "non-water-attributable share" scaling from an earlier revision
+  had no documented origin and is removed.
+- **Gas / oil-gas** is pinned neutral (`age_factor = 1.0`), **provisional** —
+  no literature-backed rate or functional form was ever found in any project
+  document for the "efficiency gain with age" noted since the original V1.
+- A missing `commissioning_year` (~5.6 % of plants; concentrated in India's
+  wind and solar fleet) neutralises `age_factor` to 1.0 — the row is kept and
+  flagged, never dropped.
 - `fuel_factor`, the resilience floor `max(…, 0.1)` and the
   per-country-scenario resilience ceiling normalisation are **not carried
   into CCRS**. V5 is closed — `fuel_factor` is removed entirely
@@ -303,9 +353,20 @@ into the resilience factor as `event_factor` was.
   cross-country maximum rather than by fleet/exposure, are the resolutions
   of the sub-questions the V2 entry left to this implementation.
 
+Implemented in `src/index/event_multiplier.py`, joined onto the Hazard term
+by `country` (never `plant_uid`), multiplicative, validated
+many-to-one. The regression fixture recomputes the three values at full
+precision — Brazil 1.192122, Portugal 1.030547, India 1.500000 — against the
+table above; differences under 0.0005, well inside the 0.01 acceptance
+threshold (the table values are 3-decimal roundings of the recomputed ones).
+
 ---
 
 ## 8. Outputs — one numeric score, two discrete bands
+
+Both bands, and the auxiliary `WaterRiskBand × HeatRiskBand` contingency
+table, are implemented in `src/index/risk_bands.py`; the per-country capacity
+shares (8.5) are reported by `src/index/ccrs_report.py`.
 
 ### 8.0 The numeric `CCRS_i,s` is unchanged
 
@@ -436,6 +497,14 @@ inside `CCRS_i,s`. A joint cross-tabulation (capacity in each
 `WaterRiskBand × HeatRiskBand` cell) is an auxiliary output — see
 `analysis/ccrs_final_summary.md` Section 4.
 
+`src/index/ccrs_report.py` asserts every row it sums already is the V6
+computable base (`ccrs_calculator.computable_base`) before summing
+`capacity_mw` — a hard failure, never a silent fallback, if a raw-fleet row
+without `commissioning_year` reaches the sum. `src/index/risk_bands.py` draws
+on the same computable base for its own optional per-band capacity summaries
+and contingency table — both consumers go through
+`ccrs_calculator.computable_base`, never raw `capacity_mw`.
+
 ### 8.6 Primary GCM vs sensitivity panel — `GFDL-ESM4` is "the" figure
 
 The heat term (and therefore `HeatRiskBand`, and the `w_heat` share of the
@@ -494,10 +563,10 @@ event base (`N_events` counts, and India as `rate_max`).
 | A | **Weights in the combined numeric `CCRS_i,s`** | ~~Open~~ **Set** (Section 5). Per-bucket `(w_water, w_heat)`: hydro (1.0, 0.0), thermal (0.75, 0.25), wind (0.0, 1.0), solar (0.0, 1.0). `sv`/`iv` follow the water side (zeroed for wind/solar). Within-water `(w_ws, w_sv, w_iv) = (0.4164, 0.2505, 0.3331)` fixed in §8.1. The only residual freedom is the thermal `0.75 / 0.25` pair — a qualitative judgment, flagged for Monte Carlo perturbation (item J), not for re-derivation. |
 | B | **Band cutoffs** | ~~Open~~ **Closed** (Section 8). `WaterRiskBand` = absolute WRI Aqueduct 4.0 category cuts on `S_water` (0.208 / 0.415 / 0.667 / 1.0); `HeatRiskBand` = sample-relative pooled p25/p75/p95 of `extreme_heat_days`, GFDL-ESM4 primary, with a declared limitation. The single-combined-CCRS band is dropped. |
 | C | **`EventMultiplier` functional form `f()`** | ~~Open~~ **Set** (Section 7). `EventMultiplier_c = 1 + k·(rate_c/rate_max)` with `rate_c = N_events(c)/124`, `rate_max` the cross-country max (India), `k = 0.5`. Values: Brazil 1.192, Portugal 1.031, India 1.500. Country-level per closed V2. Only `k` remains free — as a Monte Carlo sensitivity parameter (item J), not for re-derivation. |
-| D | **`age_factor` → ≥ 1 multiplier mapping** | Open. Convert §7.1 %/year curves into a multiplicative factor; confirm sign convention. |
+| D | **`age_factor` → ≥ 1 multiplier mapping** | ~~Open~~ **Closed**, confirmed final 2026-09-04 (Section 6, `docs/DECISIONS.md`). `age_factor = 2 - clip(retention(age), 0, 1)`; per-technology curves in Section 6 and ARCHITECTURE.md Section 7.1. Implemented in `src/index/age_factor.py`. |
 | E | **`fuel_factor` (V5)** | **Set** — V5 closed, `fuel_factor` removed entirely. See `docs/DECISIONS.md`, entry "fuel_factor removed from resilience formula (V5 closed)". |
 | F | **Drought / SPEI term — whether to add it, and its weight** | Open. Method is settled if it is added: SPEI with **Thornthwaite** PET (`pr`+`tas`), one method across both GCMs (Section 3). Catalogue constraint in `analysis/spei_catalog_check.md`. |
-| G | **Global `(min, max)` constants per term** | To be computed once from a dated data snapshot and frozen in config; not a per-run quantity. |
+| G | **Global `(min, max)` constants per term** | ~~Open~~ **Closed.** Frozen as `ccrs_calculator.FROZEN_BOUNDS` (data snapshot 2026-09-04, regression-locked, not recomputed per run): one pair per term for `ws`/`sv`/`iv` (GCM-independent — the water rasters carry no GCM axis), one pair **per GCM** for `heat` (GFDL-ESM4/MIROC6 never pooled, per the Section 8.6 no-blend rule). This per-GCM split was not spelled out when this item was first drafted — see `docs/DECISIONS.md`, "CCRS global Min-Max bounds: heat per-GCM, water GCM-independent". |
 | H | **sv/iv processing path** | ~~New~~ **Done.** `src/processors/water_variability_processor.py` rasterises `sv_x_r`/`iv_x_r` into `seasonal_variability[_raw]_*` / `interannual_variability[_raw]_*` on the heat grid, mirroring `water_stress_processor` (per-country per-indicator Min-Max, no log, no sentinel). |
 | I | **Outlier handling for `Tlin` (sv/iv)** | Open. Whether a p99 clip precedes the linear Min-Max. |
 | J | **Monte Carlo perturbation of the judgment-call constants** | Open (not implemented now). Two parameters that are qualitative choices rather than derivations: the thermal `w_water`/`w_heat` split (`0.75 / 0.25`, §5) and the `EventMultiplier` amplitude `k` (`0.5`, §7). Both perturbed at ±10/20/30 %, same design as ARCHITECTURE.md Section 8. `hydro`/`wind`/`solar` splits, the within-water weights, and the event *base* (`N_events`, `rate_max` country) are not perturbed. |
@@ -532,11 +601,18 @@ bucket gets one (`docs/DECISIONS.md`, "fuel_factor removed from resilience
 formula (V5 closed)"). With V5 closed, all six post-data verification items
 (V1–V6) are resolved.
 
-Not settled (Section 10): `age_factor` → multiplier mapping and its code
-(item D), whether a SPEI term is added (item F), the frozen global transform
-constants (item G), the sv/iv outlier clip (item I), and the Monte Carlo
-sensitivity of the two judgment-call constants — thermal split and
-`EventMultiplier` `k` (item J).
+Settled here (Section 6, item D): the **`age_factor` → ≥ 1 multiplier
+mapping and its code** — `age_factor = 2 - clip(retention(age), 0, 1)`,
+confirmed final 2026-09-04, implemented in `src/index/age_factor.py`.
+
+Settled here (Section 4/10, item G): the **frozen global transform bounds**
+— `ccrs_calculator.FROZEN_BOUNDS`, one pair per term for `ws`/`sv`/`iv`
+(GCM-independent) and one pair per GCM for `heat` (never pooled between
+GFDL-ESM4 and MIROC6), data snapshot 2026-09-04.
+
+Not settled (Section 10): whether a SPEI term is added (item F), the sv/iv
+outlier clip (item I), and the Monte Carlo sensitivity of the two
+judgment-call constants — thermal split and `EventMultiplier` `k` (item J).
 
 Also: this draft does not reopen or close any V-item (`EventMultiplier` is
 country-level, so V2 stays closed), and does not by itself supersede
@@ -545,24 +621,31 @@ the accepted spec.
 
 ---
 
-## 12. New pipeline components implied (for scoping only)
+## 12. Pipeline components — status
 
-If this spec is accepted roughly as-is, the index layer would still need:
+All items originally scoped here are now built and committed, except the
+Monte Carlo wrapper:
 
-1. A global per-term transform module for the numeric score — `log1p`/linear
-   + frozen global Min-Max bounds (item G).
-2. A `CCRS_i,s` assembly module — weighted sum × `age_factor` ×
-   `EventMultiplier`, per plant per scenario.
-3. `age_factor` implementation with the V1 fuel sub-curves (item D).
-4. `EventMultiplier` implementation — a 3-row country lookup
-   (`1 + 0.5·N_events(c)/622`), trivial; form fixed in §7.
-5. `WaterRiskBand` + `HeatRiskBand` classifiers promoted from the `analysis/`
-   diagnostics (`water_risk_band_classification.py`, the heat-percentile cut
-   in `ccrs_final_summary.py`) into `src/`.
-6. Report generators (Section 8) + Monte Carlo wrapper (Section 9).
+1. **Done** — the global per-term transform (`log1p`/linear) and the frozen
+   global Min-Max bounds (item G): `src/index/ccrs_calculator.py`.
+2. **Done** — the `CCRS_i,s` assembly module (weighted sum × `age_factor` ×
+   `EventMultiplier`, per plant per scenario): `src/index/ccrs_report.py`
+   (`compute_ccrs`).
+3. **Done** — `age_factor` with the fuel sub-curves (item D):
+   `src/index/age_factor.py`.
+4. **Done** — `EventMultiplier`, the country-level lookup, form fixed in §7:
+   `src/index/event_multiplier.py`.
+5. **Done** — `WaterRiskBand` + `HeatRiskBand` classifiers, promoted from the
+   `analysis/` diagnostics into `src/index/risk_bands.py`.
+6. **Not done** — the Monte Carlo wrapper (Section 9). The per-plant and
+   per-country report generators (Section 8) are built
+   (`src/index/ccrs_report.py`, `src/index/risk_bands.py`) but run as a point
+   estimate, not yet wrapped in the N = 1000 perturbation loop.
 
-Done: `sv`/`iv` rasterisation (`src/processors/water_variability_processor.py`,
+Also done: `sv`/`iv` rasterisation (`src/processors/water_variability_processor.py`,
 tested).
 
-None of the above is built until the remaining open items are closed and a
-DECISIONS.md entry records the accepted spec.
+Remaining before the design is fully closed end-to-end: a decision on the
+SPEI term (item F), the sv/iv outlier clip (item I), and the Monte Carlo
+sensitivity of the thermal split / `EventMultiplier` `k` (item J) — none of
+which the index layer built so far depends on.
