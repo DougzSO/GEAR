@@ -222,6 +222,21 @@ CMIP6_SOURCE_ID_CDS = [
 CMIP6_FUTURE_PERIOD = ("2041-01-01", "2070-12-31")  # the "2050" window
 EXTREME_HEAT_THRESHOLD_C = 40  # a "day of extreme heat" has tasmax above this
 
+# Daily variables for a future SPEI (drought) term, downloaded by
+# cds_precipitation_downloader over the SAME matrix as the heat layer
+# (CMIP6_SOURCE_ID_CDS x CMIP6_SCENARIOS x COUNTRIES, CMIP6_FUTURE_PERIOD).
+# Key = CMIP6 short name (also the NetCDF variable name); value = the CDS
+# `variable` request token. Only pr + tas: the PET method is Thornthwaite
+# (needs neither tasmin nor tasmax), decided because daily tasmin is absent
+# from the CDS catalogue for gfdl_esm4/ssp3_7_0 -- see
+# analysis/spei_catalog_check.md and analysis/climate_risk_score_spec.md
+# Section 3. The SPEI computation itself (needs the daily series, not a
+# period mean) is a separate later task.
+CMIP6_SPEI_VARIABLES = {
+    "pr": "precipitation",
+    "tas": "near_surface_air_temperature",
+}
+
 RANDOM_SEED = 42  # stochastic sampling — used only by the not-yet-rebuilt layer
 
 # --------------------------------------------------------------------------
