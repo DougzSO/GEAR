@@ -16,8 +16,8 @@ thermal (0.75, 0.25), wind (0.0, 1.0), solar (0.0, 1.0) — replacing the flat
 form** (Section 7) is now set: `EventMultiplier_c = 1 + k·(rate_c/rate_max)`,
 `k = 0.5`, country-level per V2. The **primary-GCM rule** (Section 8.6) is
 set: `GFDL-ESM4` is the cited figure, `MIROC6` a sensitivity panel, never a
-blend. Still open in Section 10: `age_factor`
-mapping/code (D), `fuel_factor`/V5 (E), a SPEI term (F), frozen transform
+blend. **V5 is closed** — `fuel_factor` removed entirely (E). Still open in
+Section 10: `age_factor` mapping/code (D), a SPEI term (F), frozen transform
 constants (G), sv/iv outlier clip (I), and the Monte Carlo sensitivity of
 the two judgment-call constants — thermal `w_water`/`w_heat` and
 `EventMultiplier` `k` (J).
@@ -233,11 +233,13 @@ for the `thermal` bucket: coal, gas, nuclear, bioenergy, mixed). In CCRS it
   §7's `Resilience_i` (which is subtracted as `1 − Resilience_norm`); the
   review needs to confirm the mapping from the existing %/year curves to a
   ≥ 1 multiplier.
-- `fuel_factor` (§7.3 / V5) and the resilience floor `max(…, 0.1)` and the
+- `fuel_factor`, the resilience floor `max(…, 0.1)` and the
   per-country-scenario resilience ceiling normalisation are **not carried
-  into CCRS** as drafted. V5 is still open; if `fuel_factor` survives its
-  review it would enter as a second multiplicative factor alongside
-  `age_factor`. Flag for review.
+  into CCRS**. V5 is closed — `fuel_factor` is removed entirely
+  (`docs/DECISIONS.md`, entry "fuel_factor removed from resilience formula
+  (V5 closed)"); it does not enter the CCRS as a second multiplier or
+  otherwise. `age_factor` and `EventMultiplier` are the only multipliers on
+  the hazard score.
 
 **Declared scope limit (for the manuscript):** CCRS measures
 **hazard × exposure × `age_factor`**, where `age_factor` is a *partial
@@ -493,7 +495,7 @@ event base (`N_events` counts, and India as `rate_max`).
 | B | **Band cutoffs** | ~~Open~~ **Closed** (Section 8). `WaterRiskBand` = absolute WRI Aqueduct 4.0 category cuts on `S_water` (0.208 / 0.415 / 0.667 / 1.0); `HeatRiskBand` = sample-relative pooled p25/p75/p95 of `extreme_heat_days`, GFDL-ESM4 primary, with a declared limitation. The single-combined-CCRS band is dropped. |
 | C | **`EventMultiplier` functional form `f()`** | ~~Open~~ **Set** (Section 7). `EventMultiplier_c = 1 + k·(rate_c/rate_max)` with `rate_c = N_events(c)/124`, `rate_max` the cross-country max (India), `k = 0.5`. Values: Brazil 1.192, Portugal 1.031, India 1.500. Country-level per closed V2. Only `k` remains free — as a Monte Carlo sensitivity parameter (item J), not for re-derivation. |
 | D | **`age_factor` → ≥ 1 multiplier mapping** | Open. Convert §7.1 %/year curves into a multiplicative factor; confirm sign convention. |
-| E | **`fuel_factor` (V5)** | Open (V5). If it survives review it becomes a second multiplier; if removed, CCRS is unaffected as drafted. |
+| E | **`fuel_factor` (V5)** | **Set** — V5 closed, `fuel_factor` removed entirely. See `docs/DECISIONS.md`, entry "fuel_factor removed from resilience formula (V5 closed)". |
 | F | **Drought / SPEI term — whether to add it, and its weight** | Open. Method is settled if it is added: SPEI with **Thornthwaite** PET (`pr`+`tas`), one method across both GCMs (Section 3). Catalogue constraint in `analysis/spei_catalog_check.md`. |
 | G | **Global `(min, max)` constants per term** | To be computed once from a dated data snapshot and frozen in config; not a per-run quantity. |
 | H | **sv/iv processing path** | ~~New~~ **Done.** `src/processors/water_variability_processor.py` rasterises `sv_x_r`/`iv_x_r` into `seasonal_variability[_raw]_*` / `interannual_variability[_raw]_*` on the heat grid, mirroring `water_stress_processor` (per-country per-indicator Min-Max, no log, no sentinel). |
@@ -525,11 +527,16 @@ report; `MIROC6` is a sensitivity panel beside it, never a 50/50 blend** —
 ARCHITECTURE.md Section 4's second-GCM-as-sensitivity-check rule, applied to
 the CCRS. Retroactive on reading only; no report is recomputed.
 
+Settled here (item E): **V5 is closed** — `fuel_factor` removed entirely, no
+bucket gets one (`docs/DECISIONS.md`, "fuel_factor removed from resilience
+formula (V5 closed)"). With V5 closed, all six post-data verification items
+(V1–V6) are resolved.
+
 Not settled (Section 10): `age_factor` → multiplier mapping and its code
-(item D), `fuel_factor` / V5 (item E), whether a SPEI term is added
-(item F), the frozen global transform constants (item G), the sv/iv outlier
-clip (item I), and the Monte Carlo sensitivity of the two judgment-call
-constants — thermal split and `EventMultiplier` `k` (item J).
+(item D), whether a SPEI term is added (item F), the frozen global transform
+constants (item G), the sv/iv outlier clip (item I), and the Monte Carlo
+sensitivity of the two judgment-call constants — thermal split and
+`EventMultiplier` `k` (item J).
 
 Also: this draft does not reopen or close any V-item (`EventMultiplier` is
 country-level, so V2 stays closed), and does not by itself supersede

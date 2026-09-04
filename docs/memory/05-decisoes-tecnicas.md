@@ -10,17 +10,20 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
 
 - **Contexto:** `ARCHITECTURE.md` Seção 4 torna um 2º GCM sensitivity check
   obrigatório. No repositório anterior era `CMIP6_SOURCE_ID_CDS = "gfdl_esm4"`.
-- **Decisão:** `config.CMIP6_SOURCE_ID_CDS = ["gfdl_esm4"]`. O
+- **Decisão:** `config.CMIP6_SOURCE_ID_CDS = ["gfdl_esm4", "miroc6"]`
+  (gfdl_esm4 sempre primeiro — grade de referência da água). O
   `cds_tasmax_downloader` itera sobre a lista (`configured_models()`, que
-  filtra entradas vazias e levanta se a lista ficar vazia). Paths e rasters
-  de saída passam a carregar o id do modelo.
-- **Consequences** *(bullet updated to EN):* adding the second model is a
-  config-only change. The raster names changed (see item 2) — any future
-  processor must read the model-tagged pattern. The second slot is still
-  commented out, but the V4 model choice is now **RESOLVED** (MIROC6, see
-  `docs/DECISIONS.md`); it has not yet been added to the config.
+  filtra entradas vazias e levanta se a lista ficar vazia); o
+  `cds_precipitation_downloader` reusa `configured_models()`. Paths e
+  rasters de saída carregam o id do modelo.
+- **Consequences** *(bullet updated to EN):* the raster names carry the
+  model id (see item 2) — every processor reads the model-tagged pattern.
+  V4 is closed: MIROC6 is in the config and all 2-GCM × 3-scenario heat and
+  water rasters have been downloaded and processed (see `docs/DECISIONS.md`).
 - **Arquivos:** `src/config.py`, `src/downloaders/cds_tasmax_downloader.py`,
-  `tests/test_cds_tasmax_downloader.py`.
+  `src/downloaders/cds_precipitation_downloader.py`,
+  `tests/test_cds_tasmax_downloader.py`,
+  `tests/test_cds_precipitation_downloader.py`.
 - **Status:** Ativa.
 
 ## 2. Rasters de calor com id do modelo no nome
@@ -47,7 +50,10 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   `mixed_fuel_type` (todos resolvem para `thermal`).
 - **Consequências:** alinha com `ARCHITECTURE.md` Seção 6 (fusão confirmada)
   e `INVENTORY.md` (rename para remover acoplamento ao AHP). A tensão de
-  curva de idade dentro do bucket fundido é o item V1. Também logado em
+  curva de idade dentro do bucket fundido era o item V1 — **fechado**:
+  sub-curvas de `age_factor` por `fuel_type`, depois revisadas com
+  literatura adicional (ver `docs/DECISIONS.md`, entradas V1). A fusão é
+  mantida só para os pesos água/calor por bucket. Também logado em
   `docs/DECISIONS.md`.
 - **Arquivos:** `src/downloaders/assets_validator.py`
   (`FUEL_TYPE_TO_BUCKET`, `MIXED_FUEL_BUCKET_OVERRIDES`, `add_fuel_bucket`),
@@ -62,12 +68,14 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   contagem por país/tipo/ano e cobertura de geocodificação (`Location` texto
   livre e `GADM Admin Units` estruturado). Nenhuma comparação com hotspots
   de risco, nenhuma geocodificação ponto-a-ponto.
-- **Consequences** *(bullet updated to EN):* the replacement of the fixed
-  `event_factor` 1.0 (`ARCHITECTURE.md` §7.2, item V2 — now **RESOLVED**: a
-  per-country EM-DAT frequency factor, not state/district; see
-  `docs/DECISIONS.md`) uses `emdat_coverage.csv` and
-  `analysis/emdat_coverage_diagnostics.md` as inputs, but the decision
-  logic lives in the index layer, not here.
+- **Consequences** *(bullet updated to EN):* the fixed `event_factor` 1.0
+  is replaced by `EventMultiplier_c` (V2 closed — country-level, not
+  state/district). Under the CCRS it is a multiplier on the score, not a
+  resilience sub-factor, with the form
+  `EventMultiplier_c = 1 + 0.5·(rate_c/rate_max)`, `rate_c = N_events(c)/124`
+  (`ARCHITECTURE.md` §7.2, `docs/DECISIONS.md`). It uses `emdat_coverage.csv`
+  and `analysis/emdat_coverage_diagnostics.md` as inputs, but the code lives
+  in the (not-yet-written) index layer, not here.
 - **Arquivos:** `src/downloaders/emdat_downloader.py`.
 - **Status:** Ativa.
 
@@ -151,21 +159,23 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
 
 ## 9. Processors de clima — grade compartilhada e ordem
 
-- **Contexto:** os dois processors precisam emitir raster na mesma grade
-  pixel-a-pixel para a álgebra de mapas da camada de índice (ainda não
-  escrita).
-- **Decisão:** `water_stress_processor._load_reference_grid` lê
+- **Contexto:** os três processors precisam emitir raster na mesma grade
+  pixel-a-pixel para a álgebra de mapas da camada de índice (CCRS, ainda
+  não escrita em `src/`).
+- **Decisão:** `water_stress_processor._load_reference_grid` (e o
+  equivalente no `water_variability_processor`) lê
   `extreme_heat_days_{país}_{modelo}_{cenário}_1km.tif` (primeiro modelo
-  configurado, ssp126) como referência de grade e rasteriza a água nela.
-  Consequência: `heat_stress_processor` tem que rodar antes.
+  configurado, ssp126) como referência de grade e rasteriza a água / sv-iv
+  nela. Consequência: `heat_stress_processor` tem que rodar antes dos dois.
 - **Consequências:** a grade 1 km depende só de bounds do país + resolução
   alvo → idêntica entre modelos e cenários, então qualquer raster de calor
   serve de referência. As decisões de domínio de normalização (Min-Max por
-  país para água; por país com modelos **e** cenários no mesmo pool para
-  calor) e de tratamento da sentinela WRI 9999 estão em `docs/DECISIONS.md`
-  (metodológicas), não aqui.
+  país para água e para sv/iv; por país com modelos **e** cenários no mesmo
+  pool para calor) e de tratamento da sentinela WRI 9999 estão em
+  `docs/DECISIONS.md` (metodológicas), não aqui.
 - **Arquivos:** `src/processors/water_stress_processor.py`,
-  `src/processors/heat_stress_processor.py`.
+  `src/processors/heat_stress_processor.py`,
+  `src/processors/water_variability_processor.py`.
 - **Status:** Ativa.
 
 ## 10. Calor: Min-Max por país, modelos e cenários no mesmo pool
@@ -185,10 +195,13 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   desalinhar o stack silenciosamente. Testado com 2 modelos sintéticos
   (pool conjunto correto + erro em mismatch de grade).
 - **Consequências:** `process_all_countries` itera
-  `country → (carrega+valida grade+minmax) → model → scenario`. Se um 2º GCM
-  tiver extremos muito acima do GFDL-ESM4, ele passa a dominar a escala
-  normalizada dos dois — trade-off aceito por ora; manter pool conjunto vs.
-  voltar a por-modelo é questão aberta atada ao V4 (ver `docs/DECISIONS.md`).
+  `country → (carrega+valida grade+minmax) → model → scenario`. MIROC6 (V4
+  fechado) de fato tem extremos bem acima do GFDL-ESM4 e domina a escala
+  normalizada conjunta — por isso o CCRS consome o raster **bruto** de
+  calor, não o normalizado por país (ver `analysis/climate_risk_score_spec.md`).
+  Manter pool conjunto vs. voltar a por-modelo no raster normalizado
+  standalone segue como questão aberta de desenho (V4 fechou a escolha do
+  modelo, não este ponto; ver `docs/DECISIONS.md`).
 - **Arquivos:** `src/processors/heat_stress_processor.py`,
   `tests/test_heat_stress_processor.py`.
 - **Status:** Ativa. Também em `docs/DECISIONS.md`.

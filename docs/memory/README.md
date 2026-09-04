@@ -29,6 +29,10 @@ Leia os quatro, não um no lugar do outro.
 
 2026-09-03. Camadas de aquisição e de processamento de clima reconstruídas:
 `src/config.py`, 9 downloaders (inclui `cds_precipitation_downloader` para
-SPEI futuro), 3 processors de clima (calor, água, variabilidade sv/iv), 122
-testes. Nenhum código de índice/peso/resiliência/NAES/Monte Carlo escrito
-(bloqueado pelas verificações pós-dados V1–V6 do `ARCHITECTURE.md`).
+um termo de SPEI futuro), 3 processors de clima (calor, água, variabilidade
+sv/iv), 122 testes. As verificações pós-dados V1–V6 (`ARCHITECTURE.md`
+Seção 9) estão **todas fechadas** e a arquitetura de índice foi decidida: o
+Climate Change Risk Score (CCRS), score numérico único + duas bandas de
+risco, substitui SCI/NAES (`ARCHITECTURE.md` Seção 5,
+`analysis/climate_risk_score_spec.md`). Nenhum código do CCRS escrito em
+`src/` ainda.

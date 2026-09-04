@@ -63,9 +63,13 @@ CLI própria — chamados via `climate_downloader` ou importados
 
 # água: precisa do calor processado antes (referência de grade)
 .venv\Scripts\python -m src.processors.water_stress_processor [--overwrite]
+
+# variabilidade sv/iv do Aqueduct: mesma dependência de grade do calor
+.venv\Scripts\python -m src.processors.water_variability_processor [--indicators sv iv] [--overwrite]
 ```
 
-Ordem: `heat_stress_processor` → `water_stress_processor`.
+Ordem: `heat_stress_processor` → (`water_stress_processor`,
+`water_variability_processor`).
 
 ## Custo/tempo observado (2026-09-03, GFDL-ESM4, 3 países)
 

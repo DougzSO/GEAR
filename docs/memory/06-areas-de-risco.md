@@ -19,11 +19,14 @@
   testes de processor herdado). A resposta real da API do CDS, do GEE e do
   Dataverse não é exercida por teste; a primeira execução real é a primeira
   verificação de que o formato de request/response ainda bate.
-- **`cds_tasmax`:** `_compute_extreme_heat_days` e `_resample_to_1km` não têm
-  teste com um NetCDF sintético — dependeria de montar um dataset xarray com
-  a estrutura exata do CMIP6 (dims `time/lat/lon`, longitude 0-360). Lacuna
-  conhecida; adicionar quando houver um `.nc` real pequeno para derivar a
-  fixture.
+- **`cds_tasmax`:** `_compute_extreme_heat_days` não tem teste com um NetCDF
+  sintético — dependeria de montar um dataset xarray com a estrutura exata
+  do CMIP6 (dims `time/lat/lon`, longitude 0-360). O
+  `test_cds_precipitation_downloader` já usa um dataset sintético desses
+  (`_synth_ds`) para testar `_period_mean` e `validate_raw_series` e para
+  provar que `_resample_to_1km` é a mesma função do `cds_tasmax` (não uma
+  cópia divergente); a lacuna que resta é `_compute_extreme_heat_days` e o
+  caminho `.rio.reproject` real.
 - **Processors:** `load_aqueduct_basins` (parsing do `.geo` GeoJSON) e a
   rasterização real (`rasterize` do rasterio sobre polígonos de bacia) não
   têm teste isolado — só o caminho `rasterize_scenario` com grade sintética.
@@ -69,43 +72,54 @@
   `lon` (não `longitude`).
 - `config.COUNTRY_BBOX_FALLBACK` é hardcode calibrado para a grade nativa do
   GFDL-ESM4 (~1° lat, ~1,25° lon) e para o recorte do GADM 4.1 nível 0. O 2º
-  GCM (MIROC6, V4 RESOLVIDO) com grade nativa diferente, ou uma versão nova
-  do GADM, pode exigir recalibrar as caixas de Índia e Portugal. A cobertura foi
-  verificada contra as coordenadas das usinas GEM (14 Índia + 5 Portugal
-  antes fora do raster) — ver `analysis/normalization_diagnostics.md` e a
-  entrada datada em `docs/DECISIONS.md`.
+  GCM (MIROC6, V4 fechado) foi baixado: sua grade nativa ~1,4° deixa só 2
+  células de longitude sobre Portugal continental e **34 de 450 usinas
+  portuguesas** (faixa costeira Lisboa/Torres Vedras/Lourinhã + Refinaria de
+  Sines) caem fora do raster MIROC6, pontuadas só por GFDL-ESM4 (Brasil 12,
+  Índia 0). As caixas **não** foram recalibradas para isso — é limitação
+  declarada no manuscrito, não bug (`docs/DECISIONS.md`, entrada MIROC6/V4,
+  e `analysis/normalization_diagnostics.md`). Uma versão nova do GADM ainda
+  poderia exigir recalibrar Índia/Portugal.
 
 ## TODOs que bloqueiam fases seguintes
 
-- Second GCM *(passage updated to EN)* — **the V4 model choice is RESOLVED
-  (MIROC6, see `docs/DECISIONS.md`)**, but `config.CMIP6_SOURCE_ID_CDS`
-  still holds only `gfdl_esm4` — no index code has been written. When
-  MIROC6 is added, `heat_stress_processor` already iterates over it
-  automatically (new files
-  `heat_stress_{country}_{model2}_{scenario}_1km.tif`) and pools the two
-  models in the same per-country Min-Max domain; if the second GCM arrives
-  on a different grid (bbox/resolution/CRS), `_assert_consistent_grid`
-  raises `GridMismatchError` before pooling (fail-loud, not silent).
-  Whether to keep the joint pool or revert to per-model normalisation is a
-  **separate open question** — the MIROC6 decision closed the choice of
-  model, not this design point (see the heat-normalisation entry in
-  `docs/DECISIONS.md`). `water_stress_processor` still uses
-  `configured_models()[0]` only as a grid reference (grid identical across
-  models while the guard passes).
-- Toda a camada de índice (SCI/NAES/pesos/resiliência/Monte Carlo) está
-  bloqueada por V1–V6 (`ARCHITECTURE.md` Seção 9).
-- 36 CDS downloads de pr/tas em andamento para SPEI (background,
-  `logs/spei_download.log`); `spei_processor` ainda não implementado — SPEI
-  é cálculo de série temporal completa, não média de período.
+- **Camada de índice (CCRS) não escrita em `src/`.** V1–V6 estão **todos
+  fechados** — o desenho do CCRS está registrado em `docs/ARCHITECTURE.md`
+  Seção 5 e `analysis/climate_risk_score_spec.md`. O que falta:
+  - código de produção: módulo de transformação global por termo, montagem
+    do `CCRS_i,s`, `age_factor`, `EventMultiplier`, classificadores de banda,
+    geradores de relatório, wrapper de Monte Carlo;
+  - itens ainda em aberto na spec: mapeamento das curvas %/ano do
+    `age_factor` para multiplicador ≥ 1 (D), se um termo de SPEI é
+    adicionado (F), constantes globais de Min-Max congeladas (G), clip de
+    outlier em sv/iv (I), sensibilidade Monte Carlo dos dois parâmetros de
+    julgamento — split térmico e `k` do `EventMultiplier` (J).
+- **Pool de Min-Max de calor: conjunto vs. por-modelo.** MIROC6 (V4 fechado)
+  domina a escala normalizada conjunta; o CCRS contorna isso consumindo o
+  raster **bruto** de calor. Manter o pool conjunto ou voltar a por-modelo
+  no raster normalizado standalone segue como questão de desenho em aberto
+  (`docs/DECISIONS.md`, entrada de normalização de calor). `_assert_consistent_grid`
+  já falha alto (`GridMismatchError`) se rasters a agrupar divergirem em
+  grade.
+- **SPEI:** os 36 downloads de pr/tas (2 GCMs × 3 cenários × 3 países) rodam
+  em background via `cds_precipitation_downloader`
+  (`logs/spei_download.log`); `spei_processor` **não** implementado — SPEI
+  é cálculo de série temporal completa, não média de período, e é meta
+  separada a definir.
 
 ## Limitações metodológicas herdadas (declarar no manuscrito — ver `ARCHITECTURE.md`)
 
-*(Parágrafo atualizado para inglês para refletir V2/V4 fechados.)*
+*(Parágrafo em inglês; V1–V6 todos fechados, arquitetura CCRS.)*
 
-Heat still without bias-correction/ensemble weighting — a second GCM
-(MIROC6, V4) is the mitigation on record and is now downloaded and pooled
-into the heat normalisation (2 GCMs × 3 scenarios);
-Aqueduct sentinel basins substituted by `country_max`; the
-`Status == operating` filter caps the most recent commissioning year;
-`event_factor` moves from a fixed 1.0 to a per-country EM-DAT frequency
-factor (V2).
+Heat still without bias-correction/ensemble weighting — the mandatory second
+GCM (MIROC6, V4) is the mitigation on record, downloaded and processed
+(2 GCMs × 3 scenarios); GFDL-ESM4 is the primary GCM for every cited CCRS
+figure and MIROC6 a sensitivity panel, never a 50/50 blend
+(`ARCHITECTURE.md` §5.4). Aqueduct sentinel basins substituted by
+`country_max`. The `Status == operating` filter caps the most recent
+commissioning year, feeding `age_factor`. `event_factor` becomes
+`EventMultiplier_c` — a per-country EM-DAT frequency multiplier on the CCRS
+score (V2), `1 + 0.5·(rate_c/rate_max)`. `fuel_factor` removed entirely
+(V5 closed). `HeatRiskBand` has no published absolute threshold and uses
+sample-relative percentile cuts, GCM-sensitive — declared limitation
+(`ARCHITECTURE.md` §10).

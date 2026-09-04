@@ -11,10 +11,12 @@ Nada em `data/` está no git.
 | coastline | Natural Earth 10m coastline (naciscdn.org) | — | `data/raw/boundaries/natural_earth_coastline/ne_10m_coastline.shp` |
 | rivers | Natural Earth 10m rivers | — | `data/raw/boundaries/natural_earth_rivers/ne_10m_rivers_lake_centerlines.shp` |
 | cds_tasmax | Copernicus CDS `projections-cmip6`, tasmax diário | `CDS_API_URL`/`CDS_API_KEY` | `data/raw/climate/cds_tasmax/{país}/{modelo}/{cenário}/*.nc`; rasters `data/processed/climate/extreme_heat_days_{país}_{modelo}_{cenário}_{native,1km}.tif`. Área do request e `clip_box` = `_climate_bounds` (união dos bounds GADM com `config.COUNTRY_BBOX_FALLBACK[país]`) |
+| cds_precipitation | CDS `projections-cmip6`, pr + tas diário (para um termo de SPEI futuro) | `CDS_API_URL`/`CDS_API_KEY` | `data/raw/climate/cds_spei/{país}/{modelo}/{cenário}/{pr,tas}/*.nc`; rasters QA `data/processed/climate/{precipitation,air_temperature}_mean_{país}_{modelo}_{cenário}_{native,1km}.tif` (média do período — **não** é insumo do SPEI, que precisa da série). Mesma matriz e grade do `cds_tasmax` |
 | aqueduct | WRI Aqueduct 4.0 `future_annual` via GEE | `GEE_PROJECT_ID` (opcional; pula se ausente) | `data/raw/climate/aqueduct/{país}/aqueduct_2050.csv` |
 | emdat | EM-DAT Archive, UCLouvain Dataverse (`doi:10.14428/DVN/I0LTPH`) | — | `data/raw/validation/_emdat_archive_raw.xlsx`, `emdat_{país}.csv`; `data/outputs/inspection/emdat_event_counts.csv`, `emdat_coverage.csv` |
 | assets_validator | `.xlsx` manual do GEM em `data/raw/assets/` | — | `data/processed/assets/gem_validated_plants_{país}.csv`, `gem_units_detail.csv`, `gem_planned_assets.csv`, `gem_excluded_azores_madeira.csv`, `data/outputs/inspection/gem_validation_report.json` |
 | water_stress_processor | `aqueduct_2050.csv` + grade do raster de calor | — | `data/processed/climate/water_stress_{país}_{cenário}_1km.tif` (normalizado) e `water_stress_raw_{país}_{cenário}_1km.tif` (bruto) |
+| water_variability_processor | `aqueduct_2050.csv` (colunas sv/iv) + grade do raster de calor | — | `data/processed/climate/{seasonal,interannual}_variability_{país}_{cenário}_1km.tif` (normalizado, Min-Max/país sobre os 3 cenários, sem log1p) e `..._raw_...` (bruto), por indicador |
 | heat_stress_processor | `extreme_heat_days_{país}_{modelo}_{cenário}_1km.tif` | — | `data/processed/climate/heat_stress_{país}_{modelo}_{cenário}_1km.tif` (normalizado, Min-Max com todos os modelos+cenários do país no mesmo pool; guarda de grade fail-loud antes de agrupar); bruto = o próprio arquivo de entrada (passthrough) |
 
 ## Parâmetros fixos (`src/config.py`)
@@ -26,6 +28,9 @@ Nada em `data/` está no git.
   fechado); `AQUEDUCT_SCENARIOS = [bau, opt, pes]`.
 - `CMIP6_SOURCE_ID_CDS = ["gfdl_esm4", "miroc6"]` — **lista**, gfdl_esm4
   sempre primeiro (grade de referência da água); 2º GCM = MIROC6 (V4 fechado).
+- `CMIP6_SPEI_VARIABLES = {"pr": "precipitation", "tas": "near_surface_air_temperature"}`
+  — variáveis diárias do `cds_precipitation_downloader` (só pr + tas: método
+  de PET é Thornthwaite, não precisa de tasmin/tasmax).
 - `EXTREME_HEAT_THRESHOLD_C = 40`.
 - `MAINLAND_ONLY_COUNTRIES = {Portugal}`.
 - `COUNTRY_BBOX_FALLBACK` — piso de cobertura do download de calor, unido aos
@@ -41,7 +46,8 @@ Nada em `data/` está no git.
 warning se a fronteira faltar). `climate_downloader` roda os três na ordem
 `boundaries → cds_tasmax → aqueduct`.
 
-Depois: `heat_stress_processor` antes de `water_stress_processor` — o
-`water` lê um raster `extreme_heat_days_*_1km.tif` como referência de grade
-(`_load_reference_grid`). Rodar `water` sem o `heat` processado levanta
+Depois: `heat_stress_processor` antes de `water_stress_processor` **e** de
+`water_variability_processor` — os dois de água leem um raster
+`extreme_heat_days_*_1km.tif` como referência de grade
+(`_load_reference_grid`). Rodar qualquer um sem o `heat` processado levanta
 `FileNotFoundError` claro.
