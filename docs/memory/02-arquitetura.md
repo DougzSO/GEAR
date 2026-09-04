@@ -23,6 +23,7 @@ src/
     risk_bands.py       WaterRiskBand (cortes absolutos WRI fixos 0,208/0,415/0,667/1,0 sobre S_water = 0,4164·ws_raw + 0,2505·sv_raw + 0,3331·iv_raw) e HeatRiskBand (p25/p75/p95 de extreme_heat_days, GFDL-ESM4 primário, 3 cenários pooled) como colunas SEPARADAS — nunca um score único. Tabela de contingência WaterRiskBand×HeatRiskBand como saída auxiliar. Depende só de ccrs_calculator. Aviso literal de não-comparabilidade do HeatRiskBand em todo relatório gerado.
     age_factor.py       multiplicador ≥ 1: age_factor = 2 - clip(retention(age), 0, 1) em [1,2], age = config.YEAR_TARGET(2050) - commissioning_year. Planta velha aumenta o Hazard. Curvas de retenção por fuel_type: coal — dente de serra com overhaul assumido (decai 0,25pp/ano, ciclo de 5 anos, recupera 70% da perda do ciclo ao completar — ciclo e fração são premissa assumida, não da literatura); wind 1-0,004·age uniforme (CF_initial não existe em nenhum arquivo GEM — a forma 1-0,0015·age/CF_initial é código morto, nunca chamada); hydro 1-0,0055·age (sem o fator 0,79); solar (1-0,007)^age; gas/nuclear/bioenergy = retenção 1,0 → af 1,0 (gas provisório). Mixed = média simples dos age_factor. commissioning_year ausente → 1,0 (mantido, sinalizado). Multiplica ccrs_hazard.csv por plant_uid (nunca soma). Convenção ≥1 confirmada como definitiva pelo autor; spec item D fechado, sem bloco OPEN. Ver docs/DECISIONS.md 2026-09-04 (entrada final).
     event_multiplier.py multiplicador ≥ 1 por país: EventMultiplier_c = 1 + 0,5·(rate_c/rate_max), rate_c = N_events(c)/124 (N_events = linhas de data/raw/validation/emdat_{país}.csv, já filtrado por ISO+tipo — nenhuma normalização inventada), rate_max = maior rate_c entre os países passados (Índia, hoje). Geocodificado só a nível de país (V2 fechado) — join por country, mesmo valor p/ todo plant_uid do país, guarda contra fan-out/drop de linha (merge validate="many_to_one" + checagem de contagem). Multiplica ccrs_hazard.csv (nunca soma), mesmo padrão de age_factor.apply_to_hazard. Sem divergência spec/ARCHITECTURE (item C, checado antes de codar). Ver docs/DECISIONS.md e item 15 de 05-decisoes-tecnicas.md.
+    ccrs_report.py       primeiro módulo a juntar T1×T2×T3: CCRS_i,s = Hazard_i,s * age_factor_i * EventMultiplier_country(i), produto só (nunca soma), por plant_uid×water_scenario, uma coluna ccrs_{gcm} por GCM configurado. age_factor junta por plant_uid, EventMultiplier por country, os dois com merge validate="many_to_one" + guarda de contagem de linha. capacity_sum() faz assert (AssertionError, nunca log) de que a soma de capacidade só roda sobre a base computável V6 (ccrs_calculator.computable_base) — nunca capacity_mw bruto. Relatório: % de capacidade por WaterRiskBand (por país×water_scenario, sem eixo de GCM — a banda é GCM-independente) e por HeatRiskBand (por país×heat_scenario×gcm, GFDL-ESM4 primário + MIROC6 painel, nunca blend), cada grupo somando 1,0 com uma linha NO_BAND p/ plantas sem banda; tabela de contingência reaproveitada de risk_bands.contingency_table (não reimplementada); aviso HEAT_BAND_WARNING verbatim, nota de fallback do wind e fração de commissioning_year ausente por país (herdados de T4/T2).
 tests/                 pytest; fixtures sintéticas, sem chamada de API real (exceção: o teste de regressão de bounds do ccrs_calculator lê os rasters processados, pulado com motivo se ausentes)
 ```
 
@@ -67,9 +68,9 @@ congelados em `FROZEN_BOUNDS` com trava de regressão — ver
 `event_multiplier.py` dependem de `ccrs_calculator` (`age_factor` também de
 `config.YEAR_TARGET`; `event_multiplier` também de `emdat_downloader`, para
 `country_csv_path`/`DISASTER_TYPES`). Ordem lógica: `ccrs_calculator` →
-(`risk_bands`, `age_factor`, `event_multiplier`) → montagem do `CCRS_i,s`
-completo (ainda não escrita — falta só o produto final dos três fatores numa
-coluna). Itens 13, 14 e 15 de `05-decisoes-tecnicas.md`.
+(`risk_bands`, `age_factor`, `event_multiplier`) → `ccrs_report` (monta o
+`CCRS_i,s` completo e o relatório de % capacidade por banda, depende dos
+quatro anteriores). Itens 13, 14, 15 e 16 de `05-decisoes-tecnicas.md`.
 
 ## Mudanças estruturais vs. repositório anterior
 

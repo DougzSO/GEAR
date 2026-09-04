@@ -31,8 +31,15 @@
   a fixture de regressão, `rate_max`/`>= 1`, join por `country` sem duplicar
   nem derrubar linha de `plant_uid` (reembaralhamento de contagem por
   planta), guarda contra país ausente e contra país duplicado na tabela de
-  multiplicadores (`MergeError` do `validate="many_to_one"`). 201 testes,
-  todos passando em 2026-09-04.
+  multiplicadores (`MergeError` do `validate="many_to_one"`); para o
+  `ccrs_report` — cadeia multiplicativa Hazard×age_factor×EventMultiplier
+  calculada à mão, `capacity_sum` levantando `AssertionError` fora da base
+  computável, % capacidade por banda somando 1,0 por grupo (incl. linha
+  NO_BAND), contingência reaproveitada de `risk_bands.contingency_table`
+  (verificado por `inspect.getsource`, nunca reimplementada), relatório
+  contendo o aviso/nota/fração herdados de T4/T2, e ponta a ponta em dado
+  real (32.424 linhas = 10.808 `plant_uid` × 3 cenários, sem duplicar/perder).
+  210 testes, todos passando em 2026-09-04.
 - **Não coberto:** o caminho real download → arquivo em disco para qualquer
   fonte (nenhum teste toca rede, por decisão — consistente com o padrão de
   testes de processor herdado). A resposta real da API do CDS, do GEE e do
@@ -102,25 +109,24 @@
 
 ## TODOs que bloqueiam fases seguintes
 
-- **Camada de índice (CCRS) — Hazard, bandas de risco, age_factor e
-  EventMultiplier escritos.** `ccrs_calculator.py` (Hazard), `risk_bands.py`
-  (Water/HeatRiskBand), `age_factor.py` (multiplicador `≥ 1`),
-  `event_multiplier.py` (multiplicador `≥ 1` por país). V1–V6 todos
-  fechados. O que ainda falta:
-  - código de produção: **montagem do `CCRS_i,s` = Hazard × age_factor ×
-    EventMultiplier** numa coluna única (os três fatores já existem
-    isoladamente, com `apply_to_hazard` provando o join/multiplicação de cada
-    um), relatórios per-country de share de capacidade por banda, wrapper de
-    Monte Carlo;
+- **Camada de índice (CCRS) — completa, exceto Monte Carlo.**
+  `ccrs_calculator.py` (Hazard), `risk_bands.py` (Water/HeatRiskBand),
+  `age_factor.py` (multiplicador `≥ 1`), `event_multiplier.py` (multiplicador
+  `≥ 1` por país), `ccrs_report.py` (monta `CCRS_i,s` = Hazard × age_factor ×
+  EventMultiplier numa coluna por GCM + relatório de % capacidade por banda +
+  contingência). V1–V6 todos fechados. O que ainda falta:
+  - código de produção: só o wrapper de Monte Carlo (spec item J, split
+    térmico e `k` do `EventMultiplier`) e relatórios per-country adicionais
+    além dos já escritos em `ccrs_report.py`;
   - itens ainda em aberto na spec: termo de SPEI (F), clip de outlier em sv/iv
-    (I), sensibilidade Monte Carlo do split térmico e do `k` do
-    `EventMultiplier` (J). Fechados na implementação: G (bounds congelados,
+    (I), Monte Carlo J. Fechados na implementação: G (bounds congelados,
     `FROZEN_BOUNDS` + trava, item 12), **D** (`age_factor ≥ 1`,
     `2 - retention(age)`, convenção confirmada como definitiva pelo autor —
     `docs/DECISIONS.md` 2026-09-04, entrada final; ver item 14 de
     `05-decisoes-tecnicas.md` para o histórico das três entradas) e **C**
     (`EventMultiplier_c`, sem divergência entre spec e ARCHITECTURE — item 15
-    de `05-decisoes-tecnicas.md`).
+    de `05-decisoes-tecnicas.md`). Montagem final: item 16 de
+    `05-decisoes-tecnicas.md`.
 - **`age_factor` wind — sem branch de `CF_initial`, código morto verificado.**
   `CF_initial` (fator de capacidade inicial) não existe em nenhum arquivo GEM
   (confirmado nas 1986 usinas: BR 1126 / PT 225 / IN 635). `age_factor` usa

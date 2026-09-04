@@ -92,6 +92,14 @@ Ordem: `heat_stress_processor` → (`water_stress_processor`,
 # EventMultiplier_c (>= 1, 1 + 0.5*rate_c/rate_max) por país, a partir de
 # data/raw/validation/emdat_{país}.csv -> ccrs_event_multipliers.csv
 .venv\Scripts\python -m src.index.event_multiplier
+
+# CCRS_i,s = Hazard x age_factor x EventMultiplier (produto, T1xT2xT3) +
+# bandas de T4 juntadas + relatório de % capacidade por banda/contingência.
+# Precisa de ccrs_hazard.csv já gerado (python -m src.index.ccrs_calculator);
+# age_factor/event_multiplier/risk_bands são recalculados dentro do módulo.
+# -> ccrs_final.csv, ccrs_water_band_capacity_shares.csv,
+#    ccrs_heat_band_capacity_shares.csv, ccrs_report.md
+.venv\Scripts\python -m src.index.ccrs_report
 ```
 
 `risk_bands` depende dos rasters brutos (via `ccrs_calculator.sample_terms`).

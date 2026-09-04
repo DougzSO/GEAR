@@ -44,8 +44,15 @@ wind uniforme 0,4%/ano sem `CF_initial`) e multiplica o Hazard por
 frequência de desastres `≥ 1` por país (`EventMultiplier_c = 1 +
 0,5·rate_c/rate_max`, `rate_c = N_events(c)/124` a partir de
 `emdat_{país}.csv`, item C sem divergência spec/ARCHITECTURE) e multiplica o
-Hazard por `country`, sem duplicar/derrubar `plant_uid`. 201 testes. As
+Hazard por `country`, sem duplicar/derrubar `plant_uid`; `src/index/ccrs_report.py`
+monta `CCRS_i,s = Hazard × age_factor × EventMultiplier` (produto, nunca
+soma, uma coluna `ccrs_{gcm}` por GCM), junta as bandas de T4 e escreve o
+relatório de % de capacidade (base computável V6, `capacity_sum` com assert
+fail-loud) por `WaterRiskBand`/`HeatRiskBand` por país/cenário/GCM +
+contingência (reaproveitada de `risk_bands.contingency_table`) + as
+ressalvas de T2/T4 (fallback do wind, fração sem `commissioning_year`,
+aviso de não-comparabilidade do HeatRiskBand). 210 testes. As
 verificações pós-dados V1–V6 (`ARCHITECTURE.md` Seção 9) estão **todas
-fechadas**; o CCRS substitui SCI/NAES. Os três fatores multiplicativos
-existem; falta a montagem final do `CCRS_i,s` (produto Hazard × age_factor ×
-EventMultiplier numa coluna única), Monte Carlo e relatórios per-country.
+fechadas**; o CCRS substitui SCI/NAES. A camada de índice está completa
+exceto o wrapper de Monte Carlo (spec item J) e relatórios per-country
+adicionais.

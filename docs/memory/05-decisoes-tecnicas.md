@@ -479,3 +479,55 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
 - **Arquivos:** `src/index/event_multiplier.py`, `tests/test_event_multiplier.py`.
 - **Status:** Ativa. `k = 0,5` é o único parâmetro em aberto para a
   sensibilidade Monte Carlo do item J (spec), não para re-derivação.
+
+## 16. CCRS montagem final — `src/index/ccrs_report.py` (T1×T2×T3, relatório de banda)
+
+- **Contexto:** primeiro módulo a juntar Hazard (T1), age_factor (T2) e
+  EventMultiplier (T3) numa coluna só, mais o relatório de % capacidade por
+  banda (T4). Checado antes de codar: fórmula de montagem (spec §2 vs
+  ARCHITECTURE §5.1), base de capacidade (spec §8.5 vs ARCHITECTURE §5.5) e
+  regra de GCM primário/sensibilidade (spec §8.6 vs ARCHITECTURE §5.4) — **sem
+  divergência** nos três pontos.
+- **Decisão:** `compute_ccrs()` = `CCRS_i,s = Hazard_i,s * age_factor_i *
+  EventMultiplier_country(i)`, produto só (nunca soma), por
+  `(plant_uid, water_scenario)`, uma coluna `ccrs_{gcm}` por GCM configurado
+  (`ccrs_gfdl_esm4`, `ccrs_miroc6`, nunca combinadas). `age_factor` junta por
+  `plant_uid` (T2, um valor por planta); `EventMultiplier` junta por
+  `country` (T3, um valor por país); os dois `merge(..., validate=
+  "many_to_one")` + guarda explícita de contagem de linha — nem duplicam nem
+  derrubam `plant_uid`. `attach_risk_bands()` junta `water_risk_band` (só do
+  `BandTable` do GCM primário — não depende de GCM, T4) e
+  `heat_risk_band_{gcm}` (um por GCM) por `(plant_uid, water_scenario)`,
+  `validate="one_to_one"`.
+- **Capacidade — assert explícito, fail-loud.** `capacity_sum(df)` levanta
+  `AssertionError` (nunca loga e segue) se algum registro de `df` não tiver
+  `commissioning_year` — i.e. exige que `df` já seja a base computável V6
+  (`ccrs_calculator.computable_base`). Toda soma de capacidade do módulo
+  passa por essa função; nunca soma `capacity_mw` direto do fleet bruto.
+- **`band_capacity_shares(frame, band_col, bands, group_cols)`** — % de
+  capacidade (base V6) por banda, agrupado por `group_cols`. Linhas sem banda
+  (planta fora de bacia Aqueduct ou de célula de raster de calor) entram como
+  linha `NO_BAND`, então `capacity_share` soma exatamente 1,0 em todo grupo.
+  WaterRiskBand: agrupado por `(country, water_scenario)` — **sem** eixo de
+  GCM, porque a banda é GCM-independente (T4); reportar "por GCM" duplicaria
+  o mesmo número. HeatRiskBand: agrupado por
+  `(country, heat_scenario, gcm)` — GFDL-ESM4 linhas ao lado de MIROC6, nunca
+  misturadas (ARCHITECTURE §5.4).
+- **Contingência WaterRiskBand×HeatRiskBand reaproveitada de T4** —
+  `risk_bands.contingency_table()` chamada diretamente, uma vez por GCM
+  (primário + painel de sensibilidade); não reimplementada. Verificado por
+  inspeção de `inspect.getsource(build_summary)`.
+- **Relatório carrega as ressalvas de dado de T2/T4, não só em docs/memory:**
+  `risk_bands.HEAT_BAND_WARNING` verbatim; nota do fallback uniforme de wind
+  (0,4%/ano, `CF_initial` inexistente em qualquer arquivo GEM, forma
+  `_wind_retention_from_cf_initial` código morto); tabela de fração de
+  `commissioning_year` ausente por país (Índia ~9,7%, maior que BR ~1,8%/PT
+  ~2,4%).
+- **Rodada real (2050):** `ccrs_final.csv` — 32.424 linhas, 10.808 `plant_uid`
+  únicos × 3 `water_scenario`, batendo exatamente com o esperado (T1). CCRS
+  score: `ccrs_gfdl_esm4` p50 0,26 / p95 1,57 / max 1,82; `ccrs_miroc6` p50
+  1,03 / p95 1,73 / max 1,85.
+- **Idioma:** módulo e teste em inglês.
+- **Arquivos:** `src/index/ccrs_report.py`, `tests/test_ccrs_report.py`.
+- **Status:** Ativa. Depende de T1–T4, todos commitados. Falta só o wrapper
+  de Monte Carlo (item J da spec) para a camada de índice estar completa.

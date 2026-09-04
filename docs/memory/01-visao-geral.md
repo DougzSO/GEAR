@@ -22,9 +22,11 @@ Roda localmente, sem frontend, sem CI.
   `Hazard_{i,s}`), `src/index/risk_bands.py` (WaterRiskBand + HeatRiskBand),
   `src/index/age_factor.py` (multiplicador `≥ 1`, `2 - retention(age)`),
   `src/index/event_multiplier.py` (multiplicador `≥ 1` por país,
-  `1 + 0,5·rate_c/rate_max`). Falta: montagem do `CCRS_i,s` completo (produto
-  dos três fatores numa coluna só), relatórios per-country, Monte Carlo.
-  Itens em aberto na spec: SPEI F, clip de outlier sv/iv I, Monte Carlo J.
+  `1 + 0,5·rate_c/rate_max`), `src/index/ccrs_report.py` (montagem final:
+  `CCRS_i,s = Hazard × age_factor × EventMultiplier`, produto só, nunca soma;
+  relatório de % capacidade por banda + contingência + ressalvas de dado).
+  Falta: Monte Carlo. Itens em aberto na spec: SPEI F, clip de outlier sv/iv
+  I, Monte Carlo J.
   Fechados na implementação: G (bounds congelados, `FROZEN_BOUNDS`), D
   (`age_factor = 2 - clip(retention(age), 0, 1)` ∈ `[1,2]`, convenção `≥ 1`
   confirmada como definitiva — `docs/DECISIONS.md` 2026-09-04, entrada final)
@@ -49,7 +51,7 @@ iniciada (termo Hazard do CCRS):
   `water_variability_processor` (sv/iv do Aqueduct → raster normalizado +
   bruto, Min-Max por país sobre os 3 cenários, sem log1p; espelha o
   `water_stress_processor`).
-- `src/index/` (4): `ccrs_calculator` (termo `Hazard_{i,s}`; bounds globais
+- `src/index/` (5): `ccrs_calculator` (termo `Hazard_{i,s}`; bounds globais
   congelados + trava de regressão; pesos água/calor por bucket; GFDL/MIROC6
   separados); `risk_bands` (WaterRiskBand cortes absolutos WRI + HeatRiskBand
   percentis GFDL-ESM4, colunas separadas, nunca um score único); `age_factor`
@@ -58,21 +60,23 @@ iniciada (termo Hazard do CCRS):
   dente-de-serra; wind uniforme 0,4%/ano, sem branch de `CF_initial`);
   `event_multiplier` (multiplicador `≥ 1` por país,
   `EventMultiplier_c = 1 + 0,5·rate_c/rate_max`, `rate_c = N_events(c)/124`,
-  join por `country`, multiplica o Hazard).
+  join por `country`, multiplica o Hazard); `ccrs_report` (T1×T2×T3: monta
+  `CCRS_i,s` por `plant_uid`×`water_scenario`, um par de colunas por GCM
+  `ccrs_gfdl_esm4`/`ccrs_miroc6`; junta as bandas de T4; relatório de %
+  capacidade por WaterRiskBand/HeatRiskBand por país/cenário/GCM + tabela de
+  contingência reaproveitada de `risk_bands.contingency_table`).
 - `tests/`: cobertura unitária dos 9 downloaders, do `assets_validator`, dos
-  3 processors, do `ccrs_calculator`, do `risk_bands`, do `age_factor` e do
-  `event_multiplier`. 201 testes, todos passando.
+  3 processors, do `ccrs_calculator`, do `risk_bands`, do `age_factor`, do
+  `event_multiplier` e do `ccrs_report`. 210 testes, todos passando.
 - Não portados: `slr_downloader`, `power_downloader`, `aneel_downloader`,
   `dgeg_downloader`, `slr_stress_processor`, `coastal_distance` (ver
   `docs/INVENTORY.md`).
-- **Ainda não escrito:** montagem do `CCRS_i,s` completo — um único produto
-  Hazard × `age_factor` × `EventMultiplier` por planta/cenário — e relatórios
-  per-country / Monte Carlo. Os três fatores e as bandas de risco:
-  **feitos**. V1–V6 todos fechados; itens da spec ainda abertos: F, I, J.
-  Fechados na implementação: G, D (`age_factor ≥ 1`, `2 - retention(age)`,
-  convenção confirmada como definitiva pelo autor — `docs/DECISIONS.md`
-  2026-09-04) e C (`EventMultiplier_c`, sem divergência entre spec e
-  ARCHITECTURE).
+- **Ainda não escrito:** Monte Carlo. Os três fatores multiplicativos, as
+  bandas de risco e a montagem final do `CCRS_i,s`: **feitos**. V1–V6 todos
+  fechados; itens da spec ainda abertos: F, I, J. Fechados na implementação:
+  G, D (`age_factor ≥ 1`, `2 - retention(age)`, convenção confirmada como
+  definitiva pelo autor — `docs/DECISIONS.md` 2026-09-04) e C
+  (`EventMultiplier_c`, sem divergência entre spec e ARCHITECTURE).
 
 ## Onde está cada tipo de decisão
 
