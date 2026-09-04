@@ -79,6 +79,29 @@ C6_INVESTIGATION_NOTE = (
     "is coded."
 )
 
+# [2026-09-04, addendum] appended to the note itself (not just this comment)
+# so a reader of C6_INVESTIGATION_NOTE alone still sees the outcome: Douglas
+# approved the design above after reading this finding, and it is now
+# implemented as src/index/emdat_validation.py (data/statistics) and
+# src/visualization/emdat_validation.py (the box/strip plot). The coverage/
+# proxy caveats above still apply verbatim -- they are also printed on the
+# figure itself (emdat_validation.CAPTION), not only recorded here. One
+# detail not anticipated in this note: the "GADM Admin Units" field mixes
+# admin-1 and admin-2 (and occasionally admin-0) granularity per event, not
+# a single level -- see emdat_validation's docstring for how that is
+# resolved.
+C6_INVESTIGATION_NOTE += (
+    " [2026-09-04 addendum] Approved after this finding was reported -- now "
+    "implemented as src/index/emdat_validation.py (data/statistics) and "
+    "src/visualization/emdat_validation.py (the box/strip plot). The "
+    "coverage/proxy caveats above still apply verbatim -- they are also "
+    "printed on the figure itself (emdat_validation.CAPTION), not only "
+    "recorded here. One detail not anticipated above: the 'GADM Admin "
+    "Units' field mixes admin-1 and admin-2 (and occasionally admin-0) "
+    "granularity per event, not a single level -- see emdat_validation's "
+    "docstring for how that is resolved."
+)
+
 
 # --------------------------------------------------------------------------
 # B1 -- GFDL vs MIROC6 comparison (replaces the second map panel)

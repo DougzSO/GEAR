@@ -23,5 +23,9 @@ python-dotenv>=1.0.0
 # Visualization (src/visualization/) -- CCRS figures for the article.
 matplotlib>=3.7.0
 
+# EM-DAT x Hazard spatial overlay validation (src/index/emdat_validation.py,
+# C6, exploratory) -- Mann-Whitney U test.
+scipy>=1.11.0
+
 # Tests
 pytest>=7.4.0

@@ -867,3 +867,71 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   (reescrito, 35 testes).
 - **Status:** Ativa. C6 permanece em aberto (exploratório, aguardando
   decisão de Douglas).
+
+## 22. C6 — validação espacial EM-DAT × Hazard, implementada (2026-09-04)
+
+- **Contexto:** após o achado de viabilidade do item 21 (cobertura GADM
+  Admin Units ~50-53%, Lat/Lon pontual 5,3-12,1%), Douglas aprovou o desenho
+  proposto e pediu a implementação: agregação de eventos por polígono
+  admin-1, comparação do termo de Hazard correspondente via Mann-Whitney U,
+  output como box/strip plot com p-valor anotado, nunca um score combinado
+  único, e as limitações de cobertura na própria figura, não só no código.
+- **Decisão — arquitetura:** camada de dado/estatística em
+  `src/index/emdat_validation.py` (não depende de `src/visualization/` —
+  reimplementa um loader mínimo de fronteiras admin-1 em vez de importar
+  `_common.load_admin1_boundaries`, preservando a direção de dependência
+  index → visualization já usada no resto do projeto); camada de figura em
+  `src/visualization/emdat_validation.py`. Este módulo é diagnóstico —
+  **não** realimenta `Hazard`/`CCRS`.
+- **Decisão — mapeamento tipo de desastre → termo de Hazard** (proxy
+  disponível, não um match físico perfeito, reportado como ressalva):
+  `Extreme temperature → heat`, `Drought → spei`, `Flood → ws` (estresse
+  hídrico — escassez, não excesso de água; é o único termo do lado água
+  disponível no sistema). `Storm` **excluído**: não existe termo de
+  vento/tempestade no CCRS para comparar.
+- **Achado não antecipado no relatório de viabilidade:** o campo `GADM
+  Admin Units` mistura granularidade por evento — alguns dão GID admin-1
+  diretamente (`"gid_1":"BRA.5_1"`), a maioria dá admin-2/município
+  (`"gid_2":"BRA.19.68_2"`), alguns só admin-0/país (descartado, grosso
+  demais). `emdat_validation._resolve_admin1_gid` trunca qualquer nível
+  ≥ 1 para o pai admin-1 (dois primeiros segmentos separados por ponto),
+  para que todo evento caia na mesma grade admin-1 que a camada de
+  fronteiras da CCRS usa (`GID_1` do `ADM_ADM_1`).
+- **Método:** por (país, tipo de desastre) — Storm excluído — média zonal
+  (`rasterio.mask`, nodata-safe) do raster bruto do termo mapeado, GFDL-ESM4
+  + `water_scenario="bau"` (um campo de referência único; é um diagnóstico,
+  não um resultado por cenário), por polígono admin-1; grupo "com evento
+  geocodificado" vs. "sem"; teste de Mann-Whitney U bilateral. Um par é
+  **pulado, nunca descartado silenciosamente** (`skip_reason` preenchido)
+  se algum grupo tiver menos de `MIN_GROUP_SIZE=3` polígonos com valor
+  finito.
+- **Achado nos dados reais** (`python -m src.index.emdat_validation`,
+  9 pares país×tipo testáveis, 2 pulados): Índia mostra associação
+  significativa nos 3 tipos — heat p=5,4e-7, flood p=3,3e-3, drought
+  p=0,026 (polígonos com evento têm Hazard mediano muito mais alto). Brasil
+  não mostra associação significativa em nenhum dos 3 (p entre 0,31 e
+  0,98). Portugal: Flood não significativo (p=0,33); **Extreme temperature
+  e Drought foram pulados** — Portugal tem evento geocodificado em 18 dos
+  18 polígonos admin-1 usados nesses dois tipos (cobertura quase universal,
+  não antecipada no relatório de viabilidade), deixando zero polígonos no
+  grupo "sem evento" para comparar. Isso não invalida o método — é um
+  resultado informativo por si (o país é pequeno o bastante para que quase
+  toda unidade admin-1 tenha histórico de algum evento de calor/seca em
+  124 anos) e o `skip_reason` reporta exatamente isso.
+- **Nova dependência:** `scipy>=1.11.0` (`scipy.stats.mannwhitneyu`),
+  primeiro uso desta biblioteca no projeto — adicionada a
+  `requirements.txt` conforme já sinalizado no `CLAUDE.md`/item 1 deste
+  arquivo ("scipy ... adicionadas quando essa camada for escrita").
+- **Ressalvas mantidas na própria figura** (não só no código, conforme
+  pedido): rodapé de `plot_emdat_spatial_validation` repete a cobertura
+  geocodificada (~50-53%), o caráter de proxy do termo `ws` para Flood, a
+  exclusão de Storm, e lista os pares pulados com o motivo.
+- **Arquivos:** `src/index/emdat_validation.py` (novo),
+  `src/visualization/emdat_validation.py` (novo), `requirements.txt`
+  (`scipy`), `src/visualization/tables.py` (`C6_INVESTIGATION_NOTE`
+  recebeu um addendum apontando para esta implementação),
+  `tests/test_visualization.py` (7 novos testes: parsing de GID misto,
+  exclusão de Storm, decisão de pular/testar, figura com resultado
+  sintético, ressalvas no rodapé da figura).
+- **Status:** Ativa. Resultado é diagnóstico/exploratório — não altera
+  `Hazard`/`CCRS`; aguardando decisão de Douglas sobre uso no artigo.

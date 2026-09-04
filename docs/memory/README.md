@@ -79,7 +79,9 @@ por país virou tabela (gráfico removido), e cinco tabelas/figuras novas:
 CCRS nacional agregado com IC do Monte Carlo, tabela de pesos com
 proveniência, contribuição relativa dos termos de Hazard, e tabelas do
 Monte Carlo por magnitude — ver item 21. Validação espacial EM-DAT contra
-hazard (C6) foi investigada e reportada, não implementada — aguarda decisão
-de Douglas. 294 testes. As verificações pós-dados V1–V6 (`ARCHITECTURE.md`
+hazard (C6) foi investigada, aprovada e implementada
+(`src/index/emdat_validation.py` + `src/visualization/emdat_validation.py`,
+polígono admin-1 × termo de Hazard via Mann-Whitney U, diagnóstico, não
+realimenta Hazard/CCRS) — ver item 22. 300 testes. As verificações pós-dados V1–V6 (`ARCHITECTURE.md`
 Seção 9) estão **todas fechadas**; o CCRS substitui SCI/NAES. A camada de
 índice está completa exceto relatórios per-country adicionais.

@@ -528,18 +528,140 @@ def test_monte_carlo_parameter_summary_table_shape(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# 13. C6 -- exploratory only, not implemented (feasibility reported instead)
+# 13. C6 -- EM-DAT x Hazard spatial overlay validation (approved + implemented)
 # --------------------------------------------------------------------------
-def test_c6_investigation_documented():
-    """C6 (EM-DAT spatial overlay validation) was investigated but NOT
-    implemented -- Douglas's brief required reporting feasibility and a
-    design proposal before any code. This test only guards that the finding
-    is recorded (``tables.C6_INVESTIGATION_NOTE``), not that a figure/table
-    exists -- there is deliberately none yet."""
-    assert not hasattr(vtables, "plot_emdat_spatial_validation")
-    assert not hasattr(vtables, "emdat_spatial_validation_table")
-    assert "not implemented" in vtables.C6_INVESTIGATION_NOTE.lower()
+def test_c6_feasibility_finding_still_recorded():
+    """The pre-approval feasibility note stays in place as the historical
+    record of the investigation Douglas asked for before any code -- it is
+    not deleted just because C6 is now implemented (see the addendum inside
+    it, and src/index/emdat_validation.py's module docstring)."""
     assert "GADM Admin Units" in vtables.C6_INVESTIGATION_NOTE
+    assert "emdat_validation.py" in vtables.C6_INVESTIGATION_NOTE
+
+
+def test_emdat_admin1_gid_resolution_handles_mixed_granularity():
+    """The 'GADM Admin Units' field mixes admin-1/admin-2/admin-0 GIDs per
+    event (discovered while implementing, not in the original feasibility
+    report) -- every level >= 1 must resolve to the same admin-1 parent."""
+    from src.index import emdat_validation as ev
+
+    admin1_cell = '[{"gid_1":"BRA.5_1","name_1":"Bahia"}]'
+    admin2_cell = '[{"gid_2":"BRA.19.68_2","name_2":"Rio de Janeiro"}]'
+    admin0_cell = '[{"gid_0":"BRA","name_0":"Brazil"}]'
+    mixed_cell = '[{"gid_1":"BRA.5_1"},{"gid_2":"BRA.19.68_2"}]'
+
+    assert ev._admin1_gids_from_cell(admin1_cell) == {"BRA.5_1"}
+    assert ev._admin1_gids_from_cell(admin2_cell) == {"BRA.19_1"}
+    assert ev._admin1_gids_from_cell(admin0_cell) == set()  # too coarse, dropped
+    assert ev._admin1_gids_from_cell(mixed_cell) == {"BRA.5_1", "BRA.19_1"}
+    assert ev._admin1_gids_from_cell(None) == set()
+    assert ev._admin1_gids_from_cell(float("nan")) == set()
+
+
+def test_emdat_storm_excluded_no_matching_hazard_term():
+    from src.index import emdat_validation as ev
+
+    assert "Storm" not in ev.DISASTER_TYPE_TO_TERM
+    assert "Storm" in ev.EXCLUDED_DISASTER_TYPES
+
+
+def test_run_validation_skips_pairs_with_too_few_polygons(monkeypatch):
+    """Unit-level test of the skip/test decision logic -- mocks the two
+    data-fetching calls so it does not need real rasters/boundaries."""
+    from src.index import emdat_validation as ev
+
+    fake_polys = pd.DataFrame({
+        "gid_1": ["X.1_1", "X.2_1", "X.3_1"],
+        "hazard_value": [0.2, 0.5, 0.9],
+    })
+    fake_events = pd.DataFrame({"disaster_type": ["Drought"], "gid_1": ["X.1_1"]})
+
+    monkeypatch.setattr(ev, "load_geocoded_events", lambda country: fake_events)
+    monkeypatch.setattr(ev, "polygon_hazard_table", lambda country, term, model, water_scenario: fake_polys)
+
+    result = ev.run_validation(countries=["Brazil"])
+    summary = result["summary"]
+    assert set(summary["disaster_type"]) == set(ev.DISASTER_TYPE_TO_TERM)
+    drought_row = summary[summary["disaster_type"] == "Drought"].iloc[0]
+    # 1 polygon with an event, 2 without -- both below MIN_GROUP_SIZE=3 -> skipped
+    assert drought_row["skip_reason"] is not None
+    assert np.isnan(drought_row["p_value"])
+
+
+def test_run_validation_runs_the_test_when_groups_are_large_enough(monkeypatch):
+    from src.index import emdat_validation as ev
+
+    fake_polys = pd.DataFrame({
+        "gid_1": [f"X.{i}_1" for i in range(10)],
+        "hazard_value": [0.1, 0.15, 0.2, 0.25, 0.3, 0.6, 0.65, 0.7, 0.75, 0.8],
+    })
+    fake_events = pd.DataFrame({
+        "disaster_type": ["Drought"] * 5,
+        "gid_1": [f"X.{i}_1" for i in range(5, 10)],  # the high-hazard half
+    })
+
+    monkeypatch.setattr(ev, "load_geocoded_events", lambda country: fake_events)
+    monkeypatch.setattr(ev, "polygon_hazard_table", lambda country, term, model, water_scenario: fake_polys)
+
+    result = ev.run_validation(countries=["Brazil"])
+    row = result["summary"][result["summary"]["disaster_type"] == "Drought"].iloc[0]
+    assert row["skip_reason"] is None
+    assert not np.isnan(row["p_value"])
+    assert row["median_hazard_with_event"] > row["median_hazard_without_event"]
+
+
+def test_emdat_spatial_validation_figure_with_synthetic_result(tmp_path, monkeypatch):
+    from src.visualization import emdat_validation as vev
+
+    monkeypatch.setattr(vev, "OUT_DIR", tmp_path)
+    polygons = pd.DataFrame({
+        "gid_1": [f"X.{i}_1" for i in range(6)],
+        "hazard_value": [0.1, 0.2, 0.3, 0.6, 0.7, 0.8],
+        "has_event": [False, False, False, True, True, True],
+        "country": ["Brazil"] * 6,
+        "disaster_type": ["Drought"] * 6,
+        "term": ["spei"] * 6,
+    })
+    summary = pd.DataFrame([{
+        "country": "Brazil", "disaster_type": "Drought", "term": "spei",
+        "n_polygons_with_event": 3, "n_polygons_without_event": 3,
+        "n_finite_with_event": 3, "n_finite_without_event": 3,
+        "median_hazard_with_event": 0.7, "median_hazard_without_event": 0.2,
+        "u_statistic": 9.0, "p_value": 0.05, "skip_reason": None,
+    }])
+    path = vev.plot_emdat_spatial_validation(result={"summary": summary, "polygons": polygons})
+    assert path.exists()
+
+
+def test_emdat_spatial_validation_figure_reports_skips_in_caption(tmp_path, monkeypatch):
+    """Douglas's explicit requirement: coverage/skip limitations must be
+    printed on the figure itself, not only in the code."""
+    from src.visualization import _common, emdat_validation as vev
+
+    monkeypatch.setattr(vev, "OUT_DIR", tmp_path)
+    captured = []
+    real_save = _common.save_figure
+
+    def _spy(fig, out_path):
+        captured.append(fig)
+        return real_save(fig, out_path)
+
+    monkeypatch.setattr(vev, "save_figure", _spy)
+
+    summary = pd.DataFrame([{
+        "country": "Portugal", "disaster_type": "Extreme temperature", "term": "heat",
+        "n_polygons_with_event": 1, "n_polygons_without_event": 19,
+        "n_finite_with_event": 1, "n_finite_without_event": 19,
+        "median_hazard_with_event": float("nan"), "median_hazard_without_event": 0.3,
+        "u_statistic": float("nan"), "p_value": float("nan"),
+        "skip_reason": "fewer than 3 polygons with a finite hazard value on one side (with_event=1, without_event=19)",
+    }])
+    polygons = pd.DataFrame(columns=["gid_1", "hazard_value", "has_event", "country", "disaster_type", "term"])
+    vev.plot_emdat_spatial_validation(result={"summary": summary, "polygons": polygons})
+    fig = captured[0]
+    footer_texts = " ".join(t.get_text() for t in fig.texts)
+    assert "Skipped" in footer_texts
+    assert "Portugal" in footer_texts
 
 
 # --------------------------------------------------------------------------
