@@ -267,7 +267,7 @@ def test_compute_drought_frequency_flags_the_dry_pixel_more_than_the_stable_one(
     assert np.isfinite(stable_freq) and np.isfinite(dry_freq)
     assert dry_freq > stable_freq
     assert freq.attrs["units"] == sp.RAW_UNITS
-    assert "NOT wired into the CCRS Hazard term" in freq.attrs["note"]
+    assert "CCRS Hazard term" in freq.attrs["note"]
 
 
 # --------------------------------------------------------------------------

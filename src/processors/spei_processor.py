@@ -8,19 +8,18 @@ GCM/scenario-indexed layer -- more closely than ``water_stress_processor``/
 ``water_variability_processor``, which are GCM-independent.
 
 --------------------------------------------------------------------------
-Scope -- NOT wired into the CCRS Hazard term
+Scope -- wired into the CCRS Hazard term (spec item F, closed 2026-09-04)
 --------------------------------------------------------------------------
 This module produces the raster layer only, same as every other processor in
-this package. It does NOT enter ``src/index/ccrs_calculator.py``'s
-``water_sub``/``Hazard`` formula. ``analysis/climate_risk_score_spec.md``
-Section 10 item F ("Drought / SPEI term -- whether to add it, and its
-weight") is still **Open**: no source of truth (the spec, ``ARCHITECTURE.md``,
-``docs/DECISIONS.md``, ``docs/memory/``) assigns SPEI a weight, a position in
-``water_sub``/``Hazard``, or says whether adding it changes the existing
-``(0.4164, 0.2505, 0.3331)`` ws/sv/iv weights or the frozen global Min-Max
-bounds (``ccrs_calculator.FROZEN_BOUNDS``). That is an author decision, not
-an engineering one -- see the task report accompanying this module for the
-open questions that block wiring it into ``ccrs_calculator.py``.
+this package -- it does not itself combine hazards. The layer it produces
+(``raw_raster_path``, months/yr with SPEI-12 <= -1.0) IS consumed by
+``src/index/ccrs_calculator.py``'s ``Hazard`` formula, as an independent
+third additive term alongside ``water_sub`` and ``Tlog(heat)``:
+``w_drought[bucket] * Tlog(spei_freq)``. ``water_sub`` itself is untouched --
+the ``(0.4164, 0.2505, 0.3331)`` ws/sv/iv weights are never renormalised for
+SPEI. Per-bucket ``w_drought`` and the ``FROZEN_BOUNDS["spei"]`` extension
+are documented in ``docs/DECISIONS.md`` ("[2026-09-04] SPEI drought term
+added to Hazard") and ``ccrs_calculator.py``'s own module docstring.
 
 The method itself (Thornthwaite PET, not Hargreaves) IS settled: decided
 because daily ``tasmin`` is absent from the CDS catalogue for
@@ -468,9 +467,9 @@ def compute_drought_frequency(
         n_months=int(D.shape[0]),
         n_accumulated_months=int(D_accum.shape[0]),
         note=(
-            "NOT wired into the CCRS Hazard term -- climate_risk_score_spec.md "
-            "Section 10 item F is open (no weight/position decided). See the "
-            "module docstring."
+            "Consumed by the CCRS Hazard term as w_drought[bucket]*Tlog(x) -- "
+            "climate_risk_score_spec.md Section 10 item F, closed 2026-09-04. "
+            "See the module docstring."
         ),
     )
     return out
