@@ -14,7 +14,9 @@ The `sv`/`iv` rasteriser it depends on is built and tested
 thermal (0.75, 0.25), wind (0.0, 1.0), solar (0.0, 1.0) — replacing the flat
 `w = 0.25` of the earlier diagnostics. The **`EventMultiplier` functional
 form** (Section 7) is now set: `EventMultiplier_c = 1 + k·(rate_c/rate_max)`,
-`k = 0.5`, country-level per V2. Still open in Section 10: `age_factor`
+`k = 0.5`, country-level per V2. The **primary-GCM rule** (Section 8.6) is
+set: `GFDL-ESM4` is the cited figure, `MIROC6` a sensitivity panel, never a
+blend. Still open in Section 10: `age_factor`
 mapping/code (D), `fuel_factor`/V5 (E), a SPEI term (F), frozen transform
 constants (G), sv/iv outlier clip (I), and the Monte Carlo sensitivity of
 the two judgment-call constants — thermal `w_water`/`w_heat` and
@@ -432,6 +434,37 @@ inside `CCRS_i,s`. A joint cross-tabulation (capacity in each
 `WaterRiskBand × HeatRiskBand` cell) is an auxiliary output — see
 `analysis/ccrs_final_summary.md` Section 4.
 
+### 8.6 Primary GCM vs sensitivity panel — `GFDL-ESM4` is "the" figure
+
+The heat term (and therefore `HeatRiskBand`, and the `w_heat` share of the
+numeric `CCRS_i,s`) is computed for two GCMs, `gfdl_esm4` and `miroc6`. They
+are **not** an equal-weight ensemble.
+
+- **`GFDL-ESM4` is the primary GCM for every CCRS report.** The numeric
+  score, both risk bands, and any "X % of installed capacity in band …"
+  figure quoted as a **headline result of the study** use `GFDL-ESM4`.
+- **`MIROC6` is always shown as a sensitivity panel beside the primary
+  result** — an extra column in the same table, or a separate "sensitivity
+  check" section — **never** averaged or 50/50-blended with `GFDL-ESM4`, and
+  never presented as the study's number on its own.
+- **Why not a blend.** ARCHITECTURE.md Section 4 already defines the second
+  GCM as a *mandatory sensitivity check*, not an ensemble member with equal
+  weight. `analysis/ccrs_bucket_weighted_distribution.md` shows why a blend
+  would be meaningless here: for the **same physical wind/solar plants**, the
+  bucket-weighted hazard (heat only for those buckets) is ~0.006–0.03 under
+  `GFDL-ESM4` and saturates near ~0.78 under `MIROC6` — about two orders of
+  magnitude apart. Any average or 50/50 combination of the two would be an
+  artifact of an arbitrary inter-model weight, not a climate result. Keeping
+  them as primary + sensitivity makes the model dependence visible instead of
+  hiding it inside a merged number.
+- **Retroactive on reading, not on computation.** Every CCRS report already
+  produced (`analysis/ccrs_final_summary.md`,
+  `analysis/ccrs_bucket_weighted_distribution.md`,
+  `analysis/water_risk_band_classification.md`) shows both GCMs side by side —
+  nothing needs recomputing. This rule only settles which column is *the*
+  cited value when the manuscript text needs a single figure: the
+  `GFDL-ESM4` one, with the `MIROC6` value given alongside as the range.
+
 ---
 
 ## 9. Monte Carlo
@@ -486,6 +519,11 @@ diagnostics. Bucket-weighted re-run:
 Settled here (Section 7): the **`EventMultiplier` functional form** —
 `EventMultiplier_c = 1 + k·(rate_c/rate_max)`, `k = 0.5`, country-level per
 closed V2. Values: Brazil 1.192, Portugal 1.031, India 1.500.
+
+Settled here (Section 8.6): **`GFDL-ESM4` is the primary GCM for every CCRS
+report; `MIROC6` is a sensitivity panel beside it, never a 50/50 blend** —
+ARCHITECTURE.md Section 4's second-GCM-as-sensitivity-check rule, applied to
+the CCRS. Retroactive on reading only; no report is recomputed.
 
 Not settled (Section 10): `age_factor` → multiplier mapping and its code
 (item D), `fuel_factor` / V5 (item E), whether a SPEI term is added
