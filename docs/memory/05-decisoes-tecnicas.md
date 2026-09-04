@@ -531,3 +531,50 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
 - **Arquivos:** `src/index/ccrs_report.py`, `tests/test_ccrs_report.py`.
 - **Status:** Ativa. Depende de T1–T4, todos commitados. Falta só o wrapper
   de Monte Carlo (item J da spec) para a camada de índice estar completa.
+
+## 17. `analysis/ccrs_final_summary.py` × `src/index/risk_bands.py` nunca batem exatamente — pool do corte de percentil do HeatRiskBand difere
+
+- **Contexto:** T6 (`tests/test_ccrs_integration.py`) comparou a fração
+  composta de capacidade da Índia (`WaterRiskBand ∈ {High, Extremely-High}`
+  E `HeatRiskBand ∈ {HIGH, EXTREME}`, GFDL-ESM4) entre o diagnóstico antigo
+  (`analysis/ccrs_final_summary.py`, 39,2%) e a implementação de produção
+  (`src/index/risk_bands.py`, T4). Mesmos dados (rasters/CSVs inalterados
+  desde 2026-09-03), resíduo de **~0,05pp** (39,2551% vs 39,2000%,
+  denominador "matched") — pequeno, mas não zero.
+- **Decisão/achado:** os dois **nunca produzirão exatamente o mesmo número**,
+  mesmo sobre dados idênticos, porque o **pool usado para os cortes de
+  percentil do HeatRiskBand (p25/p75/p95) é diferente**:
+  - `analysis/ccrs_final_summary.py` (via
+    `water_risk_band_classification.water_band_frame`): calcula os cortes
+    só sobre o pool **"matched"** — linhas onde `ws`, `sv`, `iv` **e** `heat`
+    são todos finitos simultaneamente (a mesma planta precisa estar dentro
+    de uma bacia Aqueduct **e** dentro de uma célula de raster de calor).
+  - `src/index/risk_bands.py` (`compute_bands` → `heat_percentile_cuts`):
+    calcula os cortes sobre **todo registro com `heat` finito**,
+    independente de `ws`/`sv`/`iv` — inclui as ~54 linhas indianas de
+    plantas fora de qualquer bacia Aqueduct mas dentro do raster de calor
+    (`WaterRiskBand` fica `None` para essas linhas, mas `HeatRiskBand`
+    ainda é atribuído).
+  - Isso desloca o corte p75 de `31,1667` (antigo) para `31,0` dias/ano
+    (produção) na Índia/GFDL-ESM4 — pequeno o bastante para mover só a
+    fração composta, não a ordem de grandeza do resultado.
+- **Por que a implementação de produção está certa e não vai mudar:**
+  `risk_bands.py` classifica o HeatRiskBand independentemente do
+  WaterRiskBand por desenho (bandas são colunas separadas, nunca
+  co-dependentes — spec §8.3/T4) — restringir o pool de percentil do calor
+  ao subconjunto casado com água misturaria as duas dimensões na hora de
+  definir os cortes, o que a arquitetura do CCRS evita deliberadamente. O
+  diagnóstico antigo é anterior a essa separação explícita e usa um pool
+  mais restrito só porque reaproveitou o frame "matched" que já tinha à mão.
+- **Consequências:** o resíduo esperado entre os dois é **~0,05pp**, bem
+  dentro da tolerância de **±0,5pp** adotada em T6
+  (`tests/test_ccrs_integration.py::test_hazard_band_compound_share_for_india_vs_old_diagnostic_value`).
+  Não é o bug de cross-join de T1 (o diagnóstico antigo nunca usa `.merge()`,
+  ver a mesma suíte) nem *drift* de dado (dados inalterados desde
+  2026-09-03) — é diferença de metodologia, documentada e aceita.
+- **Arquivos:** `analysis/ccrs_final_summary.py`,
+  `analysis/water_risk_band_classification.py`, `src/index/risk_bands.py`,
+  `tests/test_ccrs_integration.py`.
+- **Status:** Ativa. Não é um TODO — o diagnóstico antigo não será alterado
+  (é histórico/congelado) nem `risk_bands.py` (o pool amplo é o desenho
+  correto); o resíduo é permanente e esperado.
