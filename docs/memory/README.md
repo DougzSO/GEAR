@@ -35,8 +35,13 @@ sv/iv). Camada de índice: `src/index/ccrs_calculator.py` calcula o termo
 de regressão, pesos água/calor por bucket, GFDL-ESM4 e MIROC6 separados);
 `src/index/risk_bands.py` calcula WaterRiskBand (cortes absolutos WRI fixos)
 e HeatRiskBand (percentis p25/p75/p95 de GFDL-ESM4) como colunas separadas,
-nunca um score único. 167 testes. As verificações pós-dados V1–V6
-(`ARCHITECTURE.md` Seção 9) estão **todas fechadas**; o CCRS substitui
-SCI/NAES (`ARCHITECTURE.md` Seção 5, `analysis/climate_risk_score_spec.md`).
-Falta a montagem do `CCRS_i,s` numérico completo, `age_factor`,
-`EventMultiplier`, Monte Carlo e relatórios per-country.
+nunca um score único; `src/index/age_factor.py` calcula o multiplicador de
+idade `≥ 1` (`age_factor = 2 - clip(retention(age), 0, 1)` ∈ `[1,2]` —
+convenção confirmada como definitiva pelo autor, item D fechado,
+`docs/DECISIONS.md` 2026-09-04; coal com overhaul assumido dente-de-serra,
+wind uniforme 0,4%/ano sem `CF_initial`) e multiplica o Hazard por
+`plant_uid`. 189 testes. As
+verificações pós-dados V1–V6 (`ARCHITECTURE.md` Seção 9) estão **todas
+fechadas**; o CCRS substitui SCI/NAES. Falta a montagem do `CCRS_i,s`
+(Hazard × age_factor × EventMultiplier), `EventMultiplier`, Monte Carlo e
+relatórios per-country.

@@ -84,6 +84,10 @@ Ordem: `heat_stress_processor` → (`water_stress_processor`,
 # WaterRiskBand + HeatRiskBand por planta (colunas separadas) + relatório
 # -> data/outputs/tables/ccrs_risk_bands.csv e ccrs_risk_bands_report.md
 .venv\Scripts\python -m src.index.risk_bands [--heat-gcm gfdl_esm4|miroc6]
+
+# age_factor (>= 1, 2 - retention(age)) por plant_uid + Hazard multiplicado.
+# -> ccrs_age_factors.csv, ccrs_hazard_aged.csv, age_factor_report.md
+.venv\Scripts\python -m src.index.age_factor
 ```
 
 `risk_bands` depende dos rasters brutos (via `ccrs_calculator.sample_terms`).

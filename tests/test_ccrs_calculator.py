@@ -285,18 +285,22 @@ def _plants_present() -> bool:
     )
 
 
+def _row(name, lat, lon, cap, year, bucket, fuel):
+    return {
+        "country": "Brazil", "plant_name": name, "lat": lat, "lon": lon,
+        "capacity_mw": cap, "fuel_type": fuel, "mixed_fuel_type": False,
+        "fuel_types_found": fuel, "commissioning_year": year, "n_units": 1,
+        "fuel_type_bucket": bucket,
+    }
+
+
 _FIXTURE_ROWS = [
-    {"country": "Brazil", "plant_name": "Alpha wind farm", "lat": "-1.1000", "lon": "-2.2000",
-     "capacity_mw": 10.0, "commissioning_year": 2000.0, "fuel_type_bucket": "wind"},
-    {"country": "Brazil", "plant_name": "Beta solar project", "lat": "-3.3000", "lon": "-4.4000",
-     "capacity_mw": 20.0, "commissioning_year": 2001.0, "fuel_type_bucket": "solar"},
+    _row("Alpha wind farm", "-1.1000", "-2.2000", 10.0, 2000.0, "wind", "wind"),
+    _row("Beta solar project", "-3.3000", "-4.4000", 20.0, 2001.0, "solar", "utility-scale solar"),
     # same name as row 0, different coordinate -> a distinct GEM record
-    {"country": "Brazil", "plant_name": "Alpha wind farm", "lat": "-1.5000", "lon": "-2.9000",
-     "capacity_mw": 10.0, "commissioning_year": 2000.0, "fuel_type_bucket": "wind"},
-    {"country": "Brazil", "plant_name": "Gamma hydroelectric plant", "lat": "-5.5000", "lon": "-6.6000",
-     "capacity_mw": 30.0, "commissioning_year": 2002.0, "fuel_type_bucket": "hydro"},
-    {"country": "Brazil", "plant_name": "Delta power station", "lat": "-7.7000", "lon": "-8.8000",
-     "capacity_mw": 40.0, "commissioning_year": 2003.0, "fuel_type_bucket": "thermal"},
+    _row("Alpha wind farm", "-1.5000", "-2.9000", 10.0, 2000.0, "wind", "wind"),
+    _row("Gamma hydroelectric plant", "-5.5000", "-6.6000", 30.0, 2002.0, "hydro", "hydropower"),
+    _row("Delta power station", "-7.7000", "-8.8000", 40.0, 2003.0, "thermal", "oil/gas"),
 ]
 
 

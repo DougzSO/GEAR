@@ -349,5 +349,90 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
     em todo relatório (`build_summary`) e no log da CLI, não só em comentário.
 - **Idioma:** módulo e teste em inglês (convenção do `src/`).
 - **Arquivos:** `src/index/risk_bands.py`, `tests/test_risk_bands.py`.
-- **Status:** Ativa. `age_factor` (D), `EventMultiplier` e a montagem do
-  `CCRS_i,s` numérico completo seguem pendentes.
+- **Status:** Ativa. `EventMultiplier` e a montagem do `CCRS_i,s` numérico
+  completo seguem pendentes.
+
+## 14. CCRS `age_factor` — `src/index/age_factor.py` (spec item D fechado, final)
+
+- **Contexto e histórico** (três entradas datadas em `docs/DECISIONS.md`, só a
+  última ativa): spec §6 e `ARCHITECTURE.md` §5/§7.1/linha 147 fixam
+  `age_factor ≥ 1`, crescente com a perda por idade. (1) Uma primeira
+  implementação usou `age_factor = 2 - clip(retention(age), 0, 1)` ∈ `[1,2]` —
+  mecanismo certo, curvas de coal/hydro/wind ainda não refinadas. (2) Uma
+  sessão seguinte reverteu para `age_factor = retention(age)` ∈ `[0,1]`,
+  achando (por premissa equivocada do assistente, não decisão do autor) que a
+  prosa `≤ 1` do V1 revision era a convenção autoritativa. **Essa reversão foi
+  o erro** — confirmado explicitamente pelo autor (opção b: "spec está
+  certa"). (3) Esta entrada restaura `2 - retention` como convenção
+  **definitiva** e incorpora as correções de coal/hydro/wind feitas durante a
+  janela `≤ 1`.
+- **Decisão:** `age_factor = 2 - clip(retention(age), 0, 1)` ∈ `[1, 2]`,
+  conversão **uniforme** para todos os buckets (retenção 1,0 → af 1,0).
+  `age = REFERENCE_YEAR - commissioning_year`, `REFERENCE_YEAR =
+  config.YEAR_TARGET = 2050`.
+  - Curvas de retenção:
+    - **coal — dente de serra com overhaul assumido**, não mais função simples
+      de `age`. Decaimento 0,25 pp/ano (`COAL_DECAY_RATE`; IEA/CIAB 2010,
+      Kim & Moon 2012, Sagaf 2020 *J. Thermal Eng.* 6(6):247-256) dentro de um
+      ciclo de `COAL_OVERHAUL_CYCLE_YEARS = 5` anos; ao completar o ciclo,
+      `COAL_OVERHAUL_RECOVERY = 70%` da perda acumulada naquele ciclo é
+      recuperada (30% permanente), reinicia. **O ciclo de 5 anos e os 70% de
+      recuperação são premissa assumida, não valor extraído de Kim & Moon ou
+      Sagaf** (essas fontes só dão a taxa de decaimento) — marcado
+      provisório/estimado, revisável se surgir dado real de overhaul por
+      planta. Resultado: af de coal bem mais próximo do neutro que o
+      decaimento puro (planta de 40 anos: af ~1,03–1,07, vs ~1,10 sob
+      `1-0,0025·age` sem recuperação).
+    - **wind — `1 - 0,004·age`, uniforme, sem branch.** Aplicado a **todas**
+      as usinas eólicas, sem condicional nem checagem de `CF_initial` em
+      runtime. `CF_initial` não existe em nenhum arquivo GEM (confirmado nas
+      1986 usinas: BR 1126 / PT 225 / IN 635) — como o branch sempre cairia no
+      fallback, a métrica de "fração no fallback" deixou de fazer sentido e
+      foi **removida** (`wind_cf_fallback_fraction` não existe mais). A forma
+      `1 - 0,0015·age/CF_initial` (`_wind_retention_from_cf_initial`) fica no
+      código como **código morto de fato** — definida, documentada, nunca
+      chamada por `age_factor` nem por qualquer função no seu caminho ativo,
+      verificado por inspeção de código-fonte em
+      `test_wind_cf_initial_formula_exists_but_is_dead_code` (checa
+      `inspect.getsource` de `age_factor`/`_wind_retention`/
+      `compute_age_factors`/`_thermal_fuel_retention` e a assinatura de
+      `age_factor`, que não aceita mais `cf_initial`). Fica pronta para uma
+      fonte real de fator de capacidade inicial (Global Wind Atlas, dado de
+      fabricante) sem mudar fórmula.
+    - hydro `1 - 0,0055·age` (0,55 %/ano, ponto médio de "~0,5-0,6 %/ano" da
+      §7.1; Turner et al. 2024 *Nat. Commun.*). O fator **0,79** da primeira
+      entrada **não foi restaurado** — sem origem documentada.
+    - solar `(1-0,007)^age` composto — inalterado nas três entradas.
+    - gas/oil-gas, nuclear, bioenergy → retenção 1,0 → af 1,0 (idêntico nas
+      duas convenções). **Gas/oil-gas é provisório** (nenhuma taxa na
+      literatura dos docs).
+  - Mixed fuel (6 plantas, todas thermal): média **simples** dos `age_factor`
+    dos componentes de `fuel_types_found`.
+  - `commissioning_year` ausente (602 plantas: BR 97 / PT 11 / IN 494):
+    `age_factor = 1,0`, linha **mantida**, sinalizada
+    (`age_factor_neutralized_missing_year`), contada por país. Concentração da
+    Índia (9,7%, wind 258 + solar 172, zero hydro) documentada em
+    `06-areas-de-risco.md`.
+  - Aplicação inalterada: multiplica cada coluna de Hazard de
+    `ccrs_hazard.csv` por `plant_uid`. Multiplicativo, nunca soma. Guarda
+    fail-loud se algum `plant_uid` do CSV não tiver `age_factor` (CSV
+    desatualizado). Saídas: `ccrs_age_factors.csv`, `ccrs_hazard_aged.csv`,
+    `age_factor_report.md`.
+- **`load_plants` estendido:** retorna também `fuel_type`, `mixed_fuel_type`,
+  `fuel_types_found` (necessário p/ o `fuel_type` dentro do bucket `thermal`).
+  Colunas aditivas, sem impacto em `compute_hazard`/`risk_bands`.
+- **Distribuição observada (2050), convenção final `[1,2]`:** af global
+  **1,0000–1,7480**. hydro tem os maiores (BR mean 1,32, max 1,75 — plantas de
+  ~1900); solar ~1,17–1,19; wind ~1,08–1,17; coal agora bem mais próximo do
+  neutro que a primeira entrada (~1,03–1,07 em todos os países, por causa da
+  recuperação de overhaul assumida). Neutros (gas/nuclear/bioenergy) = 1,0.
+- **Item D da spec — fechado, sem bloco OPEN.** `age_factor ≥ 1` é a
+  convenção correta e definitiva (confirmado pelo autor). Nada pendente de
+  reconciliação de prosa.
+- **Idioma:** módulo e teste em inglês.
+- **Arquivos:** `src/index/age_factor.py`, `tests/test_age_factor.py`,
+  `src/index/ccrs_calculator.py` (`load_plants`).
+- **Status:** Ativa. Gas/oil-gas provisório (open). Coal: ciclo de overhaul de
+  5 anos / recuperação de 70% é parâmetro assumido e revisável (não é "open"
+  no sentido de bloquear item D — é estimativa documentada). `EventMultiplier`
+  e a montagem do `CCRS_i,s` completo seguem pendentes.

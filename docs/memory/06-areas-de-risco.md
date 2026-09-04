@@ -20,8 +20,14 @@
   absolutos do WaterRiskBand (limites exatos + valor por faixa), p25/p75/p95
   do HeatRiskBand em amostra sintética, HeatRiskBand só GFDL-ESM4 (nunca
   MIROC6/blend), chave `plant_uid`, ausência de score único combinando as
-  bandas, aviso literal de não-comparabilidade no relatório. 167 testes,
-  todos passando em 2026-09-04.
+  bandas, aviso literal de não-comparabilidade no relatório; para o
+  `age_factor` — um caso por bucket (incl. gas/nuclear/bioenergy neutros),
+  convenção `>= 1` / clip `[1,2]`, `REFERENCE_YEAR == YEAR_TARGET`, coal
+  (decaimento dentro de um ciclo, recuperação parcial no limite do ciclo,
+  múltiplos ciclos), wind uniforme 0,4%/ano + checagem de inalcançabilidade do
+  branch morto de `CF_initial` (inspeção de `inspect.getsource`), mixed fuel,
+  `commissioning_year` ausente, aplicação multiplicativa por `plant_uid`,
+  guarda de CSV desatualizado. 189 testes, todos passando em 2026-09-04.
 - **Não coberto:** o caminho real download → arquivo em disco para qualquer
   fonte (nenhum teste toca rede, por decisão — consistente com o padrão de
   testes de processor herdado). A resposta real da API do CDS, do GEE e do
@@ -91,21 +97,55 @@
 
 ## TODOs que bloqueiam fases seguintes
 
-- **Camada de índice (CCRS) — termo Hazard e bandas de risco escritos.**
-  `src/index/ccrs_calculator.py` calcula `Hazard_{i,s}`;
-  `src/index/risk_bands.py` calcula WaterRiskBand + HeatRiskBand. V1–V6 todos
-  fechados; o desenho está em `docs/ARCHITECTURE.md` Seção 5 e
-  `analysis/climate_risk_score_spec.md`. O que ainda falta:
-  - código de produção: montagem do `CCRS_i,s` (× `age_factor` ×
-    `EventMultiplier`), `age_factor`, `EventMultiplier`, relatórios
-    per-country de share de capacidade por banda, wrapper de Monte Carlo;
-  - itens ainda em aberto na spec: mapeamento das curvas %/ano do
-    `age_factor` para multiplicador ≥ 1 (D), se um termo de SPEI é
-    adicionado (F), clip de outlier em sv/iv (I), sensibilidade Monte Carlo
-    dos dois parâmetros de julgamento — split térmico e `k` do
-    `EventMultiplier` (J). Item G (bounds globais congelados) foi **efetuado**
-    para os dados de 2026-09-04 em `FROZEN_BOUNDS`, com trava de regressão;
-    ver `05-decisoes-tecnicas.md` item 12 e o ⚠️ Ponto a validar ali.
+- **Camada de índice (CCRS) — Hazard, bandas de risco e age_factor escritos.**
+  `ccrs_calculator.py` (Hazard), `risk_bands.py` (Water/HeatRiskBand),
+  `age_factor.py` (multiplicador `≥ 1`). V1–V6 todos fechados. O que ainda
+  falta:
+  - código de produção: **montagem do `CCRS_i,s` = Hazard × age_factor ×
+    EventMultiplier**, `EventMultiplier`, relatórios per-country de share de
+    capacidade por banda, wrapper de Monte Carlo;
+  - itens ainda em aberto na spec: termo de SPEI (F), clip de outlier em sv/iv
+    (I), sensibilidade Monte Carlo do split térmico e do `k` do
+    `EventMultiplier` (J). Fechados na implementação: G (bounds congelados,
+    `FROZEN_BOUNDS` + trava, item 12) e **D** (`age_factor ≥ 1`,
+    `2 - retention(age)`, convenção confirmada como definitiva pelo autor —
+    `docs/DECISIONS.md` 2026-09-04, entrada final; ver item 14 de
+    `05-decisoes-tecnicas.md` para o histórico das três entradas).
+- **`age_factor` wind — sem branch de `CF_initial`, código morto verificado.**
+  `CF_initial` (fator de capacidade inicial) não existe em nenhum arquivo GEM
+  (confirmado nas 1986 usinas: BR 1126 / PT 225 / IN 635). `age_factor` usa
+  `1 - 0,004·age` uniformemente, sem condicional nem checagem em runtime. A
+  forma `1 - 0,0015·age/CF_initial` (`_wind_retention_from_cf_initial`) é
+  código morto de fato — nunca chamada por `age_factor` nem por qualquer
+  função no seu caminho ativo, verificado por inspeção de `inspect.getsource`
+  em `test_wind_cf_initial_formula_exists_but_is_dead_code`, e `age_factor`
+  não aceita mais `cf_initial` como argumento. Fica pronta para uma fonte real
+  de fator de capacidade (Global Wind Atlas, dado de fabricante).
+- **`age_factor` coal — overhaul assumido (dente de serra), parâmetro
+  estimado.** Sem dado real de overhaul por planta no GEM. A curva decai
+  0,25 pp/ano (`COAL_DECAY_RATE`, literatura) dentro de um ciclo de
+  `COAL_OVERHAUL_CYCLE_YEARS = 5` anos; ao completar o ciclo, recupera
+  `COAL_OVERHAUL_RECOVERY = 70%` da perda acumulada naquele ciclo (30% fica
+  permanente). **O ciclo de 5 anos e os 70% são premissa assumida, não
+  extraída de Kim & Moon (2012) / Sagaf (2020)** (essas fontes só dão a taxa
+  de 0,25 pp/ano) — marcado provisório/estimado, revisável se surgir dado real
+  de overhaul.
+- **`age_factor` gas/oil-gas é provisório.** Sem taxa na literatura dos docs →
+  pinado em 1,0. Revisitar se surgir fonte. `docs/DECISIONS.md` marca o status
+  como provisório.
+- **Índia: 9,7% das plantas sem `commissioning_year`** (494/5083, vs BR 1,8% e
+  PT 2,4%) → rodam com `age_factor = 1,0` neutro. Não é bug de parsing (o
+  mesmo código lê BR/PT sem problema; hydro/thermal da Índia leem bem). A
+  falta concentra-se em **wind (258) e solar (172), zero hydro** — provável
+  cobertura incompleta de metadados de comissionamento do GEM p/ renováveis
+  indianas. Capacidade mediana das plantas sem ano: 24 MW. ~1 em cada 10
+  plantas indianas no CCRS carrega idade neutra por falta de dado. Declarar
+  no manuscrito. As linhas são **mantidas** e sinalizadas
+  (`age_factor_neutralized_missing_year`), nunca excluídas.
+- **`age_factor` depende de `ccrs_hazard.csv` estar atualizado.**
+  `apply_to_hazard` levanta `ValueError` se algum `plant_uid` do CSV não tiver
+  `age_factor` (CSV gerado com esquema de `plant_uid` antigo). Regerar com
+  `python -m src.index.ccrs_calculator`.
 - **Trava de regressão de bounds depende dos rasters em disco.**
   `test_ccrs_calculator::test_frozen_bounds_match_recomputed_from_data` lê os
   rasters processados; é **pulado com motivo** (não passa em silêncio) se

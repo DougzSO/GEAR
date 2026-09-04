@@ -10,9 +10,10 @@ Section 2):
     water_sub_{i,s} = 0.4164 * Tlog(ws) + 0.2505 * Tlin(sv) + 0.3331 * Tlin(iv)
 
 The full score ``CCRS_{i,s} = Hazard_{i,s} * age_factor_i * EventMultiplier_c``
-is **not** assembled here: mapping the %/year ``age_factor`` curves onto a >= 1
-multiplier is the spec's open item D (``ARCHITECTURE.md`` Section 10) -- a stop
-point, not a gap to fill unilaterally. ``EventMultiplier_c`` has a closed form
+is **not** assembled here: the ``age_factor`` multiplier mapping and its sign
+convention are the spec's open item D (``ARCHITECTURE.md`` Section 10) -- see
+``src/index/age_factor.py`` and ``docs/DECISIONS.md`` (2026-09-04).
+``EventMultiplier_c`` has a closed form
 (Section 7.2) but is also applied in the assembly step, outside this module.
 The risk bands (WaterRiskBand / HeatRiskBand) are yet another step.
 
@@ -304,8 +305,11 @@ def _derive_plant_uid(iso3: str, name: str, lat_token: str, lon_token: str) -> s
 
 def load_plants(country: str) -> pd.DataFrame:
     """Validated plants for the country: ``plant_uid``, ``plant_name``,
-    ``lon``/``lat``, ``capacity_mw``, ``commissioning_year`` and ``bucket``
-    (from ``fuel_type_bucket``). Every plant has a coordinate (V6).
+    ``lon``/``lat``, ``capacity_mw``, ``commissioning_year``, ``bucket``
+    (from ``fuel_type_bucket``), and the fuel identity columns ``fuel_type`` /
+    ``mixed_fuel_type`` / ``fuel_types_found`` (needed by
+    ``src/index/age_factor.py`` to pick the per-fuel age curve inside the
+    ``thermal`` bucket). Every plant has a coordinate (V6).
 
     ``plant_uid`` -- there is **no native GEM identifier** in
     ``gem_validated_plants_{country}.csv``. GEM's own unit and location IDs
@@ -352,6 +356,9 @@ def load_plants(country: str) -> pd.DataFrame:
         "capacity_mw": pd.to_numeric(df["capacity_mw"], errors="coerce"),
         "commissioning_year": pd.to_numeric(df["commissioning_year"], errors="coerce"),
         "bucket": df["fuel_type_bucket"].astype("string"),
+        "fuel_type": df["fuel_type"].astype("string"),
+        "mixed_fuel_type": df["mixed_fuel_type"].fillna(False).astype(bool),
+        "fuel_types_found": df["fuel_types_found"].astype("string"),
     })
 
 

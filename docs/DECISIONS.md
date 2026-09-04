@@ -488,3 +488,310 @@ Log of every methodological and data-source decision made during this project, i
   `tests/test_ccrs_calculator.py::test_frozen_bounds_match_recomputed_from_data`.
   Engineering detail in `docs/memory/05-decisoes-tecnicas.md` item 12.
 - Status: active
+
+## [2026-09-04] age_factor: >=1 multiplier via `2 - retention(age)` (spec item D closed)
+
+- Decision: `age_factor_i` is the >=1 hazard multiplier of
+  `CCRS_i,s = Hazard_i,s * age_factor_i * EventMultiplier_c`
+  (`climate_risk_score_spec.md` Section 6, `ARCHITECTURE.md` Section 7.1).
+  It is computed as:
+
+      age_factor = 2 - clip(retention(age), 0, 1)
+
+  where `retention(age) <= 1` is the technology's performance-retention curve
+  and `age = REFERENCE_YEAR - commissioning_year`. This reconciles the two
+  documents: spec Section 6 / ARCHITECTURE Section 7.1 state the convention
+  `age_factor >= 1`, increasing with cumulative age-driven loss (their example:
+  20% loss -> ~x1.2); the `<= 1` formulas previously logged in this file
+  ("Age factor curves revised with additional literature (V1 revision)") were
+  **retention curves, not final multipliers**. `2 - retention` maps a 20%
+  retention loss (retention 0.8) to `age_factor` 1.2, matching the example.
+  Every bucket goes through the same `2 - retention` conversion, so a neutral
+  retention of 1.0 gives `age_factor` exactly 1.0. `clip(retention, 0, 1)`
+  bounds `age_factor` to `[1, 2]` and is a defensive guard against
+  implausible `commissioning_year` values; it does not bind on the current
+  data (oldest plant age at 2050 is 150 yr; no linear curve reaches 0 before
+  ~230-400 yr).
+
+  Per-technology `retention(age)`:
+  - **Coal**: `1 - 0.0025*age` (linear). 0.25%/yr heat-rate deterioration,
+    IEA/CIAB 2010, cross-validated Sagaf 2020. **No overhaul term** --
+    `years_since_overhaul` is dropped from scope; no such field exists in any
+    GEM file, and the documented curve is a function of age that deliberately
+    does not model overhaul recovery (declared limitation, V1 entry).
+  - **Gas / oil-gas**: pinned neutral, `age_factor = 1.0` (retention 1.0).
+    No literature-backed rate or functional form exists in any project
+    document -- ARCHITECTURE Section 7.1 says only "efficiency gain with age,
+    opposite sign to coal", with no number. **Marked provisional / open**:
+    revisit if a defensible source is found. A gas plant that genuinely
+    improves with age cannot be represented under the `age_factor >= 1`
+    convention anyway; neutral is the honest placeholder.
+  - **Nuclear**: `age_factor = 1.0` fixed (retention 1.0), unchanged
+    (licensing/decommissioning-governed, not gradual decay; Blake 1992,
+    Simola 1999).
+  - **Bioenergy**: `age_factor = 1.0` fixed (retention 1.0), unchanged
+    (coal proxy dropped in the V1 revision for want of fleet-level evidence).
+  - **Wind**: `1 - 0.004*age` (linear). The `CF_initial`-based form from the
+    V1 revision (`1 - 0.0015*age/CF_initial`) is **abandoned**: `CF_initial`
+    (initial capacity factor) does not exist in any GEM file for any of the
+    1986 wind plants across the three countries (Brazil 1126, Portugal 225,
+    India 635 -- 100% would have taken the fallback). The 0.4%/yr relative
+    fallback rate (Olauson, Edstrom & Ryden 2017, documented as the placeholder
+    in the V1 revision) is applied to all wind plants.
+  - **Solar**: `(1 - 0.007)^age` (compound), unchanged. 0.7%/yr plant-level
+    (module physics + soiling/downtime/inverter); Deline et al. NREL
+    2020/2024, Boretti & Castellotto 2024.
+  - **Hydro**: `1 - 0.00435*age` (linear). Rate = 0.55%/yr (midpoint of the
+    ARCHITECTURE Section 7.1 "~0.5-0.6 %/yr" range) x 0.79, the non-water-
+    attributable share (Turner et al. 2024, *Nature Communications*: of the
+    23% cumulative capacity-factor decline over 610 US plants 1980-2022, only
+    21% is attributable to water availability). Scaling by 0.79 keeps the
+    hydro age curve from double-counting the water-stress hazard already in
+    `Hazard_i,s`.
+  - **Mixed-fuel plants** (`mixed_fuel_type == True`, 6 plants, all thermal
+    bucket): `age_factor` = **simple average** of the component fuels'
+    `age_factor` (components from `fuel_types_found`, e.g. `bioenergy;coal`).
+    Capacity-weighting is not possible -- no per-fuel capacity in the source
+    data (confirmed).
+  - **Missing `commissioning_year`** (~5.6% of plants: Brazil 97, Portugal 11,
+    India 494): `age_factor = 1.0` (neutral). These rows are **kept** in the
+    dataset, flagged, and counted per country in the output, never dropped.
+
+- `age` definition: `REFERENCE_YEAR - commissioning_year` with
+  `REFERENCE_YEAR = config.YEAR_TARGET = 2050` -- the single explicit
+  study-horizon constant, already pinned to 2050 by hard asserts in
+  `water_stress_processor.py` / `water_variability_processor.py` and used by
+  `aqueduct_downloader.py`; the CCRS hazard layer represents the 2041-2070
+  window by 2050 (this file, "Study countries and emission-scenario list").
+  Plant age is therefore age at the study horizon, consistent with the hazard.
+
+- Application: `age_factor` multiplies the Hazard term per `plant_uid`
+  (`data/outputs/tables/ccrs_hazard.csv`), both GCM columns, all scenario
+  rows (age does not depend on scenario or GCM). Multiplicative, never summed.
+
+- Reason: closes spec Section 10 item D ("age_factor -> >= 1 multiplier
+  mapping ... confirm sign convention"). `EventMultiplier` and the full
+  `CCRS_i,s` assembly remain separate steps.
+
+- References: `src/index/age_factor.py`, `tests/test_age_factor.py`,
+  `docs/memory/05-decisoes-tecnicas.md` item 14. `load_plants` in
+  `ccrs_calculator.py` extended to also return `fuel_type` /
+  `mixed_fuel_type` / `fuel_types_found`.
+- Status: superseded by "[2026-09-04] age_factor: >=1 multiplier via
+  `2 - retention(age)`, with corrected coal/hydro/wind retention curves
+  (final)" below. That entry confirms this one's mechanism
+  (`2 - clip(retention, 0, 1)` in `[1, 2]`) as the definitive convention --
+  an intervening entry briefly reverted it to a `<= 1` retention multiplier
+  based on a mistaken premise about which document was authoritative; that
+  reversal is itself superseded. This entry's per-fuel retention curves for
+  gas/nuclear/bioenergy (neutral), solar, and the mixed-fuel / missing-year
+  handling stand; coal and hydro's rates and wind's formula are refined in
+  the final entry.
+
+## [2026-09-04] age_factor: reverted to the <=1 capacity/efficiency-retention multiplier (the `2 - retention` conversion was unauthorised)
+
+- Decision: `age_factor_i` is `clip(retention(age), 0, 1)` in `[0, 1]` -- a
+  per-technology **capacity / efficiency retention** curve, applied as a
+  *direct* multiplier on `Hazard_i,s` in
+  `CCRS_i,s = Hazard_i,s * age_factor_i * EventMultiplier_c`. An older plant
+  that has lost capacity/efficiency scales the hazard term **down**
+  (retention 0.80 -> `age_factor` 0.80), never up.
+  `age = REFERENCE_YEAR - commissioning_year`,
+  `REFERENCE_YEAR = config.YEAR_TARGET = 2050`.
+
+- What changed vs. the superseded entry:
+  - **Sign convention reverted.** The `age_factor = 2 - clip(retention, 0, 1)`
+    conversion into `[1, 2]` ("older plant -> higher hazard") was **not an
+    approved decision** -- it was inferred by the assistant in a prior session
+    from the `>= 1` prose in the spec / ARCHITECTURE. It is removed. The
+    active convention is the retention form (`<= 1`), matching the numeric
+    curves logged in "Age factor curves revised with additional literature
+    (V1 revision)".
+  - **Coal rate corrected to `1 - 0.0025 * years_since_overhaul`** (not
+    `1 - 0.0025 * age`). The 0.25 pp/yr boiler heat-rate deterioration runs
+    from the last major overhaul. Sources: IEA/CIAB 2010; Kim & Moon 2012
+    (500 MW unit); Sagaf 2020, *Journal of Thermal Engineering* 6(6):247-256
+    (660 MW unit, 0.19-0.44 %/yr, 0.25 pp/yr central). `_coal_retention`
+    takes `years_since_overhaul` and an overhaul restarts the decay clock. No
+    GEM file carries an overhaul / major-refurbishment date (only
+    `commissioning_year`, `Retired year`, fuel `Unit conversion year`), so
+    `years_since_overhaul` defaults to full `age` and the curve currently
+    reduces to monotonic decay -- the conservative baseline. A genuine
+    condition-based *partial* reset needs both overhaul dates and a
+    recovery-fraction parameter; neither exists (declared limitation, carried
+    from the V1 entry). `years_since_overhaul` is **in scope** as a parameter
+    (the superseded entry had dropped it).
+  - **Hydro rate corrected to `1 - 0.0055 * age`.** The 0.79 "non-water-
+    attributable share" multiplier from the superseded entry is **removed** --
+    it had no documented origin in any project source. The rate is now the
+    plain 0.55 %/yr midpoint of ARCHITECTURE Section 7.1's "~0.5-0.6 %/yr"
+    (Turner et al. 2024, *Nature Communications*).
+  - **Wind reverted to the `CF_initial` form with a fallback**, not a
+    universal fixed rate. `retention = 1 - 0.0015 * age / CF_initial` when the
+    initial capacity factor is known; `retention = 1 - 0.004 * age`
+    (0.3-0.5 %/yr relative, midpoint 0.4 %/yr) as the documented fallback
+    otherwise. The observational parameter (Olauson, Edstrom & Ryden 2017,
+    *Wind Energy* 20:2049-2053, Swedish fleet; Shin, Ko & Huh 2015,
+    *IJMAIMME* 9:55-59; Byrne, Astolfi, Castellani & Hewitt 2020, *Energies*
+    13:2086) is **pp of capacity factor per year**; converting it to a
+    relative rate requires `CF_initial`. `CF_initial` is **absent from every
+    GEM file** for all 1986 wind plants (Brazil 1126, Portugal 225, India
+    635), so the fallback share is **100% in every country** -- above the 30%
+    "stop and report" threshold. Flagged: the wind `age_factor` currently
+    ships on the pre-approved 0.4 %/yr fallback for every wind plant, pending
+    the author's confirmation or a per-plant capacity-factor source.
+  - Unchanged from the superseded entry: solar `(1 - 0.007) ** age`
+    (compound); gas/oil-gas, nuclear, bioenergy -> retention 1.0 (gas/oil-gas
+    **provisional** -- no literature rate); mixed fuel = **simple average** of
+    the component fuels' `age_factor`; missing `commissioning_year`
+    (Brazil 97, Portugal 11, India 494; 602 total, 5.6%) -> `age_factor = 1.0`,
+    rows kept, flagged (`age_factor_neutralized_missing_year`), counted per
+    country.
+
+- `clip(retention, 0, 1)` guards an implausible `commissioning_year` (negative
+  age -> retention > 1; extreme age -> retention < 0). It does not bind on the
+  current data: observed range 0.2520 (oldest Brazilian hydro) .. 1.0000.
+
+- Application: `age_factor` multiplies the Hazard term per `plant_uid`
+  (`data/outputs/tables/ccrs_hazard.csv`), both GCM columns, all scenario
+  rows (age does not depend on scenario or GCM). Multiplicative, never summed.
+  `apply_to_hazard` fails loud if any `plant_uid` in the CSV has no
+  `age_factor` (stale CSV). Outputs: `ccrs_age_factors.csv`,
+  `ccrs_hazard_aged.csv`, `age_factor_report.md`.
+
+- OPEN -- document conflict, needs the author's revision: `analysis/
+  climate_risk_score_spec.md` Section 6 and `docs/ARCHITECTURE.md` Section 7.1
+  still state the `age_factor_i >= 1` convention (increasing with age, "a
+  plant that has lost ~20 % to age -> ~x1.2") and Section 10 item D asks to
+  "confirm sign convention". This module now implements the opposite (`<= 1`,
+  retention). That prose was **not** updated here -- rewriting the
+  methodology docs is the author's call, not the assistant's. Spec item D
+  stays open until that text is reconciled.
+
+- References: `src/index/age_factor.py`, `tests/test_age_factor.py`,
+  `docs/memory/05-decisoes-tecnicas.md` item 14,
+  `docs/memory/06-areas-de-risco.md` (wind fallback stop condition; India
+  missing-`commissioning_year` concentration).
+- Status: superseded by "[2026-09-04] age_factor: >=1 multiplier via
+  `2 - retention(age)`, with corrected coal/hydro/wind retention curves
+  (final)" below. This reversal should not have been made: it was executed on
+  the assistant's own mistaken premise that the `<= 1` retention-form prose
+  (the V1 revision entries) was the authoritative convention and that
+  `spec`/`ARCHITECTURE`'s `>= 1` prose was the error to reconcile away. The
+  author's explicit direction (option b) is the opposite: `spec` Section 6 /
+  Section 10 item D and `ARCHITECTURE` Section 5 / Section 7.1 are correct and
+  definitive; this entry's `<= 1` convention was the error. Its coal
+  (assumed-overhaul) and wind (CF_initial dead-code / uniform 0.4%/yr)
+  refinements are carried forward as the underlying retention curve in the
+  final entry; its hydro rate (0.55%/yr, no 0.79 scaling) also carries
+  forward unchanged. The OPEN document-conflict flag above is resolved, not
+  carried forward -- item D is closed by the final entry.
+
+## [2026-09-04] age_factor: >=1 multiplier via `2 - retention(age)`, with corrected coal/hydro/wind retention curves (final)
+
+- Decision: `age_factor_i >= 1` is the **definitive** convention -- confirmed,
+  not reopened again. `age_factor_i` is the hazard multiplier of
+  `CCRS_i,s = Hazard_i,s * age_factor_i * EventMultiplier_c`
+  (`climate_risk_score_spec.md` Section 6 / Section 10 item D,
+  `ARCHITECTURE.md` Section 5 / Section 7.1, line 147), computed as:
+
+      age_factor = 2 - clip(retention(age), 0, 1)
+
+  where `retention(age) <= 1` is the technology's capacity/efficiency
+  retention curve and `age = REFERENCE_YEAR - commissioning_year`,
+  `REFERENCE_YEAR = config.YEAR_TARGET = 2050`. A 20% retention loss
+  (retention 0.8) maps to `age_factor` 1.2, matching the spec Section 6
+  example. `clip(retention, 0, 1)` bounds `age_factor` to `[1, 2]`, a
+  defensive guard against an implausible `commissioning_year` that does not
+  bind on the current data (observed range 1.0000 .. 1.7480).
+
+- This closes spec item D **without an OPEN block**: the two intervening
+  entries above are both superseded. The first (`2 - retention`, uncorrected
+  coal/hydro/wind curves) had the right mechanism. The second (reverted to
+  `<= 1`) had the wrong mechanism -- it was based on the assistant's mistaken
+  premise about which document was authoritative, not an author decision; the
+  author has now confirmed explicitly (option b) that `spec`/`ARCHITECTURE`'s
+  `>= 1` convention is correct and the `<= 1` reversal was the error. This
+  entry restores `2 - retention` as the final mechanism and carries forward
+  the coal/wind refinements made while the module was (mistakenly) in the
+  `<= 1` state, converted into `retention(age)` terms:
+
+  - **Coal**: sawtooth, not a plain age curve. `COAL_DECAY_RATE = 0.0025`
+    (0.25 pp/yr boiler heat-rate deterioration -- IEA/CIAB 2010, Kim & Moon
+    2012 (500 MW unit), Sagaf 2020 *Journal of Thermal Engineering*
+    6(6):247-256 (660 MW unit, 0.19-0.44 %/yr, 0.25 pp/yr central)) decays
+    `retention` within a `COAL_OVERHAUL_CYCLE_YEARS = 5`-year cycle; at each
+    completed cycle, `COAL_OVERHAUL_RECOVERY = 70%` of that cycle's
+    accumulated loss is recovered (30% becomes permanent), then the cycle
+    restarts. **The 5-year cycle length and the 70% recovery fraction are an
+    assumed modelling premise, not values taken from Kim & Moon or Sagaf** --
+    those sources give only the decay rate, not an overhaul schedule. No GEM
+    file carries a per-plant overhaul date. Marked provisional/estimated;
+    revisit if a real overhaul-history source appears. `age_factor` under
+    this curve is now materially lower than a pure age curve (e.g. a 40-yr
+    coal plant: `age_factor` ~1.03-1.07, vs ~1.10 under plain
+    `1 - 0.0025*age` decay) because most of the accumulated loss is
+    periodically recovered.
+  - **Wind**: `1 - 0.004*age` (linear, 0.4%/yr relative), applied uniformly
+    to every wind plant -- no conditional branch, no per-plant availability
+    check. `CF_initial` (initial capacity factor) does not exist in any GEM
+    file for any of the 1986 wind plants (Brazil 1126, Portugal 225, India
+    635 -- confirmed against `gem_validated_plants_*.csv` and
+    `gem_units_detail.csv`), so a `CF_initial`-conditioned branch would always
+    take the fallback -- there is no operational fallback fraction to report,
+    so the wind-fallback stop-and-report metric from the previous entry is
+    removed as meaningless. The `1 - 0.0015*age/CF_initial` form
+    (`_wind_retention_from_cf_initial`) is kept in the source as **dead
+    code** -- defined, documented, never called from `age_factor` or any
+    function on its call path (verified by
+    `tests/test_age_factor.py::test_wind_cf_initial_formula_exists_but_is_dead_code`,
+    which inspects the source of every function on the active path and the
+    `age_factor` signature) -- to be wired in only if a real per-plant
+    initial-capacity-factor source appears (Global Wind Atlas, manufacturer
+    power curves).
+  - **Hydro**: `1 - 0.0055*age` (linear, 0.55%/yr, the midpoint of
+    ARCHITECTURE Section 7.1's "~0.5-0.6 %/yr"; Turner et al. 2024, *Nature
+    Communications*). The 0.79 "non-water-attributable share" scaling from
+    the first entry is **not** restored -- it had no documented origin in any
+    project source.
+  - **Solar**: `(1 - 0.007)^age` (compound), unchanged throughout all three
+    entries. 0.7%/yr plant-level; Deline et al. NREL 2020/2024, Boretti &
+    Castellotto 2024.
+  - **Gas / oil-gas**: pinned neutral, `age_factor = 1.0` (retention 1.0).
+    **Provisional / open** -- no literature-backed rate exists in any project
+    document.
+  - **Nuclear / Bioenergy**: `age_factor = 1.0` fixed (retention 1.0),
+    unchanged. In pure retention terms both are already 1.0, so
+    `2 - 1.0 = 1.0` -- the multiplier stays neutral under either convention;
+    nothing to convert.
+  - **Mixed-fuel plants** (6 plants, all thermal): `age_factor` = simple
+    average of the component fuels' `age_factor` (from `fuel_types_found`).
+    Capacity-weighting not possible -- no per-fuel capacity in the source
+    data.
+  - **Missing `commissioning_year`** (602 plants, 5.6%: Brazil 97, Portugal
+    11, India 494): `age_factor = 1.0` (neutral). Rows kept, flagged
+    (`age_factor_neutralized_missing_year`), counted per country, never
+    dropped. India's 9.7% (vs Brazil 1.8%, Portugal 2.4%) concentrates in
+    wind (258) and solar (172), zero hydro -- see
+    `docs/memory/06-areas-de-risco.md`.
+
+- Application unchanged: `age_factor` multiplies the Hazard term per
+  `plant_uid` (`data/outputs/tables/ccrs_hazard.csv`), both GCM columns, all
+  scenario rows. Multiplicative, never summed. `apply_to_hazard` fails loud
+  on a stale hazard CSV (a `plant_uid` with no `age_factor`).
+
+- Distribution observed on the current data (2050 horizon): global
+  `age_factor` range **1.0000 .. 1.7480**. Hydro is highest (Brazil mean
+  1.32, max 1.75 -- plants from ~1900); solar ~1.17-1.19; wind ~1.08-1.17;
+  coal now much closer to neutral than the first entry's plain-decay form
+  (~1.03-1.07, all countries) because of the assumed overhaul recovery.
+
+- Reason: closes spec Section 10 item D. `EventMultiplier` and the full
+  `CCRS_i,s` assembly remain separate steps.
+
+- References: `src/index/age_factor.py`, `tests/test_age_factor.py`,
+  `docs/memory/05-decisoes-tecnicas.md` item 14,
+  `docs/memory/06-areas-de-risco.md`.
+- Status: active (gas/oil-gas curve provisional; coal's 5-yr/70% overhaul
+  schedule is an assumed, revisable parameter -- not gas/oil-gas-style open,
+  but flagged as an estimate). Spec item D **closed**, no OPEN block.
