@@ -795,3 +795,111 @@ Log of every methodological and data-source decision made during this project, i
 - Status: active (gas/oil-gas curve provisional; coal's 5-yr/70% overhaul
   schedule is an assumed, revisable parameter -- not gas/oil-gas-style open,
   but flagged as an estimate). Spec item D **closed**, no OPEN block.
+
+---
+
+## [2026-09-04] SPEI drought term added to Hazard (spec item F closed)
+
+- Decision: the SPEI drought-frequency layer (`src/processors/spei_processor.py`,
+  committed separately as Step 1) is wired into `Hazard_{i,s}`
+  (`src/index/ccrs_calculator.py`) as a **new, independent third additive
+  term**, not a complement folded into `water_sub`:
+
+      Hazard_i,s = w_water[bucket]*water_sub + w_heat[bucket]*Tlog(heat)
+                 + w_drought[bucket]*Tlog(spei_freq)
+
+  `water_sub = 0.4164*Tlog(ws) + 0.2505*Tlin(sv) + 0.3331*Tlin(iv)` is
+  **untouched** -- not renormalised, not given a fourth internal weight.
+  `spei_freq` (mean months/yr with SPEI-12 <= -1.0) is transformed the same
+  way as `heat` (`Tlog = MinMax(log1p(x))`, per-GCM bound) and added as its
+  own weighted side.
+
+- Reason for "new term" over "complement of water_sub": the
+  `(0.4164, 0.2505, 0.3331)` within-water weights are a **closed, derived**
+  quantity -- they come from the WRI Aqueduct 4.0 category step widths
+  (`w_k proportional to 1/tau_k`, spec Section 8.1), not from a judgment
+  call. Renormalising them to make room for a fourth water-side term would
+  discard a derived value in favour of an arbitrary one, for no documented
+  reason, and would silently change the meaning of `water_sub` used
+  elsewhere (`risk_bands.py`'s `S_water`, WaterRiskBand). Adding SPEI as an
+  independent bucket-weighted term instead: (a) preserves `water_sub`
+  bit-for-bit (verified:
+  `tests/test_ccrs_calculator.py::test_water_sub_weights_and_output_unchanged_by_spei_integration`),
+  (b) treats drought as what it physically is -- a separate hazard pathway
+  from water-stress-on-withdrawal, not a sub-component of it -- and (c)
+  mirrors how `heat` was already added as an independent term rather than
+  folded into anything else.
+
+- Per-bucket weights -- **explicit judgment call, not a calibration or a
+  literature value** (same transparency standard as `age_factor.py`'s
+  assumed coal-overhaul cycle):
+
+  | bucket  | w_water | w_heat | w_drought |
+  |---|---|---|---|
+  | hydro   | 0.55  | 0.00  | 0.45 |
+  | thermal | 0.525 | 0.175 | 0.30 |
+  | wind    | 0.00  | 0.95  | 0.05 |
+  | solar   | 0.00  | 0.95  | 0.05 |
+
+  Origin: a direct translation of Douglas's qualitative guidance --
+  hydro and cooling-water-dependent thermal generation are materially more
+  exposed to prolonged drought than to a single hot day (hence a large
+  `w_drought`, and both existing water/heat weights rescaled proportionally
+  to make room for it, preserving the original ratio between them); wind and
+  solar have no physical water-dependence mechanism (unchanged from the
+  pre-SPEI matrix, `w_water = 0`) but are deliberately **not** given an
+  absolute-zero drought weight, since a drought-driven regional
+  water/energy-system stress is not literally impossible for them either --
+  hence the small, non-mechanistic `0.05`. This is **not** an AHP/pairwise
+  calibration and **not** derived from any published water/heat/drought
+  importance ratio -- no such ratio exists in the literature for any of
+  these technologies. Revisit if a calibrated alternative becomes available.
+  Flagged as a Monte Carlo sensitivity candidate (spec item J), not
+  re-derived here.
+
+- `FROZEN_BOUNDS` extension (spec item G) -- `spei` added as a new,
+  per-GCM-keyed entry, same treatment as `heat` (SPEI depends on the GCM,
+  unlike the Aqueduct water terms):
+
+      "spei": {
+          "gfdl_esm4": (1.4441261291503906, 4.022922515869141),
+          "miroc6":    (1.2722063064575195, 4.160458564758301),
+      }
+
+  This is an **authorised extension**, not a perturbation or redefinition:
+  the pre-existing `ws`/`sv`/`iv`/`heat` values were recomputed via
+  `compute_global_bounds()` immediately before this change and confirmed
+  byte-identical to the pre-SPEI snapshot. `BOUNDS_DATA_SNAPSHOT` stays
+  `2026-09-04` (same day, real data on disk); the extension is recorded here
+  rather than by moving the snapshot date, since no existing bound moved.
+
+- **Comparability impact -- reported explicitly, not silently.** Adding a
+  third additive Hazard term and rescaling every bucket's water/heat weights
+  means `Hazard_{i,s}` and therefore `CCRS_{i,s}` for **every plant** changed
+  relative to any T1-T6 number computed before this integration (the
+  pre-SPEI 2-way `(w_water, w_heat)` matrix no longer applies to any output
+  after this point). Formal before/after comparisons of Hazard/CCRS values,
+  band shares, or capacity-share reports must not mix pre- and
+  post-integration numbers. `analysis/ccrs_bucket_weighted_distribution.md`
+  and other pre-integration diagnostics remain valid only as distribution-
+  shape exploration under the old 2-way matrix, per their own disclaimers.
+
+- Observed impact on this data (`compute_hazard_by_gcm()`, all three
+  countries, GFDL-ESM4 / MIROC6, post-integration): Hazard range still
+  `[0, ~0.99]` on both GCM columns (transform range is unchanged, `[0, 1]`
+  per term). Per-bucket mean Hazard (GFDL-ESM4 / MIROC6): hydro 0.297/0.329,
+  thermal 0.318/0.381, wind 0.195/0.603, solar 0.386/0.690 -- wind/solar
+  remain the most GCM-sensitive buckets (heat-dominated, `w_heat = 0.95`),
+  consistent with the pre-integration finding that MIROC6 runs hotter for
+  heat-only buckets. 32,424 rows, zero `plant_uid` x scenario duplication
+  (unchanged from T1).
+
+- References: `src/index/ccrs_calculator.py`,
+  `src/processors/spei_processor.py`,
+  `tests/test_ccrs_calculator.py` (bucket-weight, water_sub-unchanged,
+  frozen-bounds and end-to-end regression tests),
+  `analysis/climate_risk_score_spec.md` Section 5 / Section 10 item F,
+  `docs/ARCHITECTURE.md` Section 5.1/5.3.
+- Status: active. Spec item F **closed**. Item J (Monte Carlo) still open --
+  the thermal triple and the wind/solar drought allowance are candidates for
+  perturbation, not yet implemented.

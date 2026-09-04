@@ -34,13 +34,13 @@ def test_within_water_weights_match_published_spec():
 
 def test_bucket_weights_are_the_closed_matrix():
     assert cc.BUCKET_WEIGHTS == {
-        "hydro":   {"water": 1.00, "heat": 0.00},
-        "thermal": {"water": 0.75, "heat": 0.25},
-        "wind":    {"water": 0.00, "heat": 1.00},
-        "solar":   {"water": 0.00, "heat": 1.00},
+        "hydro":   {"water": 0.55,  "heat": 0.00,  "drought": 0.45},
+        "thermal": {"water": 0.525, "heat": 0.175, "drought": 0.30},
+        "wind":    {"water": 0.00,  "heat": 0.95,  "drought": 0.05},
+        "solar":   {"water": 0.00,  "heat": 0.95,  "drought": 0.05},
     }
     for w in cc.BUCKET_WEIGHTS.values():
-        assert w["water"] + w["heat"] == pytest.approx(1.0)
+        assert w["water"] + w["heat"] + w["drought"] == pytest.approx(1.0)
 
 
 # --------------------------------------------------------------------------
@@ -77,41 +77,45 @@ def test_hazard_per_bucket_weight_application():
     # transformed inputs, hand-picked
     water_sub_val = np.full(4, 0.40)
     t_heat = np.full(4, 0.80)
+    t_spei = np.full(4, 0.20)
     buckets = np.array(["hydro", "thermal", "wind", "solar"], dtype=object)
 
-    haz = cc.hazard(buckets, water_sub_val, t_heat)
+    haz = cc.hazard(buckets, water_sub_val, t_heat, t_spei)
 
-    assert haz[0] == pytest.approx(1.00 * 0.40 + 0.00 * 0.80)   # hydro  -> 0.40
-    assert haz[1] == pytest.approx(0.75 * 0.40 + 0.25 * 0.80)   # thermal-> 0.50
-    assert haz[2] == pytest.approx(0.00 * 0.40 + 1.00 * 0.80)   # wind   -> 0.80
-    assert haz[3] == pytest.approx(0.00 * 0.40 + 1.00 * 0.80)   # solar  -> 0.80
+    assert haz[0] == pytest.approx(0.55 * 0.40 + 0.00 * 0.80 + 0.45 * 0.20)    # hydro
+    assert haz[1] == pytest.approx(0.525 * 0.40 + 0.175 * 0.80 + 0.30 * 0.20)  # thermal
+    assert haz[2] == pytest.approx(0.00 * 0.40 + 0.95 * 0.80 + 0.05 * 0.20)    # wind
+    assert haz[3] == pytest.approx(0.00 * 0.40 + 0.95 * 0.80 + 0.05 * 0.20)    # solar
 
 
-def test_wind_solar_hazard_is_heat_only_even_when_water_is_nan():
+def test_wind_solar_hazard_ignores_water_but_not_heat_or_drought():
     haz = cc.hazard(
         np.array(["wind", "solar"], dtype=object),
-        np.array([np.nan, np.nan]),      # entire water side missing
+        np.array([np.nan, np.nan]),      # entire water side missing, weight 0 -> ignored
         np.array([0.3, 0.6]),
+        np.array([0.1, 0.2]),
     )
-    np.testing.assert_allclose(haz, [0.3, 0.6])
+    np.testing.assert_allclose(haz, [0.95 * 0.3 + 0.05 * 0.1, 0.95 * 0.6 + 0.05 * 0.2])
 
 
-def test_hydro_hazard_is_water_only_even_when_heat_is_nan():
+def test_hydro_hazard_ignores_heat_but_not_water_or_drought():
     haz = cc.hazard(
         np.array(["hydro"], dtype=object),
         np.array([0.42]),
         np.array([np.nan]),              # heat missing, weight 0 -> ignored
+        np.array([0.10]),
     )
-    assert haz[0] == pytest.approx(0.42)
+    assert haz[0] == pytest.approx(0.55 * 0.42 + 0.45 * 0.10)
 
 
-def test_thermal_hazard_propagates_nan_on_a_weighted_side():
+def test_thermal_hazard_propagates_nan_on_any_weighted_side():
     haz = cc.hazard(
-        np.array(["thermal", "thermal"], dtype=object),
-        np.array([0.4, np.nan]),
-        np.array([np.nan, 0.5]),
+        np.array(["thermal", "thermal", "thermal"], dtype=object),
+        np.array([0.4, np.nan, 0.4]),
+        np.array([np.nan, 0.5, 0.5]),
+        np.array([0.2, 0.2, np.nan]),
     )
-    assert np.isnan(haz).all()           # both sides weighted > 0 for thermal
+    assert np.isnan(haz).all()           # water, heat and drought all weighted > 0 for thermal
 
 
 def test_compute_hazard_end_to_end_per_bucket(monkeypatch):
@@ -130,23 +134,49 @@ def test_compute_hazard_end_to_end_per_bucket(monkeypatch):
         "sv": [0.5, 0.5, 0.5, 0.5, 0.5],
         "iv": [0.5, 0.5, 0.5, 0.5, 0.5],
         "heat": [4.0, 4.0, 4.0, 4.0, 4.0],
+        "spei": [1.0, 1.0, 1.0, 1.0, 1.0],
     })
     monkeypatch.setattr(cc, "sample_terms", lambda model: fake.copy())
     bounds = {
         "ws": (0.0, 1.0), "sv": (0.0, 1.0), "iv": (0.0, 1.0),
         "heat": {"gfdl_esm4": (0.0, 4.0)},
+        "spei": {"gfdl_esm4": (0.0, 1.0)},
     }
     out = cc.compute_hazard("gfdl_esm4", bounds=bounds)
 
     assert list(out["bucket"]) == ["hydro", "thermal", "wind", "solar"]  # NA dropped
-    t_ws = np.clip(np.log1p(1.0) / np.log1p(1.0), 0, 1)   # 1.0
-    t_heat = np.clip(np.log1p(4.0) / np.log1p(4.0), 0, 1)  # 1.0
+    t_ws = np.clip(np.log1p(1.0) / np.log1p(1.0), 0, 1)     # 1.0
+    t_heat = np.clip(np.log1p(4.0) / np.log1p(4.0), 0, 1)   # 1.0
+    t_spei = np.clip(np.log1p(1.0) / np.log1p(1.0), 0, 1)   # 1.0
     w_sub = 0.4164 * t_ws + 0.2505 * 0.5 + 0.3331 * 0.5
     by_bucket = dict(zip(out["bucket"], out["hazard"]))
-    assert by_bucket["hydro"] == pytest.approx(w_sub, abs=1e-4)
-    assert by_bucket["thermal"] == pytest.approx(0.75 * w_sub + 0.25 * t_heat, abs=1e-4)
-    assert by_bucket["wind"] == pytest.approx(t_heat, abs=1e-4)
-    assert by_bucket["solar"] == pytest.approx(t_heat, abs=1e-4)
+    assert by_bucket["hydro"] == pytest.approx(0.55 * w_sub + 0.45 * t_spei, abs=1e-4)
+    assert by_bucket["thermal"] == pytest.approx(
+        0.525 * w_sub + 0.175 * t_heat + 0.30 * t_spei, abs=1e-4
+    )
+    assert by_bucket["wind"] == pytest.approx(0.95 * t_heat + 0.05 * t_spei, abs=1e-4)
+    assert by_bucket["solar"] == pytest.approx(0.95 * t_heat + 0.05 * t_spei, abs=1e-4)
+
+
+# --------------------------------------------------------------------------
+# water_sub is unchanged by the SPEI integration -- bit-identical, no
+# renormalisation (task requirement: "confirm water_sub and its three
+# internal weights ws/sv/iv remain bit-identical to the values frozen before
+# this change").
+# --------------------------------------------------------------------------
+def test_water_sub_weights_and_output_unchanged_by_spei_integration():
+    assert cc.WITHIN_WATER_WEIGHTS == {
+        "ws": pytest.approx(0.4164, abs=5e-5),
+        "sv": pytest.approx(0.2505, abs=5e-5),
+        "iv": pytest.approx(0.3331, abs=5e-5),
+    }
+    t_ws = np.array([0.1, 0.9])
+    t_sv = np.array([0.2, 0.8])
+    t_iv = np.array([0.3, 0.7])
+    out = cc.water_sub(t_ws, t_sv, t_iv)
+    w = cc.WITHIN_WATER_WEIGHTS
+    expected = w["ws"] * t_ws + w["sv"] * t_sv + w["iv"] * t_iv
+    np.testing.assert_array_equal(out, expected)  # bit-identical, not just close
 
 
 # --------------------------------------------------------------------------
@@ -154,11 +184,24 @@ def test_compute_hazard_end_to_end_per_bucket(monkeypatch):
 # --------------------------------------------------------------------------
 def test_frozen_bounds_structure():
     fb = cc.FROZEN_BOUNDS
-    assert set(fb) == {"ws", "sv", "iv", "heat"}
+    assert set(fb) == {"ws", "sv", "iv", "heat", "spei"}
     for t in ("ws", "sv", "iv"):
         lo, hi = fb[t]
         assert lo <= hi
     assert set(fb["heat"]) == set(cc.configured_models())
+    assert set(fb["spei"]) == set(cc.configured_models())
+    for m in cc.configured_models():
+        lo, hi = fb["spei"][m]
+        assert lo <= hi
+
+
+def test_spei_bound_is_gcm_dependent_not_pooled_with_heat():
+    """spei is a GCM_DEPENDENT_TERM (per-GCM bound), same treatment as heat,
+    never pooled with heat's own bound or flattened into a single pair."""
+    assert "spei" in cc.GCM_DEPENDENT_TERMS
+    assert "spei" not in cc.FLAT_BOUND_TERMS
+    fb = cc.FROZEN_BOUNDS
+    assert fb["spei"] != fb["heat"]
 
 
 def _rasters_present() -> bool:
@@ -192,12 +235,17 @@ def test_frozen_bounds_match_recomputed_from_data():
 
 
 def test_bounds_close_detects_drift():
-    base = {"ws": (0.0, 1.0), "sv": (0.0, 1.0), "iv": (0.0, 1.0),
-            "heat": {"gfdl_esm4": (0.0, 10.0), "miroc6": (0.0, 20.0)}}
+    base = {
+        "ws": (0.0, 1.0), "sv": (0.0, 1.0), "iv": (0.0, 1.0),
+        "heat": {"gfdl_esm4": (0.0, 10.0), "miroc6": (0.0, 20.0)},
+        "spei": {"gfdl_esm4": (1.0, 4.0), "miroc6": (1.0, 4.5)},
+    }
     assert cc._bounds_close(base, dict(base))
     drifted = {**base, "heat": {"gfdl_esm4": (0.0, 10.5), "miroc6": (0.0, 20.0)}}
     assert not cc._bounds_close(base, drifted)
     assert not cc._bounds_close(base, {**base, "ws": (0.0, 1.01)})
+    spei_drifted = {**base, "spei": {"gfdl_esm4": (1.0, 4.1), "miroc6": (1.0, 4.5)}}
+    assert not cc._bounds_close(base, spei_drifted)
 
 
 # --------------------------------------------------------------------------
@@ -275,6 +323,14 @@ def test_real_gcm_columns_differ_and_are_not_a_blend():
     assert ws["hazard_miroc6"].mean() > ws["hazard_gfdl_esm4"].mean()
 
 
+def _spei_rasters_present() -> bool:
+    try:
+        p = cc.raster_path("spei", "Brazil", "opt", cc.configured_models()[0])
+        return p.exists()
+    except Exception:
+        return False
+
+
 # --------------------------------------------------------------------------
 # 3b. plant_uid -- derived from record content, stable, unique
 # --------------------------------------------------------------------------
@@ -283,6 +339,42 @@ def _plants_present() -> bool:
         (cc.ASSETS_PROCESSED / f"gem_validated_plants_{c}.csv").exists()
         for c in cc.COUNTRIES
     )
+
+
+@pytest.mark.skipif(
+    not (_rasters_present() and _spei_rasters_present() and _plants_present()),
+    reason="processed rasters or plant CSVs absent",
+)
+def test_end_to_end_hazard_with_spei_produces_32424_rows_no_duplication():
+    """Full compute_hazard_by_gcm() with all three hazard terms wired
+    (water_sub, heat, spei) -- one row per (plant_uid, water_scenario), no
+    cross-join duplication (reinforcing the T1 fix now that a third term
+    is sampled per plant/scenario/GCM)."""
+    plants = pd.concat([cc.load_plants(c) for c in cc.COUNTRIES], ignore_index=True)
+    bucketed = plants[plants["bucket"].isin(cc.BUCKETS)]
+    expected_rows = len(bucketed) * len(cc.WATER_SCENARIOS)
+
+    wide = cc.compute_hazard_by_gcm()
+
+    assert expected_rows == 32424
+    assert len(wide) == expected_rows
+    assert wide.duplicated(cc.GCM_MERGE_KEY).sum() == 0
+    assert wide[cc.PLANT_UID].nunique() == len(bucketed)
+
+
+@pytest.mark.skipif(
+    not (_rasters_present() and _spei_rasters_present()), reason="processed rasters absent"
+)
+def test_real_gcm_columns_never_blended_with_three_terms():
+    """GFDL-ESM4 and MIROC6 stay separate columns, still never averaged or
+    blended, now that Hazard has three additive terms (water_sub, heat,
+    spei) instead of two."""
+    wide = cc.compute_hazard_by_gcm()
+    assert "hazard" not in wide.columns
+    both = wide.dropna(subset=["hazard_gfdl_esm4", "hazard_miroc6"])
+    blend = (both["hazard_gfdl_esm4"] + both["hazard_miroc6"]) / 2
+    assert not np.allclose(both["hazard_gfdl_esm4"], blend)
+    assert not np.allclose(both["hazard_miroc6"], blend)
 
 
 def _row(name, lat, lon, cap, year, bucket, fuel):
@@ -436,13 +528,14 @@ def test_wd_never_appears_in_sampled_or_scored_columns(monkeypatch):
         "country": "T", "plant_name": ["a"], "lon": 0.0, "lat": 0.0,
         "capacity_mw": [1.0], "commissioning_year": [2000.0], "bucket": ["thermal"],
         "water_scenario": "opt", "heat_scenario": "ssp126",
-        "ws": [1.0], "sv": [0.5], "iv": [0.5], "heat": [4.0],
+        "ws": [1.0], "sv": [0.5], "iv": [0.5], "heat": [4.0], "spei": [1.0],
     })
     monkeypatch.setattr(cc, "sample_terms", lambda model: fake.copy())
     out = cc.compute_hazard(
         "gfdl_esm4",
         bounds={"ws": (0.0, 1.0), "sv": (0.0, 1.0), "iv": (0.0, 1.0),
-                "heat": {"gfdl_esm4": (0.0, 4.0)}},
+                "heat": {"gfdl_esm4": (0.0, 4.0)},
+                "spei": {"gfdl_esm4": (0.0, 1.0)}},
     )
     assert not any("wd" in c for c in out.columns)
 

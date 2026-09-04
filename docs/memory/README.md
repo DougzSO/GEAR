@@ -51,7 +51,14 @@ relatório de % de capacidade (base computável V6, `capacity_sum` com assert
 fail-loud) por `WaterRiskBand`/`HeatRiskBand` por país/cenário/GCM +
 contingência (reaproveitada de `risk_bands.contingency_table`) + as
 ressalvas de T2/T4 (fallback do wind, fração sem `commissioning_year`,
-aviso de não-comparabilidade do HeatRiskBand). 210 testes. As
+aviso de não-comparabilidade do HeatRiskBand). `src/processors/spei_processor.py`
+calcula o termo de seca (SPEI-12 via Thornthwaite PET) e, desde
+2026-09-04, entra no Hazard como terceiro termo aditivo independente
+(`w_drought[bucket] * Tlog(spei_freq)`, item F fechado —
+`docs/DECISIONS.md` "[2026-09-04] SPEI drought term added to Hazard",
+`docs/memory/05-decisoes-tecnicas.md` item 18); `BUCKET_WEIGHTS` passou de
+`(w_water, w_heat)` para `(w_water, w_heat, w_drought)` por bucket,
+`FROZEN_BOUNDS` ganhou uma entrada `spei` por GCM. 242 testes. As
 verificações pós-dados V1–V6 (`ARCHITECTURE.md` Seção 9) estão **todas
 fechadas**; o CCRS substitui SCI/NAES. A camada de índice está completa
 exceto o wrapper de Monte Carlo (spec item J) e relatórios per-country

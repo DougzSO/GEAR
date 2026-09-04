@@ -5,7 +5,9 @@ This module computes **only** the hazard term of the Climate Change Risk Score
 (``docs/ARCHITECTURE.md`` Section 5.1, ``analysis/climate_risk_score_spec.md``
 Section 2):
 
-    Hazard_{i,s} = w_water[bucket] * water_sub_{i,s} + w_heat[bucket] * Tlog(heat_{i,s})
+    Hazard_{i,s} = w_water[bucket] * water_sub_{i,s}
+                 + w_heat[bucket]  * Tlog(heat_{i,s})
+                 + w_drought[bucket] * Tlog(spei_freq_{i,s})
 
     water_sub_{i,s} = 0.4164 * Tlog(ws) + 0.2505 * Tlin(sv) + 0.3331 * Tlin(iv)
 
@@ -18,7 +20,30 @@ convention are the spec's open item D (``ARCHITECTURE.md`` Section 10) -- see
 The risk bands (WaterRiskBand / HeatRiskBand) are yet another step.
 
 --------------------------------------------------------------------------
-The four hazard terms, and what they are NOT
+Drought (SPEI) term -- spec item F, CLOSED
+--------------------------------------------------------------------------
+``spei_freq`` is ``src/processors/spei_processor.py``'s raw drought-frequency
+raster (months/year with SPEI-12 <= -1.0, Thornthwaite PET). It enters
+``Hazard`` as a **new, independent third term**, not a complement folded into
+``water_sub``: the existing ``water_sub`` weights (0.4164 / 0.2505 / 0.3331,
+WRI Aqueduct category widths) are a closed, derived quantity (see
+``WITHIN_WATER_WEIGHTS`` below) -- renormalising them to make room for SPEI
+would replace a derived value with an arbitrary one for no documented reason.
+Adding a third additive term at the bucket level, transformed and bounded the
+same way as ``heat`` (``Tlog`` = ``MinMax(log1p(x))``, per-GCM bounds -- SPEI
+depends on the GCM, like heat and unlike the Aqueduct water terms), preserves
+``water_sub`` bit-for-bit while still letting drought exposure enter the
+score. See ``docs/DECISIONS.md`` for the full record of this choice.
+
+**This changes ``Hazard_{i,s}`` and therefore ``CCRS_{i,s}`` for every plant**
+relative to every T1-T6 number computed before this integration: the bucket
+weights below are new (a 3-way split replacing the 2-way ``w_water``/``w_heat``
+matrix) and ``FROZEN_BOUNDS`` gained a new ``spei`` entry. Hazard/CCRS values
+from before and after this change are **not directly comparable** -- see
+``docs/DECISIONS.md`` "[2026-09-04] SPEI drought term added to Hazard".
+
+--------------------------------------------------------------------------
+The five hazard terms, and what they are NOT
 --------------------------------------------------------------------------
 ``ws``, ``sv`` and ``iv`` are the **three WRI Aqueduct 4.0 water-risk
 indicators**, not precipitation and not SPEI:
@@ -44,6 +69,9 @@ supply, not a climatic water deficit).
 
 * ``heat`` -- mean days/year with tasmax > 40 C (``extreme_heat_days_*``, a
   passthrough of ``cds_tasmax_downloader``), per GCM.
+* ``spei`` -- ``spei_freq``, mean months/year with SPEI-12 <= -1.0
+  (``drought_stress_raw_*``, computed by ``src/processors/spei_processor.py``
+  from the raw ``pr``/``tas`` daily series), per GCM.
 
 ``wd`` (water depletion) is **excluded** from the calculation: the plant-level
 Spearman ``ws x wd`` is 0.98-0.998 across the three countries
@@ -55,8 +83,8 @@ in the pipeline); ``wd`` is dropped.
 --------------------------------------------------------------------------
 Transforms and bounds
 --------------------------------------------------------------------------
-* ``Tlog(x) = MinMax(log1p(x))`` -- applied to ``ws`` and ``heat`` (severe
-  right skew at plant level).
+* ``Tlog(x) = MinMax(log1p(x))`` -- applied to ``ws``, ``heat`` and ``spei``
+  (severe right skew at plant level).
 * ``Tlin(x) = MinMax(x)``        -- applied to ``sv`` and ``iv`` (near
   symmetric; log1p would over-correct and could invert their ordering).
 * **Global bounds**: one ``(min, max)`` pair per term, pooling the 3 countries
@@ -64,9 +92,14 @@ Transforms and bounds
   that makes a CCRS of 0.4 mean the same exposure in Lisbon and in Chennai.
   - ``ws``/``sv``/``iv``: the water rasters do not depend on the GCM, so there
     is a single pair per term, pooling the plants that intersect a basin.
-  - ``heat``: one pair **per GCM**. MIROC6 magnitudes run ~10-100x GFDL-ESM4;
-    pooling both into one bound would be a cross-model blend. See "GCM" below,
-    and ``docs/DECISIONS.md`` "[2026-09-04] CCRS global Min-Max bounds".
+  - ``heat``/``spei``: one pair **per GCM** each. MIROC6 magnitudes run
+    ~10-100x GFDL-ESM4 for heat; pooling both into one bound would be a
+    cross-model blend. See "GCM" below, and ``docs/DECISIONS.md``
+    "[2026-09-04] CCRS global Min-Max bounds" and
+    "[2026-09-04] SPEI drought term added to Hazard" (the ``spei`` bound is a
+    later, authorised *extension* of the same frozen constant, not a
+    perturbation of the pre-existing ``ws``/``sv``/``iv``/``heat`` values,
+    which are untouched).
 * The bounds are **frozen** in ``FROZEN_BOUNDS`` (spec open item G: "a fixed,
   documented constant, not recomputed per run"). ``main`` and the default
   calculation use the frozen values; ``compute_global_bounds`` recomputes them
@@ -75,18 +108,39 @@ Transforms and bounds
   manual review.
 
 --------------------------------------------------------------------------
-Per technology-bucket weights (``ARCHITECTURE.md`` Section 5.3, closed)
+Per technology-bucket weights (``ARCHITECTURE.md`` Section 5.3, closed;
+3-way matrix since the SPEI integration -- spec item F)
 --------------------------------------------------------------------------
-    bucket    w_water  w_heat
-    hydro      1.00     0.00   (heat already inside water stress via reservoir evaporation)
-    thermal    0.75     0.25   (Van Vliet water outcome ~an order of magnitude above the marginal heat rate)
-    wind       0.00     1.00   (no plausible physical water mechanism)
-    solar      0.00     1.00   (idem)
+    bucket    w_water  w_heat  w_drought
+    hydro      0.55     0.00    0.45
+    thermal    0.525    0.175   0.30
+    wind       0.00     0.95    0.05
+    solar      0.00     0.95    0.05
+
+Each row sums to 1.0. This replaces the earlier 2-column ``w_water``/``w_heat``
+matrix (``hydro`` 1.00/0.00, ``thermal`` 0.75/0.25, ``wind``/``solar``
+0.00/1.00): every existing weight was rescaled to make room for
+``w_drought``, not just the new column added on top -- see ``docs/DECISIONS.md``.
+
+**Origin of these numbers -- explicit, same transparency standard as
+``age_factor.py``'s assumed coal-overhaul cycle**: this is a direct
+translation of a qualitative judgment (hydro and thermal plants that depend
+on cooling/reservoir water are materially more exposed to prolonged drought
+than to a single hot day; wind/solar have no physical water-dependence
+mechanism but are not given an *absolute* zero, since a drought-driven
+regional water/energy-system stress is not literally impossible for them
+either). It is **not** a formal calibration (no AHP/pairwise comparison) and
+**not** a literature-derived value -- there is no published water/heat/drought
+importance ratio for any of these technologies. Revisit if a calibrated
+alternative becomes available.
 
 For ``wind``/``solar`` the whole water side -- ``ws``, ``sv`` AND ``iv`` --
-zeroes together. The within-water weights ``(0.4164, 0.2505, 0.3331)`` come
-from the WRI Aqueduct 4.0 category step widths (``w_k proportional to 1/tau_k``,
-spec Section 8.1), not from the Section 6.1 magnitude matrix.
+zeroes together; the drought side is not zero. The within-water weights
+``(0.4164, 0.2505, 0.3331)`` come from the WRI Aqueduct 4.0 category step
+widths (``w_k proportional to 1/tau_k``, spec Section 8.1), not from the
+Section 6.1 magnitude matrix, and are **unchanged** by the SPEI integration
+(``water_sub`` is a closed sub-formula, never renormalised -- see "Drought
+(SPEI) term" above).
 
 --------------------------------------------------------------------------
 GCM (``ARCHITECTURE.md`` Section 5.4)
@@ -147,6 +201,7 @@ from src.config import (
 )
 from src.downloaders.cds_tasmax_downloader import configured_models
 from src.processors.heat_stress_processor import raw_raster_path as heat_raw_path
+from src.processors.spei_processor import raw_raster_path as spei_raw_path
 from src.processors.water_stress_processor import raw_raster_path as ws_raw_path
 from src.processors.water_variability_processor import raw_raster_path as var_raw_path
 
@@ -155,9 +210,13 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------
 # Terms and transforms
 # --------------------------------------------------------------------------
-HAZARD_TERMS = ("ws", "heat", "sv", "iv")
-LOG_TERMS = frozenset({"ws", "heat"})   # log1p -> Min-Max
-LIN_TERMS = frozenset({"sv", "iv"})     # linear Min-Max
+HAZARD_TERMS = ("ws", "heat", "sv", "iv", "spei")
+LOG_TERMS = frozenset({"ws", "heat", "spei"})   # log1p -> Min-Max
+LIN_TERMS = frozenset({"sv", "iv"})             # linear Min-Max
+# Terms whose global bound is per-GCM (magnitudes are not model-comparable);
+# every other term's bound is a single flat pair pooling all GCMs.
+GCM_DEPENDENT_TERMS = frozenset({"heat", "spei"})
+FLAT_BOUND_TERMS = tuple(t for t in HAZARD_TERMS if t not in GCM_DEPENDENT_TERMS)
 
 # ``wd`` (water depletion) is left out: rank-redundant with ``ws``
 # (Spearman 0.98-0.998, analysis/aqueduct_indicator_correlation.md).
@@ -211,15 +270,19 @@ assert all(
 # Per technology-bucket water/heat weights (ARCHITECTURE.md Section 5.3, closed).
 # --------------------------------------------------------------------------
 BUCKETS = ("hydro", "thermal", "wind", "solar")
+# 3-way water/heat/drought split (spec item F, closed). A qualitative
+# translation, not a formal calibration -- see the module docstring section
+# "Per technology-bucket weights" for the origin and reasoning.
 BUCKET_WEIGHTS = {
-    "hydro":   {"water": 1.00, "heat": 0.00},
-    "thermal": {"water": 0.75, "heat": 0.25},
-    "wind":    {"water": 0.00, "heat": 1.00},
-    "solar":   {"water": 0.00, "heat": 1.00},
+    "hydro":   {"water": 0.55,  "heat": 0.00,  "drought": 0.45},
+    "thermal": {"water": 0.525, "heat": 0.175, "drought": 0.30},
+    "wind":    {"water": 0.00,  "heat": 0.95,  "drought": 0.05},
+    "solar":   {"water": 0.00,  "heat": 0.95,  "drought": 0.05},
 }
 assert all(
-    abs(w["water"] + w["heat"] - 1.0) < 1e-12 for w in BUCKET_WEIGHTS.values()
-), "w_water + w_heat must sum to 1 per bucket"
+    abs(w["water"] + w["heat"] + w["drought"] - 1.0) < 1e-12
+    for w in BUCKET_WEIGHTS.values()
+), "w_water + w_heat + w_drought must sum to 1 per bucket"
 
 # --------------------------------------------------------------------------
 # Frozen global bounds (spec open item G).
@@ -230,7 +293,17 @@ assert all(
 # drift. Format: RAW bounds (pre-log1p) (min, max). Tlog applies log1p to both
 # the data and the bound.
 #   - ws/sv/iv: one pair per term (water rasters are GCM-independent).
-#   - heat:     one pair per GCM (MIROC6 ~10-100x GFDL; never in the same pool).
+#   - heat/spei: one pair per GCM each (MIROC6 ~10-100x GFDL for heat; never
+#     in the same pool).
+#
+# ``spei`` was added on the SAME snapshot date as an AUTHORISED EXTENSION
+# (docs/DECISIONS.md "[2026-09-04] SPEI drought term added to Hazard"): the
+# ws/sv/iv/heat values below are untouched (recomputed and confirmed
+# byte-identical to the pre-SPEI snapshot before this edit), so this is not a
+# redefinition of any existing bound -- only a new key added to the same
+# frozen constant. It nonetheless means any Hazard/CCRS number computed after
+# this point uses a materially different formula (new bucket weights, new
+# additive term) and is not directly comparable to a pre-integration number.
 # --------------------------------------------------------------------------
 BOUNDS_DATA_SNAPSHOT = "2026-09-04"
 FROZEN_BOUNDS: dict[str, object] = {
@@ -240,6 +313,10 @@ FROZEN_BOUNDS: dict[str, object] = {
     "heat": {
         "gfdl_esm4": (0.0, 159.89999389648438),
         "miroc6": (0.0, 274.20001220703125),
+    },
+    "spei": {
+        "gfdl_esm4": (1.4441261291503906, 4.022922515869141),
+        "miroc6": (1.2722063064575195, 4.160458564758301),
     },
 }
 
@@ -270,6 +347,8 @@ def raster_path(term: str, country: str, water_scenario: str, model: str) -> Pat
         return var_raw_path(country, water_scenario, "iv")
     if term == "heat":
         return heat_raw_path(country, model, WATER_TO_HEAT[water_scenario])
+    if term == "spei":
+        return spei_raw_path(country, model, WATER_TO_HEAT[water_scenario])
     raise ValueError(
         f"unknown term {term!r} (expected one of {HAZARD_TERMS}; "
         f"{EXCLUDED_INDICATORS} is excluded from the CCRS by design)"
@@ -407,12 +486,12 @@ def compute_global_bounds(models: list[str] | None = None) -> dict[str, object]:
     Over the rows with a known technology bucket, countries and scenarios
     pooled:
 
-    * ``ws``/``sv``/``iv``: one ``(min, max)`` pair per term, over the plants
-      whose term is finite (they intersect a basin). The water rasters are
-      GCM-independent -- sampling with any configured GCM gives the same
-      result; ``models[0]`` is used for convenience.
-    * ``heat``: one pair per GCM, over the plants whose ``heat`` is finite for
-      that GCM.
+    * ``ws``/``sv``/``iv`` (``FLAT_BOUND_TERMS``): one ``(min, max)`` pair per
+      term, over the plants whose term is finite (they intersect a basin).
+      The water rasters are GCM-independent -- sampling with any configured
+      GCM gives the same result; ``models[0]`` is used for convenience.
+    * ``heat``/``spei`` (``GCM_DEPENDENT_TERMS``): one pair per GCM, over the
+      plants whose value is finite for that GCM.
 
     Same structure as ``FROZEN_BOUNDS``.
     """
@@ -425,23 +504,27 @@ def compute_global_bounds(models: list[str] | None = None) -> dict[str, object]:
         return float(col.min()), float(col.max())
 
     water = frames[models[0]]
-    out: dict[str, object] = {t: _minmax(water, t) for t in ("ws", "sv", "iv")}
-    out["heat"] = {m: _minmax(f, "heat") for m, f in frames.items()}
+    out: dict[str, object] = {t: _minmax(water, t) for t in FLAT_BOUND_TERMS}
+    for t in GCM_DEPENDENT_TERMS:
+        out[t] = {m: _minmax(f, t) for m, f in frames.items()}
     return out
 
 
 def _bounds_close(a: dict[str, object], b: dict[str, object], atol: float = 1e-4) -> bool:
     if set(a) != set(b):
         return False
-    for term in ("ws", "sv", "iv"):
+    for term in FLAT_BOUND_TERMS:
         if not np.allclose(a[term], b[term], atol=atol, rtol=0):
             return False
-    heat_a, heat_b = a["heat"], b["heat"]
-    if set(heat_a) != set(heat_b):
-        return False
-    return all(
-        np.allclose(heat_a[m], heat_b[m], atol=atol, rtol=0) for m in heat_a
-    )
+    for term in GCM_DEPENDENT_TERMS:
+        by_gcm_a, by_gcm_b = a[term], b[term]
+        if set(by_gcm_a) != set(by_gcm_b):
+            return False
+        if not all(
+            np.allclose(by_gcm_a[m], by_gcm_b[m], atol=atol, rtol=0) for m in by_gcm_a
+        ):
+            return False
+    return True
 
 
 def assert_frozen_bounds_current(models: list[str] | None = None) -> dict[str, object]:
@@ -459,8 +542,8 @@ def assert_frozen_bounds_current(models: list[str] | None = None) -> dict[str, o
 
 
 def _term_bounds(term: str, model: str, bounds: dict[str, object]) -> tuple[float, float]:
-    if term == "heat":
-        return tuple(bounds["heat"][model])  # type: ignore[index]
+    if term in GCM_DEPENDENT_TERMS:
+        return tuple(bounds[term][model])  # type: ignore[index]
     return tuple(bounds[term])  # type: ignore[return-value]
 
 
@@ -474,33 +557,46 @@ def water_sub(t_ws: np.ndarray, t_sv: np.ndarray, t_iv: np.ndarray) -> np.ndarra
     return w["ws"] * np.asarray(t_ws) + w["sv"] * np.asarray(t_sv) + w["iv"] * np.asarray(t_iv)
 
 
-def hazard(bucket: np.ndarray, water_sub_val: np.ndarray, t_heat: np.ndarray) -> np.ndarray:
-    """``w_water[bucket] * water_sub + w_heat[bucket] * Tlog(heat)``.
+def hazard(
+    bucket: np.ndarray,
+    water_sub_val: np.ndarray,
+    t_heat: np.ndarray,
+    t_spei: np.ndarray,
+) -> np.ndarray:
+    """``w_water[bucket] * water_sub + w_heat[bucket] * Tlog(heat)
+    + w_drought[bucket] * Tlog(spei_freq)``.
 
     A side with weight 0 is dropped before the multiplication, so a NaN
     ``water_sub`` does not contaminate ``wind``/``solar`` (nor a NaN ``heat``
-    contaminate ``hydro``). Where the side has weight > 0, a NaN propagates --
-    the plant has no hazard in that scenario, which is the correct behaviour.
+    or ``spei`` contaminate ``hydro``, whose ``w_heat`` is 0). Where a side
+    has weight > 0, a NaN propagates -- the plant has no hazard in that
+    scenario, which is the correct behaviour.
     """
     bucket = np.asarray(bucket, dtype=object)
     w_water = np.array([BUCKET_WEIGHTS[b]["water"] if b in BUCKET_WEIGHTS else np.nan
                         for b in bucket], dtype="float64")
     w_heat = np.array([BUCKET_WEIGHTS[b]["heat"] if b in BUCKET_WEIGHTS else np.nan
                        for b in bucket], dtype="float64")
+    w_drought = np.array([BUCKET_WEIGHTS[b]["drought"] if b in BUCKET_WEIGHTS else np.nan
+                          for b in bucket], dtype="float64")
     water_sub_val = np.asarray(water_sub_val, "float64")
     t_heat = np.asarray(t_heat, "float64")
+    t_spei = np.asarray(t_spei, "float64")
 
     # Multiply only where the weight is > 0: the zeroed side never touches a
     # NaN, and the weighted side propagates NaN normally.
     water_part = np.zeros(len(w_water), dtype="float64")
     heat_part = np.zeros(len(w_heat), dtype="float64")
+    drought_part = np.zeros(len(w_drought), dtype="float64")
     mw = w_water > 0.0
     mh = w_heat > 0.0
+    md = w_drought > 0.0
     water_part[mw] = w_water[mw] * water_sub_val[mw]
     heat_part[mh] = w_heat[mh] * t_heat[mh]
-    out = water_part + heat_part
+    drought_part[md] = w_drought[md] * t_spei[md]
+    out = water_part + heat_part + drought_part
     # unknown bucket -> NaN (should not happen: the caller filters first)
-    out[np.isnan(w_water) | np.isnan(w_heat)] = np.nan
+    out[np.isnan(w_water) | np.isnan(w_heat) | np.isnan(w_drought)] = np.nan
     return out
 
 
@@ -509,7 +605,7 @@ def compute_hazard(model: str, bounds: dict[str, object] | None = None) -> pd.Da
 
     One row per (plant, scenario) with a known bucket -- keyed by
     ``plant_uid``. Columns: identity + ``lat``/``lon``, ``bucket``,
-    ``capacity_mw``, ``commissioning_year``, the four transformed terms
+    ``capacity_mw``, ``commissioning_year``, the five transformed terms
     ``T_*``, ``water_sub``, ``hazard``, ``model``. Uses ``FROZEN_BOUNDS`` by
     default.
     """
@@ -523,7 +619,7 @@ def compute_hazard(model: str, bounds: dict[str, object] | None = None) -> pd.Da
         tt[term] = transform_term(term, df[term].to_numpy("float64"), lo, hi)
 
     ws_sub = water_sub(tt["ws"], tt["sv"], tt["iv"])
-    haz = hazard(df["bucket"].to_numpy(), ws_sub, tt["heat"])
+    haz = hazard(df["bucket"].to_numpy(), ws_sub, tt["heat"], tt["spei"])
 
     out = df[[PLANT_UID, "country", "plant_name", "lat", "lon",
               "water_scenario", "heat_scenario", "bucket",

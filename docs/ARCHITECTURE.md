@@ -129,7 +129,8 @@ For plant `i` under scenario `s`:
 $$CCRS_{i,s} = Hazard_{i,s} \times age\_factor_i \times EventMultiplier_{c(i)}$$
 
 $$Hazard_{i,s} = w_{water}[bucket_i]\cdot water\_sub_{i,s}
-             + w_{heat}[bucket_i]\cdot T_{log}(HeatStress^{raw}_{i,s})$$
+             + w_{heat}[bucket_i]\cdot T_{log}(HeatStress^{raw}_{i,s})
+             + w_{drought}[bucket_i]\cdot T_{log}(DroughtFreq^{raw}_{i,s})$$
 
 $$water\_sub_{i,s} = 0.4164\cdot T_{log}(WaterStress^{raw}_{i,s})
                   + 0.2505\cdot T_{lin}(SeasonalVar^{raw}_{i,s})
@@ -142,30 +143,39 @@ $$water\_sub_{i,s} = 0.4164\cdot T_{log}(WaterStress^{raw}_{i,s})
   three countries and all three scenarios pooled. No per-country Min-Max
   anywhere in the aggregate. This is the property that makes a CCRS of 0.4
   mean the same exposure in Lisbon and in Chennai — the property NAES had and
-  SCI deliberately gave up. For `heat` the pair is computed **per GCM** —
-  GFDL-ESM4 and MIROC6 never pooled together, applying the §5.4 no-blend rule
-  to the bounds computation itself, not only to the final Hazard value; for
-  `ws`/`sv`/`iv` there is a single pair per term, since the water rasters
-  carry no GCM axis. Frozen as `ccrs_calculator.FROZEN_BOUNDS` (data snapshot
-  2026-09-04), regression-locked against the data on disk — see
+  SCI deliberately gave up. For `heat` and `spei` the pair is computed **per
+  GCM** — GFDL-ESM4 and MIROC6 never pooled together, applying the §5.4
+  no-blend rule to the bounds computation itself, not only to the final
+  Hazard value; for `ws`/`sv`/`iv` there is a single pair per term, since the
+  water rasters carry no GCM axis. Frozen as `ccrs_calculator.FROZEN_BOUNDS`
+  (data snapshot 2026-09-04, extended in place — not redefined — when `spei`
+  was added), regression-locked against the data on disk — see
   `docs/DECISIONS.md`, "CCRS global Min-Max bounds: heat per-GCM, water
-  GCM-independent".
-- Four hazard terms: `ws` = Aqueduct water stress; `sv`/`iv` = Aqueduct
+  GCM-independent" and "SPEI drought term added to Hazard".
+- Five hazard terms: `ws` = Aqueduct water stress; `sv`/`iv` = Aqueduct
   seasonal / interannual variability of blue-water supply; `heat` = mean
-  days/yr with tasmax > 40 °C. Water depletion (`wd`) is **excluded** —
-  plant-level Spearman `ws × wd` is 0.98–0.998, so `wd` carries no
-  independent rank information
+  days/yr with tasmax > 40 °C; `spei` = `DroughtFreq^{raw}`, mean months/yr
+  with SPEI-12 ≤ −1.0 (Thornthwaite PET, `src/processors/spei_processor.py`).
+  Water depletion (`wd`) is **excluded** — plant-level Spearman `ws × wd` is
+  0.98–0.998, so `wd` carries no independent rank information
   (`analysis/aqueduct_indicator_correlation.md`).
 - The within-`water_sub` weights `(0.4164, 0.2505, 0.3331)` are **not** the
   §6.1 magnitude derivation. They come from the WRI Aqueduct 4.0 category
   step widths ($w_k \propto 1/\tau_k$, spec §8.1) — the same weights the
-  absolute WaterRiskBand uses.
+  absolute WaterRiskBand uses. Unchanged by the drought-term addition; never
+  renormalised.
 - `age_factor_i ≥ 1` (§7.1) and `EventMultiplier_c ≥ 1` (§7.2) **multiply**
   the hazard score; they are not added as terms.
 
-`w_water + w_heat = 1` per bucket, `Σ w_k = 1` inside `water_sub`, and every
-transformed term is in `[0, 1]`, so `Hazard_i,s ∈ [0, 1]`. It is not
-re-normalised after the weighted sum.
+`w_water + w_heat + w_drought = 1` per bucket, `Σ w_k = 1` inside
+`water_sub`, and every transformed term is in `[0, 1]`, so `Hazard_i,s ∈
+[0, 1]`. It is not re-normalised after the weighted sum.
+
+**Impact of the drought term (added 2026-09-04):** adding `w_drought` and
+extending `FROZEN_BOUNDS` changes `Hazard_{i,s}` and therefore `CCRS_{i,s}`
+for every plant. Numbers computed after this point are not directly
+comparable to any T1–T6 number computed before it — see
+`docs/DECISIONS.md`.
 
 ### 5.2 Two classification bands
 
@@ -196,24 +206,33 @@ Implemented in `src/index/risk_bands.py` (both bands, the auxiliary
 `WaterRiskBand × HeatRiskBand` contingency table) and reported per country in
 `src/index/ccrs_report.py`.
 
-### 5.3 Per-bucket water/heat weights
+### 5.3 Per-bucket water/heat/drought weights
 
-$(w_{water}, w_{heat})$ is per technology bucket, closed:
+$(w_{water}, w_{heat}, w_{drought})$ is per technology bucket, closed. The
+2-way matrix below was superseded 2026-09-04 by the 3-way one when the SPEI
+drought term was integrated (spec item F):
 
-| bucket | `w_water` | `w_heat` | basis |
-|---|---|---|---|
-| hydro | 1.00 | 0.00 | §6.1: no independent heat coefficient — reservoir-evaporation channel already inside water stress |
-| thermal | 0.75 | 0.25 | §6.1: Van Vliet water outcome (81–86 % capacity loss, a *total* outcome) an order of magnitude above the Ibrahim & Attia heat rate (−0.12…−0.44 %/°C, a *marginal* rate) — informed judgment, not a computed ratio |
-| wind | 0.00 | 1.00 | §6.1: no plausible physical water mechanism |
-| solar | 0.00 | 1.00 | §6.1: no plausible physical water mechanism |
+| bucket | `w_water` | `w_heat` | `w_drought` | basis |
+|---|---|---|---|---|
+| hydro | 0.55 | 0.00 | 0.45 | §6.1 water/heat basis unchanged (no independent heat coefficient). Rescaled to admit a large drought weight: reservoirs are directly exposed to prolonged drought beyond the evaporation channel already inside water stress. |
+| thermal | 0.525 | 0.175 | 0.30 | The original `0.75 / 0.25` water/heat ratio (Van Vliet vs. Ibrahim & Attia, §6.1) is preserved, both terms rescaled proportionally to free 0.30 for drought — cooling-water-dependent thermal generation is materially exposed to prolonged drought. |
+| wind | 0.00 | 0.95 | 0.05 | §6.1: still no plausible physical water-*stress* mechanism, but not given an absolute zero on drought — a small, non-mechanistic allowance for regional drought-driven system stress. |
+| solar | 0.00 | 0.95 | 0.05 | Same reasoning as wind. |
+
+**Origin, explicit:** the drought column is a direct translation of a
+qualitative judgment (hydro/thermal water-dependent generation is more
+exposed to prolonged drought than to a single hot day; wind/solar are
+near-neutral, not absolutely zero), not a formal AHP/pairwise calibration
+and not a literature-derived ratio — same transparency standard as
+`age_factor.py`'s assumed coal-overhaul cycle. See `docs/DECISIONS.md`.
 
 For `wind`/`solar` the whole water side — `ws`, `sv` **and** `iv` — is
 weighted to zero (`sv`/`iv` measure variability of water availability, the
-same absent mechanism). These four splits replace the flat `w = 0.25` used
-in the exploratory diagnostics
-(`analysis/ccrs_bucket_weighted_distribution.md`). Only the thermal
-`0.75 / 0.25` pair is a judgment call open to Monte Carlo perturbation (§8);
-hydro/wind/solar follow directly from the §6.1 "no mechanism" rows.
+same absent mechanism); the drought side is not zero. These splits replace
+the flat `w = 0.25` used in the exploratory diagnostics
+(`analysis/ccrs_bucket_weighted_distribution.md`, pre-SPEI) and the earlier
+2-way matrix. The thermal triple (and the small wind/solar drought
+allowance) remain judgment calls open to Monte Carlo perturbation (§8).
 
 ### 5.4 One primary GCM, one sensitivity panel
 
@@ -312,18 +331,24 @@ O delta de referência é fixo por tecnologia — não recomputado por país
 ou cenário. Variação por país e cenário entra pelos dados de hazard,
 não pelos pesos. Isso mantém a matriz de pesos estável e auditável.
 
-**Cross-reference — how these coefficients feed the CCRS (added 2026-09-03).**
+**Cross-reference — how these coefficients feed the CCRS (added 2026-09-03,
+extended to 3-way 2026-09-04).**
 The CCRS per-bucket water/heat weights (Section 5.3) were set from the §6.1
 matrix by **informed qualitative judgment**, not a mechanical conversion
 formula. The magnitude-normalisation procedure above is the framework for
-that judgment — e.g. thermal's `0.75 / 0.25` reflects that Van Vliet's water
-figure is a *total-outcome* coefficient roughly an order of magnitude larger
-than the *marginal* heat rate — but the exact fractions are a documented
-judgment call, flagged for Monte Carlo sensitivity (Section 8), not the
-output of an equation. Hydro/wind/solar collapse to `1.0 / 0.0` or
-`0.0 / 1.0` directly from the §6.1 "no independent mechanism" rows. The
-within-water `ws/sv/iv` weights are derived separately, from the WRI
-Aqueduct 4.0 category widths (Section 5.1). The `sv`/`iv` hazard terms
+that judgment — e.g. thermal's original `0.75 / 0.25` reflected that Van
+Vliet's water figure is a *total-outcome* coefficient roughly an order of
+magnitude larger than the *marginal* heat rate — but the exact fractions are
+a documented judgment call, flagged for Monte Carlo sensitivity (Section 8),
+not the output of an equation. The drought column added 2026-09-04 (`0.45`
+hydro, `0.30` thermal, `0.05` wind/solar) is the same kind of judgment call,
+not derived from §6.1's magnitude-normalisation procedure (there is no
+drought coefficient in the literature comparable in form to the water/heat
+ones) — see Section 5.3 and `docs/DECISIONS.md`. Hydro/wind/solar's
+water/heat split still traces to the §6.1 "no independent mechanism" rows;
+only the drought fraction they carry is new judgment. The within-water
+`ws/sv/iv` weights are derived separately, from the WRI Aqueduct 4.0 category
+widths (Section 5.1), unaffected by any of this. The `sv`/`iv` hazard terms
 themselves are not in the §6.1 matrix — only the water/heat split is.
 
 ### 6.1 Matriz de pesos — estado atual das evidências
@@ -487,13 +512,15 @@ a tier already encodes confidence at derivation time; varying the
 perturbation magnitude by tier as well would test two effects through one
 parameter.
 
-Free parameters: the thermal `w_water` / `w_heat` split (`0.75 / 0.25`,
-§5.3) and the `EventMultiplier` amplitude `k` (`0.5`, §7.2) — the two
-constants that are judgment calls rather than derivations — plus
-`age_factor`, and any free parameter of the weight matrix (§6.1) once it is
-derived. **Not** perturbed: the hydro/wind/solar splits, the within-water
-`ws/sv/iv` weights (fixed by the WRI category widths), and the
-`EventMultiplier` event base (`N_events` counts, India as `rate_max`).
+Free parameters: the thermal `(w_water, w_heat, w_drought)` triple
+(`0.525 / 0.175 / 0.30`, §5.3, since the 2026-09-04 SPEI integration) and the
+`EventMultiplier` amplitude `k` (`0.5`, §7.2) — judgment calls rather than
+derivations — plus `age_factor`, and any free parameter of the weight matrix
+(§6.1) once it is derived. **Not** perturbed: the within-water `ws/sv/iv`
+weights (fixed by the WRI category widths, unaffected by the drought
+addition), every entry of `FROZEN_BOUNDS` (including `spei`), the
+`risk_bands.py` cuts, and the `EventMultiplier` event base (`N_events`
+counts, India as `rate_max`).
 
 The CCRS and both per-country band reports are recomputed inside each
 iteration, giving a distribution per plant and per country×scenario band

@@ -578,3 +578,37 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
 - **Status:** Ativa. Não é um TODO — o diagnóstico antigo não será alterado
   (é histórico/congelado) nem `risk_bands.py` (o pool amplo é o desenho
   correto); o resíduo é permanente e esperado.
+
+---
+
+## 18. CCRS termo de seca (SPEI) integrado ao Hazard — `src/index/ccrs_calculator.py` (spec item F fechado)
+
+- **Contexto:** `src/processors/spei_processor.py` (Step 1, já commitado)
+  produzia a camada de seca (SPEI-12, Thornthwaite PET) sem estar ligada ao
+  Hazard. Este item fecha o item F: o termo entra na fórmula.
+- **Decisão:** `Hazard_i,s` ganha um terceiro termo aditivo independente,
+  `w_drought[bucket] * Tlog(spei_freq)`, ao lado de `water_sub` e
+  `Tlog(heat)` — não um complemento renormalizado dentro de `water_sub`
+  (que é uma quantidade derivada e fechada, spec §8.1, nunca tocada). Ver
+  a decisão completa (motivo, pesos por bucket, extensão de
+  `FROZEN_BOUNDS`, impacto de comparabilidade) em `docs/DECISIONS.md`,
+  entrada "[2026-09-04] SPEI drought term added to Hazard".
+- **Impacto de engenharia:** `HAZARD_TERMS`, `LOG_TERMS` ganham `"spei"`;
+  novo `GCM_DEPENDENT_TERMS = {"heat", "spei"}` e `FLAT_BOUND_TERMS = {"ws",
+  "sv", "iv"}` generalizam `_term_bounds`/`compute_global_bounds`/
+  `_bounds_close` (antes hardcoded para "heat" vs. o resto). `hazard()`
+  passa a receber `t_spei` como quarto argumento posicional — toda chamada
+  existente (`compute_hazard`, testes) foi atualizada. `BUCKET_WEIGHTS` vai
+  de `{"water", "heat"}` para `{"water", "heat", "drought"}` por bucket.
+- **Pré-requisito rodado nesta tarefa:** os rasters brutos de seca não
+  existiam em `data/processed/climate/` antes desta integração (as séries
+  diárias `pr`/`tas` já estavam baixadas). Rodado
+  `python -m src.processors.spei_processor` para as 3 países × 2 GCMs × 3
+  cenários (18 rasters, ~75s) antes de calcular `FROZEN_BOUNDS["spei"]` e
+  rodar os testes end-to-end.
+- **Arquivos:** `src/index/ccrs_calculator.py`, `tests/test_ccrs_calculator.py`
+  (31 testes, incl. `test_water_sub_weights_and_output_unchanged_by_spei_integration`,
+  `test_end_to_end_hazard_with_spei_produces_32424_rows_no_duplication`,
+  `test_real_gcm_columns_never_blended_with_three_terms`).
+- **Status:** Ativa. Spec item F fechado. Suíte completa: 242 testes
+  passando (~2m43s).
