@@ -73,6 +73,15 @@ SECONDARY_DIR = OUTPUT_MAPS / "combined" / "secondary"  # B5
 SCENARIO_COLORS = {"opt": "#2ca02c", "bau": "#1f77b4", "pes": "#d62728"}
 HAZARD_TERM_COLORS = {"water_share": "#1f77b4", "heat_share": "#d62728", "drought_share": "#8c564b"}
 
+# No qualitative palette for COUNTRY identity existed anywhere in this module
+# before FIG 4's redesign (unlike SCENARIO_COLORS/BUCKET_COLORS/*_BAND_COLORS,
+# all already established) -- picked here, deliberately avoiding hexes
+# already used by those other qualitative dimensions in this same module
+# (blue/green/red/gray/cyan/orange), so a reader is never misled into
+# associating a country color with a scenario or bucket color in a different
+# figure. Flagged as a new small palette decision, not silently invented.
+COUNTRY_COLORS = {"Brazil": "#9467bd", "Portugal": "#8c564b", "India": "#e377c2"}
+
 
 def _draw_matrix_panel(ax, cell_values: np.ndarray, row_labels, col_labels, title: str,
                         annotate_fmt: str = "{:,.0f}") -> None:
@@ -562,6 +571,120 @@ def plot_national_ccrs_with_ci(
     fig.tight_layout()
     out_path = save_figure(fig, OUT_DIR / "combined" / f"national_ccrs_with_ci_{PRIMARY_GCM}.png")
     logger.info("National CCRS with Monte Carlo CI saved to %s", out_path)
+    return out_path
+
+
+# --------------------------------------------------------------------------
+# FIG 4 redesign -- ordinal rank stability under Monte Carlo uncertainty
+# (Douglas's 2026-09-05 request: the point+CI figure above does not show
+# whether a country's apparent ranking advantage (e.g. India > Portugal)
+# holds per-draw, or only on average)
+#
+# Two prototypes generated per the brief's explicit invitation to produce
+# both when in doubt -- (a) density overlay and (b) rank-probability bars.
+# Both are built from ``monte_carlo.run_country_scenario_draws`` (the newly
+# retained per-draw data, see that function's docstring for the "no added
+# simulation cost" confirmation) and share ``COUNTRY_COLORS`` (new, see
+# above) for country identity across both prototypes.
+#
+# (a) is a density OVERLAY, not a literal offset ridge plot: with exactly 3
+# countries, an offset/joyplot-style stack (built for telling apart many
+# overlapping categories) adds a vertical-offset dimension that carries no
+# information here and makes reading the actual overlap/separation between
+# 3 curves harder, not easier -- a shared-axis overlay with alpha-fill shows
+# the same separation/overlap directly. Point (a) in the brief itself names
+# "ridge plot / density overlay" as one option, not two, so this is a choice
+# within the option, not a substitution for it.
+# --------------------------------------------------------------------------
+def plot_ccrs_rank_density(
+    countries: list[str] | None = None, draws: pd.DataFrame | None = None,
+    pre: "mc._Precomputed | None" = None,
+) -> pathlib.Path:
+    """FIG 4 prototype (a) -- one panel per water_scenario, overlaid CCRS
+    density curves (one per country, ``COUNTRY_COLORS``), a dashed vertical
+    line at each country's median. Visual separation between two countries'
+    curves is the same "systematic, not just on-average" evidence a
+    non-overlapping CI shows, but directly at the distribution level rather
+    than collapsed to a point + interval."""
+    from scipy import stats as sp_stats
+
+    countries = countries or COUNTRIES
+    if draws is None:
+        pre = pre or mc._Precomputed()
+        draws = mc.run_country_scenario_draws(pre=pre)
+
+    scenarios = ("opt", "bau", "pes")
+    fig, axes = plt.subplots(1, len(scenarios), figsize=(5.5 * len(scenarios), 5.5), sharey=True)
+    axes = np.atleast_1d(axes)
+    lo, hi = draws["ccrs"].min(), draws["ccrs"].max()
+    grid = np.linspace(lo, hi, 400) if hi > lo else np.array([lo])
+
+    for ax, scenario in zip(axes, scenarios):
+        for country in countries:
+            values = draws.loc[(draws["country"] == country) & (draws["water_scenario"] == scenario), "ccrs"]
+            values = values.dropna().to_numpy()
+            if len(values) < 2 or np.ptp(values) == 0:
+                continue
+            density = sp_stats.gaussian_kde(values)(grid)
+            ax.plot(grid, density, color=COUNTRY_COLORS[country], linewidth=1.8)
+            ax.fill_between(grid, density, color=COUNTRY_COLORS[country], alpha=0.25)
+            ax.axvline(np.median(values), color=COUNTRY_COLORS[country], linestyle="--", linewidth=1.0)
+        ax.set_title(scenario, fontweight="bold", fontsize=fs(11))
+        ax.set_xlabel(f"CCRS ({PRIMARY_GCM}, capacity-weighted mean per draw)", fontsize=fs(9))
+    axes[0].set_ylabel("Density (Monte Carlo draws)", fontsize=fs(10))
+
+    handles = [mlines.Line2D([0], [0], color=COUNTRY_COLORS[c], linewidth=2.5, label=c) for c in countries]
+    axes[-1].legend(handles=handles, fontsize=fs(9), loc="upper right", frameon=False)
+    fig.tight_layout()
+    out_path = save_figure(fig, OUT_DIR / "combined" / f"ccrs_rank_density_{PRIMARY_GCM}.png")
+    logger.info("CCRS rank density (FIG 4 prototype a) saved to %s", out_path)
+    return out_path
+
+
+def plot_ccrs_rank_probability(
+    countries: list[str] | None = None, draws: pd.DataFrame | None = None,
+    pre: "mc._Precomputed | None" = None,
+) -> pathlib.Path:
+    """FIG 4 prototype (b) -- one panel per water_scenario, grouped bars:
+    for each country, % of Monte Carlo draws in which it placed 1st/2nd/3rd
+    by CCRS (1st = highest CCRS = most at-risk). Directly answers "does
+    India outrank Portugal in (near-)every draw, or only on average" with a
+    single bar height, rather than requiring the reader to compare two
+    distributions' overlap by eye (prototype (a))."""
+    countries = countries or COUNTRIES
+    if draws is None:
+        pre = pre or mc._Precomputed()
+        draws = mc.run_country_scenario_draws(pre=pre)
+    ranked = mc.rank_per_draw(draws)
+    table = mc.rank_probability_table(ranked)
+
+    scenarios = ("opt", "bau", "pes")
+    ranks = sorted(ranked["rank"].unique())
+    fig, axes = plt.subplots(1, len(scenarios), figsize=(4.5 * len(scenarios), 5.5), sharey=True)
+    axes = np.atleast_1d(axes)
+    width = 0.8 / len(countries)
+
+    for ax, scenario in zip(axes, scenarios):
+        sub = table[table["water_scenario"] == scenario]
+        x = np.arange(len(ranks))
+        for i, country in enumerate(countries):
+            heights = [
+                float(sub.loc[(sub["country"] == country) & (sub["rank"] == r), "probability"].iloc[0])
+                if len(sub.loc[(sub["country"] == country) & (sub["rank"] == r)]) else 0.0
+                for r in ranks
+            ]
+            ax.bar(x + (i - (len(countries) - 1) / 2) * width, heights, width=width,
+                   color=COUNTRY_COLORS[country], label=country)
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"rank {r}\n(1=highest risk)" if r == ranks[0] else f"rank {r}" for r in ranks],
+                            fontsize=fs(8))
+        ax.set_title(scenario, fontweight="bold", fontsize=fs(11))
+        ax.set_ylim(0, 1.05)
+    axes[0].set_ylabel("Share of Monte Carlo draws", fontsize=fs(10))
+    axes[-1].legend(fontsize=fs(9), loc="upper right", frameon=False)
+    fig.tight_layout()
+    out_path = save_figure(fig, OUT_DIR / "combined" / f"ccrs_rank_probability_{PRIMARY_GCM}.png")
+    logger.info("CCRS rank probability (FIG 4 prototype b) saved to %s", out_path)
     return out_path
 
 

@@ -240,3 +240,121 @@ def test_vectorized_retention_matches_production_age_factor_at_central_rates():
     vectorized_series = pd.Series(vectorized_af, index=attrs["plant_uid"].to_numpy()).reindex(production.index)
 
     np.testing.assert_allclose(vectorized_series.to_numpy(), production.to_numpy(), atol=1e-9)
+
+
+# --------------------------------------------------------------------------
+# 7. FIG 4 redesign -- per-draw ranking data (Douglas's 2026-09-05 request)
+# --------------------------------------------------------------------------
+@pytestmark_needs_data
+def test_run_country_scenario_draws_reproducible():
+    """Same seed -> identical per-draw output, same guarantee as
+    test_run_simulation_reproducible, now over the raw per-draw frame this
+    module previously discarded after taking percentiles."""
+    pre = mc._Precomputed()
+    r1 = mc.run_country_scenario_draws(magnitudes=(0.20,), n=8, pre=pre)
+    r2 = mc.run_country_scenario_draws(magnitudes=(0.20,), n=8, pre=pre)
+    pd.testing.assert_frame_equal(r1, r2)
+
+
+@pytestmark_needs_data
+def test_run_country_scenario_draws_matches_the_aggregated_ci_percentiles():
+    """The per-draw frame is the SAME underlying draws the aggregated CI
+    function already reports on -- their percentiles must agree exactly,
+    confirming this is retained data, not a parallel/divergent computation."""
+    pre = mc._Precomputed()
+    draws = mc.run_country_scenario_draws(magnitudes=(0.20,), n=50, pre=pre)
+    ci = mc.run_country_scenario_simulation(magnitudes=(0.20,), n=50, pre=pre)
+
+    for _, row in ci.iterrows():
+        sub = draws[(draws["country"] == row["country"]) & (draws["water_scenario"] == row["water_scenario"])]
+        assert np.isclose(np.percentile(sub["ccrs"], 50.0), row["point_estimate"])
+        assert np.isclose(np.percentile(sub["ccrs"], 2.5), row["p2.5"])
+        assert np.isclose(np.percentile(sub["ccrs"], 97.5), row["p97.5"])
+
+
+def _synthetic_draws() -> pd.DataFrame:
+    """3 countries x 2 scenarios x 100 draws, India deliberately drawn from a
+    higher-mean distribution than Portugal/Brazil in every draw (a
+    deterministic, not just average, ranking advantage) -- lets the rank/
+    pairwise/full-ordering tests assert an exact, known-in-advance answer."""
+    rng = np.random.default_rng(0)
+    n = 100
+    rows = []
+    means = {"India": 0.8, "Brazil": 0.4, "Portugal": 0.3}
+    for scenario in ("bau", "pes"):
+        for draw_id in range(n):
+            for country, mean in means.items():
+                rows.append({
+                    "draw_id": draw_id, "magnitude": 0.20, "country": country,
+                    "water_scenario": scenario, "ccrs": mean + 0.01 * rng.standard_normal(),
+                })
+    return pd.DataFrame(rows)
+
+
+def test_rank_per_draw_assigns_one_rank_per_country_per_draw():
+    draws = _synthetic_draws()
+    ranked = mc.rank_per_draw(draws)
+    for (draw_id, scenario), g in ranked.groupby(["draw_id", "water_scenario"]):
+        assert sorted(g["rank"]) == [1, 2, 3]
+
+
+def test_rank_probability_table_sums_to_100_pct_per_country_scenario():
+    draws = _synthetic_draws()
+    ranked = mc.rank_per_draw(draws)
+    table = mc.rank_probability_table(ranked)
+    totals = table.groupby(["water_scenario", "country"])["probability"].sum()
+    np.testing.assert_allclose(totals.to_numpy(), 1.0, atol=1e-9)
+
+
+def test_rank_probability_table_shows_india_almost_always_rank_1():
+    """India's synthetic distribution never overlaps Brazil/Portugal's (mean
+    0.8 vs. 0.4/0.3, sd 0.01) -- India must be rank 1 in every draw."""
+    draws = _synthetic_draws()
+    ranked = mc.rank_per_draw(draws)
+    table = mc.rank_probability_table(ranked)
+    india_rank1 = table[(table["country"] == "India") & (table["rank"] == 1)]
+    assert (india_rank1["probability"] == 1.0).all()
+
+
+def test_pairwise_order_stability_sums_are_complementary():
+    """pct(A>B) + pct(B>A) == 1.0 for every ordered pair (no ties in the
+    synthetic sample -- continuous draws)."""
+    draws = _synthetic_draws()
+    table = mc.pairwise_order_stability(draws)
+    for scenario in table["water_scenario"].unique():
+        sub = table[table["water_scenario"] == scenario]
+        for a, b in [("India", "Portugal"), ("India", "Brazil"), ("Brazil", "Portugal")]:
+            ab = sub[(sub["country_a"] == a) & (sub["country_b"] == b)]["pct_a_greater_b"].iloc[0]
+            ba = sub[(sub["country_a"] == b) & (sub["country_b"] == a)]["pct_a_greater_b"].iloc[0]
+            assert ab + ba == pytest.approx(1.0)
+
+
+def test_pairwise_order_stability_india_beats_portugal_every_draw():
+    draws = _synthetic_draws()
+    table = mc.pairwise_order_stability(draws)
+    row = table[(table["country_a"] == "India") & (table["country_b"] == "Portugal")]
+    assert (row["pct_a_greater_b"] == 1.0).all()
+
+
+def test_full_ranking_distribution_sums_to_100_pct_per_scenario():
+    """%(A>B>C) + %(A>C>B) + ... == 100% for each water_scenario -- the exact
+    check named in the brief."""
+    draws = _synthetic_draws()
+    ranked = mc.rank_per_draw(draws)
+    table = mc.full_ranking_distribution(ranked)
+    totals = table.groupby("water_scenario")["probability"].sum()
+    np.testing.assert_allclose(totals.to_numpy(), 1.0, atol=1e-9)
+
+
+def test_full_ranking_distribution_matches_the_one_deterministic_ordering():
+    """India > Brazil > Portugal never varies in the synthetic sample -- the
+    full-ordering distribution must collapse to that single ordering at
+    100%, not spread probability across orderings that never occur."""
+    draws = _synthetic_draws()
+    ranked = mc.rank_per_draw(draws)
+    table = mc.full_ranking_distribution(ranked)
+    for scenario in table["water_scenario"].unique():
+        sub = table[table["water_scenario"] == scenario]
+        assert len(sub) == 1
+        assert sub["ordering"].iloc[0] == "India > Brazil > Portugal"
+        assert sub["probability"].iloc[0] == 1.0

@@ -691,6 +691,42 @@ def test_national_ccrs_summary_table_ranks_within_scenario():
 
 
 # --------------------------------------------------------------------------
+# 9b. FIG 4 redesign -- rank-stability prototypes (Douglas's 2026-09-05
+# request), built directly on a synthetic per-draw frame (no raster
+# pipeline / real Monte Carlo run needed).
+# --------------------------------------------------------------------------
+def _synthetic_draws(seed: int = 0) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    n = 60
+    means = {"India": 0.8, "Brazil": 0.4, "Portugal": 0.3}
+    rows = []
+    for scenario in ("opt", "bau", "pes"):
+        for draw_id in range(n):
+            for country, mean in means.items():
+                rows.append({
+                    "draw_id": draw_id, "magnitude": 0.20, "country": country,
+                    "water_scenario": scenario, "ccrs": mean + 0.02 * rng.standard_normal(),
+                })
+    return pd.DataFrame(rows)
+
+
+def test_fig4_rank_density_prototype(tmp_path, monkeypatch):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    path = charts.plot_ccrs_rank_density(draws=_synthetic_draws())
+    assert path.exists()
+
+
+def test_fig4_rank_probability_prototype(tmp_path, monkeypatch):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    path = charts.plot_ccrs_rank_probability(draws=_synthetic_draws())
+    assert path.exists()
+
+
+def test_fig4_country_colors_defined_for_every_country():
+    assert set(charts.COUNTRY_COLORS) == set(COUNTRIES)
+
+
+# --------------------------------------------------------------------------
 # 10. C3 -- weight provenance table (no invented provenance)
 # --------------------------------------------------------------------------
 def test_hazard_weight_provenance_table_covers_every_weight():

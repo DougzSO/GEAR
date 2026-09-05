@@ -555,6 +555,129 @@ def run_country_scenario_simulation(
     return _draws_to_ci_frame(pooled, index, ["country", "water_scenario"])
 
 
+def run_country_scenario_draws(
+    magnitudes: tuple[float, ...] = MAGNITUDES, n: int = N_ITERATIONS,
+    pre: "_Precomputed | None" = None, model: str | None = None,
+) -> pd.DataFrame:
+    """Like ``run_country_scenario_simulation``, but returns the RAW per-draw
+    capacity-weighted mean CCRS (one row per ``draw_id`` x ``country`` x
+    ``water_scenario``), not just the aggregated percentile CI.
+
+    Added for the FIG 4 redesign (Douglas's 2026-09-05 request): the
+    aggregated point + CI cannot show whether a country's apparent
+    ranking advantage (e.g. India > Portugal) holds on a per-draw basis, or
+    only in the aggregate/on average -- that requires the per-draw values,
+    not their summary statistics.
+
+    **Nothing here recomputes the simulation** -- ``run_country_scenario_simulation``
+    already builds this exact ``(n_draws, n_groups)`` matrix internally
+    (``draws``/``pooled``) and discards it after taking percentiles. This
+    function is that same per-draw matrix, kept and reshaped to long form,
+    at the identical per-draw cost (confirmed, not assumed: the only added
+    work is building a ~9,000-27,000-row DataFrame from an array that was
+    already fully computed -- no additional Monte Carlo draws, no extra
+    ``compute_draw_ccrs`` calls).
+
+    Same pooling-across-magnitudes convention as ``run_country_scenario_simulation``
+    (default: all three approved magnitudes pooled into one distribution per
+    group; ``draw_id`` is unique across the pooled magnitudes, and a
+    ``magnitude`` column is kept so a caller can still filter to one).
+    """
+    pre = pre or _Precomputed()
+    model = model or risk_bands.PRIMARY_GCM
+    h = pre.haz[model]
+    mask = h["computable"]
+    group_ids, index = _group_ids(h["country"][mask], h["water_scenario"][mask])
+    n_groups = len(index)
+    capacity = h["capacity_mw"][mask]
+
+    all_draws = []
+    all_magnitudes: list[float] = []
+    for magnitude in magnitudes:
+        params_by_country = {c: draw_country_params(c, magnitude, n) for c in COUNTRIES}
+        draws = np.empty((n, n_groups), dtype="float64")
+        for i in range(n):
+            ccrs_vals = compute_draw_ccrs(pre, model, params_by_country, i)[mask]
+            draws[i] = _weighted_group_mean(group_ids, n_groups, capacity, ccrs_vals)
+        all_draws.append(draws)
+        all_magnitudes.extend([magnitude] * n)
+    pooled = np.concatenate(all_draws, axis=0)
+    n_total = pooled.shape[0]
+    countries_col = np.tile([key[0] for key in index], n_total)
+    scenarios_col = np.tile([key[1] for key in index], n_total)
+    draw_id_col = np.repeat(np.arange(n_total), n_groups)
+    magnitude_col = np.repeat(np.asarray(all_magnitudes), n_groups)
+
+    return pd.DataFrame({
+        "draw_id": draw_id_col, "magnitude": magnitude_col,
+        "country": countries_col, "water_scenario": scenarios_col,
+        "ccrs": pooled.ravel(),
+    })
+
+
+def rank_per_draw(draws_long: pd.DataFrame) -> pd.DataFrame:
+    """Adds a ``rank`` column (1 = highest CCRS = most at-risk) within each
+    ``(draw_id, water_scenario)`` group of ``run_country_scenario_draws``'s
+    output. ``method="first"`` breaks an exact tie by draw-stable column
+    order (never drops or duplicates a rank within a group)."""
+    out = draws_long.copy()
+    out["rank"] = out.groupby(["draw_id", "water_scenario"])["ccrs"].rank(
+        ascending=False, method="first"
+    ).astype(int)
+    return out
+
+
+def rank_probability_table(ranked: pd.DataFrame) -> pd.DataFrame:
+    """% of draws each country achieved each rank, per ``water_scenario`` --
+    sums to 1.0 across ``rank`` within every ``(country, water_scenario)``
+    group (every draw assigns each country exactly one rank)."""
+    counts = ranked.groupby(["water_scenario", "country", "rank"]).size().rename("n_draws").reset_index()
+    totals = ranked.groupby(["water_scenario", "country"])["draw_id"].nunique().rename("n_total").reset_index()
+    out = counts.merge(totals, on=["water_scenario", "country"])
+    out["probability"] = out["n_draws"] / out["n_total"]
+    return out
+
+
+def pairwise_order_stability(draws_long: pd.DataFrame) -> pd.DataFrame:
+    """% of draws where ``country_a``'s CCRS > ``country_b``'s, for every
+    ordered pair (``a != b``), per ``water_scenario``. Complements
+    ``rank_probability_table`` with the specific pairwise reading Douglas
+    named (e.g. "India > Portugal in X% of draws")."""
+    pivot = draws_long.pivot_table(index=["draw_id", "water_scenario"], columns="country", values="ccrs")
+    countries = list(pivot.columns)
+    rows = []
+    for scenario in pivot.index.get_level_values("water_scenario").unique():
+        sub = pivot.xs(scenario, level="water_scenario")
+        for a in countries:
+            for b in countries:
+                if a == b:
+                    continue
+                rows.append({
+                    "water_scenario": scenario, "country_a": a, "country_b": b,
+                    "pct_a_greater_b": float((sub[a] > sub[b]).mean()),
+                })
+    return pd.DataFrame(rows)
+
+
+def full_ranking_distribution(ranked: pd.DataFrame) -> pd.DataFrame:
+    """% of draws matching each full country ordering (best-to-worst by
+    rank), per ``water_scenario`` -- sums to 1.0 within every
+    ``water_scenario`` (every draw produces exactly one full ordering, of
+    ``len(COUNTRIES)!`` possible orderings)."""
+    ordering = (
+        ranked.sort_values(["draw_id", "water_scenario", "rank"])
+        .groupby(["draw_id", "water_scenario"])["country"]
+        .apply(lambda s: " > ".join(s))
+        .rename("ordering")
+        .reset_index()
+    )
+    counts = ordering.groupby(["water_scenario", "ordering"]).size().rename("n_draws").reset_index()
+    totals = ordering.groupby("water_scenario")["draw_id"].nunique().rename("n_total").reset_index()
+    out = counts.merge(totals, on="water_scenario")
+    out["probability"] = out["n_draws"] / out["n_total"]
+    return out
+
+
 def _draws_to_ci_frame(draws: np.ndarray, index: pd.MultiIndex, key_names: list[str]) -> pd.DataFrame:
     rows = []
     for col, key in enumerate(index):
