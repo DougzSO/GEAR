@@ -49,6 +49,7 @@ import textwrap
 import geopandas as gpd
 import matplotlib
 import matplotlib.lines as mlines
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -269,6 +270,47 @@ def draw_country_boundary(ax, country: str) -> None:
     ax.set_xlim(xmin - BBOX_MARGIN_DEG, xmax + BBOX_MARGIN_DEG)
     ax.set_ylim(ymin - BBOX_MARGIN_DEG, ymax + BBOX_MARGIN_DEG)
     ax.set_aspect("equal")
+
+
+COMPASS_ROSE_SIZE = 0.11          # axes-fraction diameter -- small, proportional to the panel
+COMPASS_ROSE_XY = (0.90, 0.88)    # axes-fraction center -- upper right of each map panel
+COMPASS_ROSE_COLORS = ("black", "white")
+
+
+def add_compass_rose(ax, xy: tuple[float, float] = COMPASS_ROSE_XY, size: float = COMPASS_ROSE_SIZE) -> None:
+    """Small 4-point compass-rose star (N/E/S/W kite quadrilaterals,
+    alternating black/white fill) in the upper-right corner of ``ax``, in
+    axes-fraction coordinates so it always sits in the same visual corner
+    regardless of the panel's data extent. A full compass-rose shape, not a
+    single directional arrow (Douglas's 2026-09-05 review); only the ``N``
+    point is labelled -- S/E/W are left unlabelled to avoid clutter at this
+    size, the rose shape itself already reads as "north-up" orientation
+    without needing every label. Called once per geographic map panel
+    (every country panel gets its own, not one for the whole figure)."""
+    cx, cy = xy
+    r_tip = size / 2
+    r_notch = r_tip * 0.32
+    trans = ax.transAxes
+
+    def _point(angle_deg: float, r: float) -> tuple[float, float]:
+        rad = np.radians(angle_deg)
+        return (cx + r * np.sin(rad), cy + r * np.cos(rad))
+
+    cardinal_angles = (0, 90, 180, 270)  # N, E, S, W -- 0 = up, clockwise
+    for i, angle in enumerate(cardinal_angles):
+        left_notch = _point(angle - 45, r_notch)
+        tip = _point(angle, r_tip)
+        right_notch = _point(angle + 45, r_notch)
+        kite = mpatches.Polygon(
+            [(cx, cy), left_notch, tip, right_notch], closed=True,
+            facecolor=COMPASS_ROSE_COLORS[i % 2], edgecolor="black", linewidth=0.5,
+            transform=trans, zorder=10, clip_on=False,
+        )
+        ax.add_patch(kite)
+
+    n_tip_x, n_tip_y = _point(0, r_tip)
+    ax.text(n_tip_x, n_tip_y + r_tip * 0.35, "N", transform=trans, ha="center", va="bottom",
+            fontsize=fs(7), fontweight="bold", zorder=11, clip_on=False)
 
 
 # --------------------------------------------------------------------------
