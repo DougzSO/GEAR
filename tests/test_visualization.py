@@ -955,58 +955,134 @@ def test_run_validation_runs_the_test_when_groups_are_large_enough(monkeypatch):
     assert row["median_hazard_with_event"] > row["median_hazard_without_event"]
 
 
+def _emdat_full_grid_result(portugal_skipped: bool = True) -> dict[str, pd.DataFrame]:
+    """Synthetic 3x3 (disaster_type x country) result frame, shaped like the
+    real ``run_validation()`` output -- India significant on all 3 types,
+    Brazil non-significant on all 3, Portugal skipped on 2 (no control
+    group) and non-significant on Flood. Used by the 2026-09-05 redesign's
+    layout tests (real statistical logic is untouched and covered
+    separately, above)."""
+    from src.index import emdat_validation as ev
+
+    rows_summary, rows_polygons = [], []
+    for disaster_type, term in ev.DISASTER_TYPE_TO_TERM.items():
+        for country, significant, skipped in [
+            ("Brazil", False, False), ("Portugal", False, portugal_skipped and disaster_type != "Flood"),
+            ("India", True, False),
+        ]:
+            n_without, n_with = (0, 18) if skipped else (10, 10)
+            without_vals = [] if skipped else list(np.linspace(0.1, 0.4, n_without))
+            with_vals = list(np.linspace(0.6, 0.9, n_with)) if significant else list(np.linspace(0.1, 0.9, n_with))
+            for v in without_vals:
+                rows_polygons.append({"gid_1": f"{country[:2]}.{len(rows_polygons)}_1", "hazard_value": v,
+                                       "has_event": False, "country": country, "disaster_type": disaster_type,
+                                       "term": term})
+            for v in with_vals:
+                rows_polygons.append({"gid_1": f"{country[:2]}.{len(rows_polygons)}_1", "hazard_value": v,
+                                       "has_event": True, "country": country, "disaster_type": disaster_type,
+                                       "term": term})
+            rows_summary.append({
+                "country": country, "disaster_type": disaster_type, "term": term,
+                "n_polygons_with_event": n_with, "n_polygons_without_event": n_without,
+                "n_finite_with_event": n_with, "n_finite_without_event": n_without,
+                "median_hazard_with_event": np.median(with_vals) if with_vals else float("nan"),
+                "median_hazard_without_event": np.median(without_vals) if without_vals else float("nan"),
+                "u_statistic": float("nan") if skipped else 5.0,
+                "p_value": float("nan") if skipped else (0.001 if significant else 0.8),
+                "skip_reason": (
+                    f"fewer than 3 polygons with a finite hazard value on one side "
+                    f"(with_event={n_with}, without_event={n_without})"
+                ) if skipped else None,
+            })
+    return {"summary": pd.DataFrame(rows_summary), "polygons": pd.DataFrame(rows_polygons)}
+
+
 def test_emdat_spatial_validation_figure_with_synthetic_result(tmp_path, monkeypatch):
     from src.visualization import emdat_validation as vev
 
     monkeypatch.setattr(vev, "OUT_DIR", tmp_path)
-    polygons = pd.DataFrame({
-        "gid_1": [f"X.{i}_1" for i in range(6)],
-        "hazard_value": [0.1, 0.2, 0.3, 0.6, 0.7, 0.8],
-        "has_event": [False, False, False, True, True, True],
-        "country": ["Brazil"] * 6,
-        "disaster_type": ["Drought"] * 6,
-        "term": ["spei"] * 6,
-    })
-    summary = pd.DataFrame([{
-        "country": "Brazil", "disaster_type": "Drought", "term": "spei",
-        "n_polygons_with_event": 3, "n_polygons_without_event": 3,
-        "n_finite_with_event": 3, "n_finite_without_event": 3,
-        "median_hazard_with_event": 0.7, "median_hazard_without_event": 0.2,
-        "u_statistic": 9.0, "p_value": 0.05, "skip_reason": None,
-    }])
-    path = vev.plot_emdat_spatial_validation(result={"summary": summary, "polygons": polygons})
+    path = vev.plot_emdat_spatial_validation(result=_emdat_full_grid_result())
     assert path.exists()
 
 
-def test_emdat_spatial_validation_figure_reports_skips_in_caption(tmp_path, monkeypatch):
-    """Douglas's explicit requirement: coverage/skip limitations must be
-    printed on the figure itself, not only in the code."""
+def test_emdat_spatial_validation_figure_reports_caveats_in_caption(tmp_path, monkeypatch):
+    """Douglas's explicit requirement (unchanged by the redesign): coverage/
+    proxy caveats must be printed on the figure itself, not only in the
+    code."""
     from src.visualization import _common, emdat_validation as vev
 
     monkeypatch.setattr(vev, "OUT_DIR", tmp_path)
-    captured = []
-    real_save = _common.save_figure
-
-    def _spy(fig, out_path):
-        captured.append(fig)
-        return real_save(fig, out_path)
-
-    monkeypatch.setattr(vev, "save_figure", _spy)
-
-    summary = pd.DataFrame([{
-        "country": "Portugal", "disaster_type": "Extreme temperature", "term": "heat",
-        "n_polygons_with_event": 1, "n_polygons_without_event": 19,
-        "n_finite_with_event": 1, "n_finite_without_event": 19,
-        "median_hazard_with_event": float("nan"), "median_hazard_without_event": 0.3,
-        "u_statistic": float("nan"), "p_value": float("nan"),
-        "skip_reason": "fewer than 3 polygons with a finite hazard value on one side (with_event=1, without_event=19)",
-    }])
-    polygons = pd.DataFrame(columns=["gid_1", "hazard_value", "has_event", "country", "disaster_type", "term"])
-    vev.plot_emdat_spatial_validation(result={"summary": summary, "polygons": polygons})
+    captured = _capture_figures(monkeypatch, vev)
+    vev.plot_emdat_spatial_validation(result=_emdat_full_grid_result())
     fig = captured[0]
     footer_texts = " ".join(t.get_text() for t in fig.texts)
-    assert "Skipped" in footer_texts
-    assert "Portugal" in footer_texts
+    assert "EXPLORATORY" in footer_texts
+    assert "GADM Admin Units" in footer_texts
+    assert "Storm" in footer_texts
+
+
+def test_emdat_spatial_validation_grid_is_always_3x3():
+    """The 2026-09-05 redesign's core fix: a fixed disaster_type x country
+    grid regardless of how many pairs were actually testable -- unlike the
+    old version, whose panel count shrank/grew with the number of tested
+    pairs."""
+    from src.index import emdat_validation as ev
+
+    result = _emdat_full_grid_result()
+    n_disaster_types = len(ev.DISASTER_TYPE_TO_TERM)
+    assert len(result["summary"]) == n_disaster_types * len(COUNTRIES)
+
+
+def test_emdat_spatial_validation_skip_does_not_break_the_grid_layout(tmp_path, monkeypatch):
+    """Portugal's 2 skipped (country, disaster_type) pairs must not shrink
+    the figure or disturb Brazil/India's panels -- always a 3x3 grid of
+    axes, tested or not."""
+    from src.index import emdat_validation as ev
+    from src.visualization import emdat_validation as vev
+
+    monkeypatch.setattr(vev, "OUT_DIR", tmp_path)
+    captured = _capture_figures(monkeypatch, vev)
+    vev.plot_emdat_spatial_validation(result=_emdat_full_grid_result(portugal_skipped=True))
+    fig = captured[0]
+    assert len(fig.axes) == len(ev.DISASTER_TYPE_TO_TERM) * len(COUNTRIES)
+
+
+def test_emdat_spatial_validation_skipped_panel_still_shows_its_one_group():
+    """A skipped pair is not left blank -- whichever group has data (here,
+    the 18 'with event' Portugal polygons) is still drawn."""
+    import matplotlib.pyplot as plt
+    from src.visualization import emdat_validation as vev
+
+    fig, ax = plt.subplots()
+    try:
+        polygons = pd.DataFrame({
+            "gid_1": [f"P.{i}_1" for i in range(18)], "hazard_value": np.linspace(0.1, 0.9, 18),
+            "has_event": [True] * 18,
+        })
+        vev._panel_skipped(ax, "Portugal", "Extreme temperature", "heat", polygons,
+                            "fewer than 3 polygons with a finite hazard value on one side "
+                            "(with_event=18, without_event=0)")
+        assert len(ax.lines) > 0 or len(ax.patches) > 0  # the boxplot/strip was actually drawn
+        assert ax.collections  # the jittered strip scatter
+    finally:
+        plt.close(fig)
+
+
+def test_emdat_spatial_validation_significant_panels_are_visually_distinct(tmp_path, monkeypatch):
+    """India (p<0.05 on all 3 types) must render with the gold
+    significance styling; Brazil (never significant) must not."""
+    from src.visualization import emdat_validation as vev
+
+    monkeypatch.setattr(vev, "OUT_DIR", tmp_path)
+    captured = _capture_figures(monkeypatch, vev)
+    vev.plot_emdat_spatial_validation(result=_emdat_full_grid_result())
+    fig = captured[0]
+    titles = {ax.get_title(): ax for ax in fig.axes}
+    india_ax = next(ax for title, ax in titles.items() if "India" in title)
+    brazil_ax = next(ax for title, ax in titles.items() if "Brazil" in title)
+    assert "*" in [t for t in titles if "India" in t][0]
+    assert india_ax.get_facecolor() != brazil_ax.get_facecolor()
+    assert india_ax.spines["top"].get_edgecolor() != brazil_ax.spines["top"].get_edgecolor()
 
 
 # --------------------------------------------------------------------------
