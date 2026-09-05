@@ -108,15 +108,44 @@ from src.index.ccrs_calculator import PLANT_UID
 # --------------------------------------------------------------------------
 # (a) new T1 x T2 x T3 reference: capacity-weighted mean CCRS_i,s per country
 # --------------------------------------------------------------------------
-REFERENCE_SNAPSHOT_DATE = "2026-09-04"
+REFERENCE_SNAPSHOT_DATE = "2026-09-04"  # re-frozen post-SPEI -- see the 2026-09-05 update note below
 
 # V6-computable-base capacity-weighted mean CCRS_i,s per country, per GCM,
 # pooled over the 3 water_scenarios. Frozen from the data snapshot above --
 # see the module docstring. Update only after deliberate manual review, with
 # the number diff recorded, same discipline as ccrs_calculator.FROZEN_BOUNDS.
+#
+# --------------------------------------------------------------------------
+# 2026-09-05 update -- regenerated after the SPEI/drought Hazard term
+# --------------------------------------------------------------------------
+# The ORIGINAL snapshot below this comment (first frozen under the
+# "2026-09-04" date, T6) was locked from ``cr.compute_ccrs()`` BEFORE commit
+# ``fb6a775`` ("Integrate SPEI/drought term into Hazard as a new additive
+# term", spec item F) landed. That commit changed the Hazard formula itself
+# (``Hazard_i,s`` gained a third additive term, ``w_drought[bucket] *
+# Tlog(spei_freq)``) -- the frozen mean was never a bug, it was simply
+# computed against a two-term Hazard that no longer exists in the codebase.
+# ``test_new_reference_ccrs_mean_matches_frozen_regression_snapshot`` caught
+# exactly the drift it is designed to catch: every value roughly doubled
+# (e.g. Brazil/GFDL-ESM4: 0.1276 -> 0.2821), which is the expected, correct
+# effect of adding a real third hazard term to an unrenormalised weighted
+# sum -- not a regression. Manually reviewed and confirmed against a live
+# recompute of ``cr.compute_ccrs()`` (same ``_capacity_weighted_ccrs_means``
+# methodology, unchanged) before updating the constant below:
+#
+#     old (pre-SPEI, frozen 2026-09-04)      new (post-SPEI, frozen 2026-09-05)
+#     gfdl_esm4/Brazil:   0.1276146046   ->  0.2821133919
+#     gfdl_esm4/Portugal: 0.1597086666   ->  0.2835049447
+#     gfdl_esm4/India:    0.7373050560   ->  0.8036207700
+#     miroc6/Brazil:      0.3358241992   ->  0.5493571696
+#     miroc6/Portugal:    0.3467460666   ->  0.4348641055
+#     miroc6/India:       0.8724441059   ->  0.9632593619
+#
+# Kept here rather than deleted so the history of *why* the constant moved
+# stays traceable from the test file itself, not only from git blame.
 NEW_REFERENCE_CCRS_MEAN = {
-    "gfdl_esm4": {"Brazil": 0.1276146046, "Portugal": 0.1597086666, "India": 0.7373050560},
-    "miroc6": {"Brazil": 0.3358241992, "Portugal": 0.3467460666, "India": 0.8724441059},
+    "gfdl_esm4": {"Brazil": 0.2821133919, "Portugal": 0.2835049447, "India": 0.8036207700},
+    "miroc6": {"Brazil": 0.5493571696, "Portugal": 0.4348641055, "India": 0.9632593619},
 }
 
 # (b) the actual same-metric comparison target: the published headline figure
