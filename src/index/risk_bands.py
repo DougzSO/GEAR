@@ -233,6 +233,91 @@ def compute_bands(heat_gcm: str = PRIMARY_GCM) -> BandTable:
     return BandTable(frame=frame, heat_cuts=cuts, heat_gcm=heat_gcm)
 
 
+# --------------------------------------------------------------------------
+# Worst-case ordinal selection -- an ordinal MAX across the two bands, not a
+# merge (Douglas's 2026-09-05 request for a "worst case of the two" map).
+#
+# There is no formal precedent in this module (or the spec) for comparing
+# WaterRiskBand (5 levels) against HeatRiskBand (4 levels) on a common
+# ordinal scale -- proposed here, pending approval, rather than picked
+# silently:
+#
+#   Each band's severity is its own position index, normalised to [0, 1]
+#   by (n_levels - 1):
+#     water: Low=0.00, Low-Medium=0.25, Medium-High=0.50, High=0.75,
+#            Extremely-High=1.00
+#     heat:  LOW=0.00, MEDIUM=0.333, HIGH=0.667, EXTREME=1.00
+#
+# ``worst_case_band`` returns whichever axis has the HIGHER normalised rank
+# -- keeping that axis's own existing label and color (``WATER_BAND_COLORS``/
+# ``HEAT_BAND_COLORS`` in ``src/visualization/_common.py``), never a new
+# synthesized label or a numeric average of the two ranks. This is why it
+# does not violate the "never merge WaterRiskBand and HeatRiskBand into one
+# score" decision (spec Section 8.3, see module docstring and
+# ``test_no_public_function_combines_the_two_bands``): the two ranks are
+# used only to pick which of the two ALREADY-existing categorical labels
+# applies, exactly analogous to ``max(a, b)`` over two ordinal categories --
+# there is no cell in this function's output that is a number blending both
+# inputs.
+#
+# Ties are only possible at the two extremes (0.25/0.5/0.75 never equal
+# 0.333/0.667) -- e.g. both "lowest" (Low & LOW) or both "highest"
+# (Extremely-High & EXTREME). On a tie, water wins: it is the run-stable,
+# absolute-threshold axis (``HEAT_BAND_WARNING`` above states the opposite
+# for heat), so it is the more defensible default when the two axes agree on
+# relative severity but the plant must still get one color.
+# --------------------------------------------------------------------------
+WATER_BAND_RANK = {label: i / (len(WATER_RISK_BANDS) - 1) for i, label in enumerate(WATER_RISK_BANDS)}
+HEAT_BAND_RANK = {label: i / (len(HEAT_RISK_BANDS) - 1) for i, label in enumerate(HEAT_RISK_BANDS)}
+WORST_CASE_TIE_BREAK = "water"
+
+# Douglas's 2026-09-05 review of the proposal above: approved the rank
+# mapping and the water-wins tie-break, with one condition -- the two ranks
+# are positions on each band's OWN scale, not comparable physical severity
+# (WaterRiskBand's absolute WRI cuts are not equidistant and sit on a raw
+# physical variable; HeatRiskBand's p25/p75/p95 cuts are sample-relative by
+# construction, always ~25/50/20/5% of the CURRENT pool). So a plant whose
+# worst-case determinant is heat carries HeatRiskBand's run-to-run
+# instability (``HEAT_BAND_WARNING``) into what otherwise reads as an
+# absolute-exposure figure -- any figure using ``worst_case_band`` MUST
+# surface this warning on the figure itself, not only in this module's
+# text report, since the reader has no other way to tell that part of what
+# they are looking at is sample-relative.
+WORST_CASE_COMPARABILITY_NOTE = (
+    "Worst-case band per plant (water vs. heat, whichever ranks more severe on "
+    "its own scale). WaterRiskBand uses fixed absolute WRI Aqueduct 4.0 cuts "
+    "(stable across runs); HeatRiskBand uses THIS run's own sample-relative "
+    "p25/p75/p95 cuts and is not comparable across runs with a different "
+    "scenario/GCM pool -- where heat is the determinant (see legend), this "
+    "figure inherits that limitation."
+)
+
+
+def worst_case_band(water_band: str | None, heat_band: str | None) -> tuple[str | None, str | None]:
+    """``(label, determinant)`` -- ``label`` is ``water_band`` or
+    ``heat_band`` verbatim (whichever ranks higher on its own normalised
+    scale, see module comment above), ``determinant`` is ``"water"`` or
+    ``"heat"``. ``(None, None)`` if either input is unbanded (NaN
+    upstream)."""
+    if water_band is None or heat_band is None:
+        return None, None
+    if WATER_BAND_RANK[water_band] >= HEAT_BAND_RANK[heat_band]:
+        return water_band, "water"
+    return heat_band, "heat"
+
+
+def worst_case_band_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Adds ``worst_case_band``/``worst_case_determinant`` columns to a copy
+    of ``frame`` (must carry ``water_risk_band``/``heat_risk_band``, e.g.
+    ``compute_bands().frame``). Row-wise application of ``worst_case_band``,
+    not a new score column."""
+    pairs = [worst_case_band(w, h) for w, h in zip(frame["water_risk_band"], frame["heat_risk_band"])]
+    out = frame.copy()
+    out["worst_case_band"] = [p[0] for p in pairs]
+    out["worst_case_determinant"] = [p[1] for p in pairs]
+    return out
+
+
 def contingency_table(frame: pd.DataFrame, value: str = "count") -> pd.DataFrame:
     """Auxiliary ``WaterRiskBand`` (rows) x ``HeatRiskBand`` (columns) cross
     view. ``value``: ``"count"`` (plant_uid x scenario rows) or

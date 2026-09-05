@@ -2,13 +2,6 @@
 CCRS geospatial maps -- categories 1 (overview), 2 (scenario delta),
 3 (WaterRiskBand), 4 (HeatRiskBand), 10 (computable-base completeness).
 
-Every category is exposed as one function with a ``combined: bool`` switch
-(default ``False``, per-country -- one figure per country, dict keyed by
-country) rather than a separate pair of functions per category (the old
-repo's ``plot_X_map`` / ``plot_X_map_per_country`` split) -- same output
-shapes, less duplicated plumbing. ``combined=True`` produces one figure for
-every requested country.
-
 Reused directly from the old repo's ``maps.py`` (see ``_common.py``'s
 docstring for the full list): boundary/disputed-territory drawing, dynamic
 per-country figsize, the sqrt-of-capacity marker-size convention, dpi=200
@@ -19,26 +12,46 @@ new -- adapted to the CCRS schema (``plant_uid``, ``ccrs_{gcm}``, 4 buckets,
 --------------------------------------------------------------------------
 Douglas's 2026-09-04 review round -- what changed
 --------------------------------------------------------------------------
-- No figure prints a title (``fig.suptitle``) any more -- the equivalent
-  context is folded into the figure footer (``_common.figure_caption_footer``).
-  Per-panel labels ("Brazil (n=1,234)") stay, but bold and reading
-  ``Power Plants=N`` instead of ``n=N`` (``_common.panel_title``).
-- Categories 1, 3, 10 (overview / WaterRiskBand / computable-base) are now
-  generated for all three water scenarios in one figure -- scenario is a
-  panel dimension, not a separate file per scenario (B2). ``combined=True``
-  arranges countries (rows) x scenarios (columns) in one grid; ``combined=
-  False`` gives one figure per country with its three scenarios side by
-  side.
-- Category 4 (HeatRiskBand) is generated once per heat scenario, GFDL-ESM4
-  only, three country panels side by side -- the old two-GCM-row layout (one
-  figure, ssp370 only) is gone; see ``src/visualization/tables.py`` for the
-  GFDL/MIROC6 comparison this replaces (B1).
+No figure prints a title (``fig.suptitle``). Per-panel labels
+("Brazil (Power Plants=1,234)") are bold, reading ``Power Plants=N`` instead
+of ``n=N`` (``_common.panel_title``).
+
+--------------------------------------------------------------------------
+Douglas's 2026-09-05 review round -- corrections
+--------------------------------------------------------------------------
+- **Correction 1**: categories 1/3/10 (overview / WaterRiskBand /
+  computable-base) had been misread from the 2026-09-04 brief as "pack all
+  three water scenarios into one figure" (a country x scenario grid). The
+  brief actually asked for generation ACROSS all three scenarios, one
+  figure per scenario -- exactly the layout category 4 (HeatRiskBand)
+  already used correctly. All four categories now share that same shape:
+  one figure per call, one ``water_scenario`` argument, three country
+  panels side by side, ``combined``-only (no per-country single-panel
+  variant -- there is nothing to lay "side by side" with just one
+  country). Call once per scenario to cover all three -- see
+  ``src/config``/``ccrs_calculator.WATER_SCENARIOS`` for the three values.
+- **Correction 2**: every figure-level caption/disclaimer footer
+  (``_common.figure_caption_footer``) is removed from every map category --
+  below each map there is now only the legend, nothing else. This
+  includes the GADM boundary disclaimer that used to ride on the same
+  footer line. *Point to validate*: the disclaimer was a deliberate
+  data-provenance/compliance note for India's disputed admin-1 territory,
+  not "descriptive context" in the sense Douglas's instruction targeted
+  (scenario/GCM/category text) -- it is removed here because the
+  instruction said "apenas a legenda" (only the legend) with no stated
+  exception, but this should be confirmed rather than assumed permanent.
+- **Correction 3**: every geographic map panel gets its own small compass
+  rose (``_common.add_compass_rose``), upper right, not a single shared
+  one for the whole figure. Category 2 (scenario delta) is included (a
+  geographic map like the other four) even though it was not named in the
+  B1-B3 2026-09-04 corrections.
 """
 
 from __future__ import annotations
 
 import logging
 import pathlib
+from typing import Callable
 
 import matplotlib.lines as mlines
 import matplotlib.pyplot as plt
@@ -46,8 +59,8 @@ import numpy as np
 import pandas as pd
 
 from src.config import COUNTRIES, OUTPUT_MAPS
-from src.index.ccrs_calculator import WATER_SCENARIOS, WATER_TO_HEAT
-from src.index.risk_bands import PRIMARY_GCM
+from src.index.ccrs_calculator import WATER_TO_HEAT
+from src.index.risk_bands import PRIMARY_GCM, WORST_CASE_COMPARABILITY_NOTE, worst_case_band
 from src.visualization import data as vdata
 from src.visualization._common import (
     BUCKET_COLORS,
@@ -56,12 +69,11 @@ from src.visualization._common import (
     NOT_COMPUTABLE_COLOR,
     NOT_COMPUTABLE_MARKER,
     WATER_BAND_COLORS,
+    add_compass_rose,
     aspect_ratio_width,
     bucket_legend_handles,
-    country_bbox_aspect,
     draw_country_boundary,
     figure_caption_footer,
-    figure_caption_footer_single,
     fs,
     legend_below_artists,
     marker_sizes,
@@ -73,28 +85,34 @@ from src.visualization._common import (
 logger = logging.getLogger(__name__)
 
 
-def _scenario_rows(final: pd.DataFrame, water_scenario: str) -> pd.DataFrame:
-    return final[final["water_scenario"] == water_scenario]
-
-
 def _country_frame(final: pd.DataFrame, country: str, water_scenario: str) -> pd.DataFrame:
-    return _scenario_rows(final, water_scenario).loc[lambda d: d["country"] == country]
+    return final[(final["water_scenario"] == water_scenario) & (final["country"] == country)]
 
 
 # --------------------------------------------------------------------------
-# Figsize for a (country, scenario) panel grid -- see module docstring:
-# a fixed column width per scenario, row height driven by the country's real
-# bbox aspect (only the country -- not the scenario -- affects aspect).
+# Shared "countries side by side, one scenario" figure -- categories 1, 3, 10
+# (and reused inline by 4/2, which have their own extra needs: a fixed GCM
+# band column / a colorbar respectively)
 # --------------------------------------------------------------------------
-def _country_scenario_figsize(country: str, n_scenarios: int, base_height: float = 7.0) -> tuple[float, float]:
-    width_each = aspect_ratio_width(country, base_height)
-    return (width_each * n_scenarios, base_height)
-
-
-def _combined_grid_figsize(countries: list[str], n_scenarios: int,
-                            col_width: float = 5.0) -> tuple[tuple[float, float], list[float]]:
-    heights = [max(3.0, min(col_width / country_bbox_aspect(c), 10.0)) for c in countries]
-    return (col_width * n_scenarios, sum(heights)), heights
+def _render_country_row_figure(
+    countries: list[str], draw_and_title: Callable[[object, str], None],
+    handles: list, out_path: pathlib.Path, base_height: float = 8.0,
+    legend_ncol: int | None = None, legend_fontsize: float = 10.0,
+) -> pathlib.Path:
+    """One figure, ``countries`` side by side (one panel each), a shared
+    legend below. ``draw_and_title(ax, country)`` draws the panel's content
+    AND sets its (bold, "Power Plants=N") title -- the two differ per
+    category, everything else (figsize, legend, compass rose placement via
+    the panel-drawing helpers, saving) is common."""
+    widths = [aspect_ratio_width(c, base_height) for c in countries]
+    fig, axes = plt.subplots(1, len(countries), figsize=(sum(widths), base_height),
+                              gridspec_kw={"width_ratios": widths}, constrained_layout=True)
+    axes = np.atleast_1d(axes)
+    for ax, country in zip(axes, countries):
+        draw_and_title(ax, country)
+    legend_below_artists(fig, list(axes), handles, ncol=legend_ncol or len(handles),
+                          fontsize=fs(legend_fontsize), frameon=False)
+    return save_figure(fig, out_path)
 
 
 # --------------------------------------------------------------------------
@@ -107,9 +125,9 @@ def _draw_bubble_panel(ax, country: str, frame_country: pd.DataFrame, ring_col: 
     as a distinct grey ``x`` marker, same convention for every category that
     uses this panel (item 1's overview ring and item 10's completeness map
     both go through here). Does not set the panel title -- the caller does,
-    via ``_common.panel_title``, since the label text differs by category
-    and (post B2) by scenario."""
+    via ``_common.panel_title``, since the label text differs by category."""
     draw_country_boundary(ax, country)
+    add_compass_rose(ax)
     computable = frame_country[frame_country["computable"]]
     not_computable = frame_country[~frame_country["computable"]]
 
@@ -141,70 +159,32 @@ def _ring_legend_handle(ring_quantile: float, label: str) -> mlines.Line2D:
                           label=f"Top {round((1 - ring_quantile) * 100)}% {label} (in-country)")
 
 
-def _render_scenario_bubble_figure(
-    countries: list[str], final: pd.DataFrame, ring_col: str | None, ring_label: str,
-    caption: str, out_stem: str, combined: bool,
-    water_scenarios: tuple[str, ...] = WATER_SCENARIOS, ring_quantile: float = 0.8,
-) -> dict[str, pathlib.Path]:
-    """Categories 1 (overview) and 10 (computable-base) -- one figure per
-    country with all ``water_scenarios`` as side-by-side panels
-    (``combined=False``), or one grid figure, countries (rows) x scenarios
-    (columns) (``combined=True``). See module docstring, B2."""
-    handles = bucket_legend_handles() + (
-        [_ring_legend_handle(ring_quantile, ring_label)] if ring_col else []
-    ) + [not_computable_legend_handle()]
-
-    if combined:
-        figsize, heights = _combined_grid_figsize(countries, len(water_scenarios))
-        fig, axes = plt.subplots(len(countries), len(water_scenarios), figsize=figsize,
-                                  gridspec_kw={"height_ratios": heights}, constrained_layout=True)
-        axes = np.atleast_2d(axes)
-        for row, country in enumerate(countries):
-            for col, ws in enumerate(water_scenarios):
-                frame = _country_frame(final, country, ws)
-                stats = _draw_bubble_panel(axes[row, col], country, frame, ring_col, ring_quantile)
-                panel_title(axes[row, col], ws, stats["n_computable"], stats["n_excluded"])
-                if col == 0:
-                    axes[row, col].set_ylabel(f"{country}\nLatitude")
-        legend_below_artists(fig, axes.ravel().tolist(), handles, ncol=len(handles), fontsize=fs(10), frameon=False)
-        figure_caption_footer(fig, axes.ravel().tolist(), caption, countries)
-        out_path = save_figure(fig, OUTPUT_MAPS / "combined" / f"{out_stem}.png")
-        logger.info("%s (combined) saved to %s", out_stem, out_path)
-        return {"combined": out_path}
-
-    paths: dict[str, pathlib.Path] = {}
-    for country in countries:
-        figsize = _country_scenario_figsize(country, len(water_scenarios))
-        fig, axes = plt.subplots(1, len(water_scenarios), figsize=figsize, constrained_layout=True)
-        axes = np.atleast_1d(axes)
-        for ax, ws in zip(axes, water_scenarios):
-            frame = _country_frame(final, country, ws)
-            stats = _draw_bubble_panel(ax, country, frame, ring_col, ring_quantile)
-            panel_title(ax, ws, stats["n_computable"], stats["n_excluded"])
-        fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 0.02),
-                   ncol=2, fontsize=fs(8), frameon=False)
-        figure_caption_footer(fig, list(axes), f"{caption} -- {country}", [country])
-        out_path = save_figure(fig, OUTPUT_MAPS / country / f"{out_stem}.png")
-        paths[country] = out_path
-        logger.info("%s (%s) saved to %s", out_stem, country, out_path)
-    return paths
-
-
 # --------------------------------------------------------------------------
 # Category 1 -- CCRS overview map
 # --------------------------------------------------------------------------
 def plot_ccrs_overview_map(
-    countries: list[str] | None = None, gcm: str = PRIMARY_GCM,
-    final: pd.DataFrame | None = None, combined: bool = False,
-    water_scenarios: tuple[str, ...] = WATER_SCENARIOS,
+    countries: list[str] | None = None, gcm: str = PRIMARY_GCM, water_scenario: str = "bau",
+    final: pd.DataFrame | None = None,
 ) -> dict[str, pathlib.Path]:
+    """One figure per ``water_scenario`` (call once per scenario to cover
+    all three), three country panels side by side -- same layout as
+    category 4 (HeatRiskBand)."""
     countries = countries or COUNTRIES
     final = final if final is not None else vdata.load_ccrs_final()
     ring_col = f"ccrs_{gcm}"
-    return _render_scenario_bubble_figure(
-        countries, final, ring_col, "CCRS", f"CCRS overview ({gcm})",
-        f"ccrs_overview_{gcm}", combined, water_scenarios,
+    handles = bucket_legend_handles() + [_ring_legend_handle(0.8, "CCRS"), not_computable_legend_handle()]
+
+    def draw_and_title(ax, country):
+        frame = _country_frame(final, country, water_scenario)
+        stats = _draw_bubble_panel(ax, country, frame, ring_col, ring_quantile=0.8)
+        panel_title(ax, country, stats["n_computable"], stats["n_excluded"])
+
+    stem = f"ccrs_overview_{gcm}_{water_scenario}"
+    out_path = _render_country_row_figure(
+        countries, draw_and_title, handles, OUTPUT_MAPS / "combined" / f"{stem}.png",
     )
+    logger.info("%s saved to %s", stem, out_path)
+    return {"combined": out_path}
 
 
 # --------------------------------------------------------------------------
@@ -212,6 +192,7 @@ def plot_ccrs_overview_map(
 # --------------------------------------------------------------------------
 def _draw_delta_panel(ax, country: str, frame_country: pd.DataFrame, max_abs: float, alpha: float = 0.6):
     draw_country_boundary(ax, country)
+    add_compass_rose(ax)
     sizes = marker_sizes(frame_country["capacity_mw"])
     sc = ax.scatter(frame_country["lon"], frame_country["lat"], s=sizes, c=frame_country["delta"],
                      cmap=DIVERGING_CMAP, vmin=-max_abs, vmax=max_abs, alpha=alpha, zorder=3,
@@ -241,7 +222,6 @@ def plot_ccrs_scenario_delta_map(
     final = final if final is not None else vdata.load_ccrs_final()
     frames = {c: _compute_scenario_delta(final, c, scenario_a, scenario_b, gcm) for c in countries}
     max_abs = max((f["delta"].abs().max() for f in frames.values() if len(f)), default=1.0)
-    caption = f"CCRS scenario delta ({gcm}, {scenario_b} minus {scenario_a})"
     stem = f"ccrs_scenario_delta_{gcm}_{scenario_a}_vs_{scenario_b}"
 
     if combined:
@@ -255,7 +235,6 @@ def plot_ccrs_scenario_delta_map(
             panel_title(ax, country, len(frames[country]))
         cbar = fig.colorbar(sc, ax=axes.tolist(), orientation="horizontal", pad=0.08, shrink=0.5, aspect=30)
         cbar.set_label(f"CCRS delta ({scenario_b} minus {scenario_a})", fontsize=fs(9))
-        figure_caption_footer(fig, list(axes), caption, countries)
         out_path = save_figure(fig, OUTPUT_MAPS / "combined" / f"{stem}.png")
         logger.info("%s (combined) saved to %s", stem, out_path)
         return {"combined": out_path}
@@ -269,7 +248,6 @@ def plot_ccrs_scenario_delta_map(
         fig.subplots_adjust(top=0.88, bottom=0.20, left=0.10, right=0.97)
         cbar = fig.colorbar(sc, ax=ax, orientation="horizontal", pad=0.10, shrink=0.85, aspect=25)
         cbar.set_label(f"CCRS delta ({scenario_b} minus {scenario_a})", fontsize=fs(8))
-        figure_caption_footer_single(fig, ax, f"{caption} -- {country}", [country])
         out_path = save_figure(fig, OUTPUT_MAPS / country / f"{stem}.png")
         paths[country] = out_path
         logger.info("%s (%s) saved to %s", stem, country, out_path)
@@ -282,6 +260,7 @@ def plot_ccrs_scenario_delta_map(
 def _draw_band_panel(ax, country: str, frame_country: pd.DataFrame, band_col: str,
                       band_colors: dict, alpha: float = 0.7) -> int:
     draw_country_boundary(ax, country)
+    add_compass_rose(ax)
     banded = frame_country.dropna(subset=[band_col])
     sizes = marker_sizes(banded["capacity_mw"])
     colors = banded[band_col].map(band_colors).fillna("#cccccc")
@@ -301,93 +280,163 @@ def _band_legend_handles(band_colors: dict) -> list[mlines.Line2D]:
 
 
 def plot_water_risk_band_map(
-    countries: list[str] | None = None, final: pd.DataFrame | None = None, combined: bool = False,
-    water_scenarios: tuple[str, ...] = WATER_SCENARIOS,
+    countries: list[str] | None = None, water_scenario: str = "bau", final: pd.DataFrame | None = None,
 ) -> dict[str, pathlib.Path]:
     """Category 3 -- WaterRiskBand is GCM-independent (risk_bands.py); no
-    ``gcm`` parameter. Generated for all three water scenarios in one
-    figure (B2) -- see ``_render_scenario_bubble_figure``'s grid layout,
-    reused here with the band-panel drawer instead of the bubble drawer."""
+    ``gcm`` parameter. One figure per ``water_scenario`` (call once per
+    scenario to cover all three), same layout as category 4."""
     countries = countries or COUNTRIES
     final = final if final is not None else vdata.load_ccrs_final()
     handles = _band_legend_handles(WATER_BAND_COLORS)
-    caption = "WaterRiskBand"
-    stem = "water_risk_band"
 
-    if combined:
-        figsize, heights = _combined_grid_figsize(countries, len(water_scenarios))
-        fig, axes = plt.subplots(len(countries), len(water_scenarios), figsize=figsize,
-                                  gridspec_kw={"height_ratios": heights}, constrained_layout=True)
-        axes = np.atleast_2d(axes)
-        for row, country in enumerate(countries):
-            for col, ws in enumerate(water_scenarios):
-                frame = _country_frame(final, country, ws)
-                n = _draw_band_panel(axes[row, col], country, frame, "water_risk_band", WATER_BAND_COLORS)
-                panel_title(axes[row, col], ws, n)
-                if col == 0:
-                    axes[row, col].set_ylabel(f"{country}\nLatitude")
-        legend_below_artists(fig, axes.ravel().tolist(), handles, ncol=len(handles), fontsize=fs(9), frameon=False)
-        figure_caption_footer(fig, axes.ravel().tolist(), caption, countries)
-        out_path = save_figure(fig, OUTPUT_MAPS / "combined" / f"{stem}.png")
-        logger.info("%s (combined) saved to %s", stem, out_path)
-        return {"combined": out_path}
+    def draw_and_title(ax, country):
+        frame = _country_frame(final, country, water_scenario)
+        n = _draw_band_panel(ax, country, frame, "water_risk_band", WATER_BAND_COLORS)
+        panel_title(ax, country, n)
 
-    paths = {}
-    for country in countries:
-        figsize = _country_scenario_figsize(country, len(water_scenarios))
-        fig, axes = plt.subplots(1, len(water_scenarios), figsize=figsize, constrained_layout=True)
-        axes = np.atleast_1d(axes)
-        for ax, ws in zip(axes, water_scenarios):
-            frame = _country_frame(final, country, ws)
-            n = _draw_band_panel(ax, country, frame, "water_risk_band", WATER_BAND_COLORS)
-            panel_title(ax, ws, n)
-        fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 0.02),
-                   ncol=3, fontsize=fs(8), frameon=False)
-        figure_caption_footer(fig, list(axes), f"{caption} -- {country}", [country])
-        out_path = save_figure(fig, OUTPUT_MAPS / country / f"{stem}.png")
-        paths[country] = out_path
-        logger.info("%s (%s) saved to %s", stem, country, out_path)
-    return paths
+    stem = f"water_risk_band_{water_scenario}"
+    out_path = _render_country_row_figure(
+        countries, draw_and_title, handles, OUTPUT_MAPS / "combined" / f"{stem}.png", legend_fontsize=9,
+    )
+    logger.info("%s saved to %s", stem, out_path)
+    return {"combined": out_path}
 
 
 # --------------------------------------------------------------------------
-# Category 4 -- HeatRiskBand categorical map (B1 rewrite)
+# Category 4 -- HeatRiskBand categorical map
 # --------------------------------------------------------------------------
 def plot_heat_risk_band_map(
     countries: list[str] | None = None, water_scenario: str = "bau",
     final: pd.DataFrame | None = None, gcm: str = PRIMARY_GCM,
 ) -> dict[str, pathlib.Path]:
-    """Category 4 -- rewritten per Douglas's 2026-09-04 review (B1): one
-    figure per heat scenario (call once per ``water_scenario``), GFDL-ESM4
-    (primary) ONLY, three country panels side by side -- the previous
-    ssp370-only, two-GCM-row layout wasted space and only ever covered one
-    scenario. The GFDL-vs-MIROC6 comparison this drops is not lost: it is
-    now a compact per-country table (``src/visualization/tables.py``,
-    ``heat_band_gcm_comparison_table``) instead of a duplicated map -- see
-    that module's docstring for why a table was chosen over a second map.
-
-    Combined-only (three countries already share the one figure; a
-    "per-country" variant would be a single-panel map with nothing to
-    compare against, which the old repo never had a use for either)."""
+    """Category 4 -- one figure per heat scenario (call once per
+    ``water_scenario``), GFDL-ESM4 (primary) ONLY, three country panels
+    side by side -- the reference layout every other map category in this
+    module now matches (Douglas's 2026-09-05 review, correction 1). The
+    GFDL-vs-MIROC6 comparison is a compact per-country table
+    (``src/visualization/tables.py``, ``heat_band_gcm_comparison_table``)
+    instead of a duplicated map."""
     countries = countries or COUNTRIES
     final = final if final is not None else vdata.load_ccrs_final()
     heat_scenario = WATER_TO_HEAT[water_scenario]
     band_col = f"heat_risk_band_{gcm}"
     handles = _band_legend_handles(HEAT_BAND_COLORS)
-    caption = f"HeatRiskBand ({heat_scenario}, {gcm} primary)"
-    stem = f"heat_risk_band_{heat_scenario}"
 
-    widths = [aspect_ratio_width(c, 8.0) for c in countries]
-    fig, axes = plt.subplots(1, len(countries), figsize=(sum(widths), 8.0),
-                              gridspec_kw={"width_ratios": widths}, constrained_layout=True)
-    axes = np.atleast_1d(axes)
-    for ax, country in zip(axes, countries):
+    def draw_and_title(ax, country):
         frame = _country_frame(final, country, water_scenario).copy()
         frame["_band"] = frame[band_col]
         n = _draw_band_panel(ax, country, frame, "_band", HEAT_BAND_COLORS)
         panel_title(ax, country, n)
-    legend_below_artists(fig, list(axes), handles, ncol=len(handles), fontsize=fs(9), frameon=False)
-    figure_caption_footer(fig, list(axes), caption, countries)
+
+    stem = f"heat_risk_band_{heat_scenario}"
+    out_path = _render_country_row_figure(
+        countries, draw_and_title, handles, OUTPUT_MAPS / "combined" / f"{stem}.png", legend_fontsize=9,
+    )
+    logger.info("%s saved to %s", stem, out_path)
+    return {"combined": out_path}
+
+
+# --------------------------------------------------------------------------
+# Category 3b -- worst-case (Water vs. Heat) risk-band map
+#
+# Douglas's 2026-09-05 request: color each plant by whichever of
+# WaterRiskBand/HeatRiskBand ranks more severe (ordinal max, via
+# ``risk_bands.worst_case_band`` -- see that module for the proposed
+# 5-level/4-level rank mapping and the water-wins tie-break, both approved).
+# This is NOT the "never combine the two bands into one score" rule being
+# broken: no numeric fusion happens here, each plant keeps one of the two
+# ALREADY-existing categorical labels (and that axis's own established
+# color, ``WATER_BAND_COLORS``/``HEAT_BAND_COLORS`` -- no new color is
+# invented), exactly ``max(a, b)`` over two ordinal categories, never an
+# average or sum of the two ranks.
+#
+# Marker SHAPE (circle = water is the worse axis, triangle = heat is the
+# worse axis) is the "which axis determined it" signal Douglas asked for --
+# chosen over a text annotation per plant because a shape carries that
+# information without adding any printed text to the map, and the legend
+# handles already use the same two shapes, so the mapping is visible without
+# a separate explanation.
+#
+# This is the ONE map category in this module that still prints a caption
+# footer (``_common.figure_caption_footer``) below the legend -- every other
+# category dropped it under Correction 2. Approved as an explicit exception:
+# HeatRiskBand's cuts are this run's own sample-relative p25/p75/p95 (not
+# comparable across a different scenario/GCM pool, see ``HEAT_BAND_WARNING``
+# in risk_bands.py); a figure that looks like it maps two absolute exposure
+# axes side by side is misleading without stating, on the figure itself,
+# that only one of the two (water) is actually run-stable. The footer here
+# carries ONLY ``risk_bands.WORST_CASE_COMPARABILITY_NOTE`` -- no GADM
+# disputed-territory disclaimer is re-added (that removal is unrelated to
+# this warning and stays as Correction 2 left it).
+# --------------------------------------------------------------------------
+def _draw_worst_case_panel(ax, country: str, frame_country: pd.DataFrame, heat_band_col: str,
+                            alpha: float = 0.7) -> int:
+    draw_country_boundary(ax, country)
+    add_compass_rose(ax)
+    sub = frame_country.dropna(subset=["water_risk_band", heat_band_col])
+    pairs = [worst_case_band(w, h) for w, h in zip(sub["water_risk_band"], sub[heat_band_col])]
+    determinant = np.array([p[1] for p in pairs], dtype=object)
+    label = np.array([p[0] for p in pairs], dtype=object)
+    sizes = marker_sizes(sub["capacity_mw"])
+    lon = sub["lon"].to_numpy()
+    lat = sub["lat"].to_numpy()
+
+    for axis, marker, palette in (("water", "o", WATER_BAND_COLORS), ("heat", "^", HEAT_BAND_COLORS)):
+        mask = determinant == axis
+        if not mask.any():
+            continue
+        colors = [palette[lbl] for lbl in label[mask]]
+        ax.scatter(lon[mask], lat[mask], s=np.asarray(sizes)[mask], c=colors, marker=marker,
+                   alpha=alpha, edgecolors="black", linewidths=0.3, zorder=3)
+
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    return len(sub)
+
+
+def _worst_case_legend_handles() -> list[mlines.Line2D]:
+    water_handles = [
+        mlines.Line2D([0], [0], marker="o", color="w", markerfacecolor=color, markeredgecolor="black",
+                      markeredgewidth=0.3, markersize=9, label=f"Water: {label}")
+        for label, color in WATER_BAND_COLORS.items()
+    ]
+    heat_handles = [
+        mlines.Line2D([0], [0], marker="^", color="w", markerfacecolor=color, markeredgecolor="black",
+                      markeredgewidth=0.3, markersize=9, label=f"Heat: {label}")
+        for label, color in HEAT_BAND_COLORS.items()
+    ]
+    return water_handles + heat_handles
+
+
+def plot_worst_case_risk_band_map(
+    countries: list[str] | None = None, water_scenario: str = "bau",
+    final: pd.DataFrame | None = None, gcm: str = PRIMARY_GCM, base_height: float = 8.0,
+) -> dict[str, pathlib.Path]:
+    """One figure per ``water_scenario`` (call once per scenario to cover all
+    three), three country panels side by side -- same layout as every other
+    category in this module. Unlike ``plot_water_risk_band_map``/
+    ``plot_heat_risk_band_map`` (one axis each), each plant here is colored
+    by whichever of the two bands is more severe (``risk_bands.
+    worst_case_band``), marker shape showing which axis was the determinant.
+    """
+    countries = countries or COUNTRIES
+    final = final if final is not None else vdata.load_ccrs_final()
+    heat_band_col = f"heat_risk_band_{gcm}"
+    handles = _worst_case_legend_handles()
+
+    widths = [aspect_ratio_width(c, base_height) for c in countries]
+    fig, axes = plt.subplots(1, len(countries), figsize=(sum(widths), base_height),
+                              gridspec_kw={"width_ratios": widths}, constrained_layout=True)
+    axes = np.atleast_1d(axes)
+    for ax, country in zip(axes, countries):
+        frame = _country_frame(final, country, water_scenario)
+        n = _draw_worst_case_panel(ax, country, frame, heat_band_col)
+        panel_title(ax, country, n)
+
+    legend = legend_below_artists(fig, list(axes), handles, ncol=5, fontsize=fs(9), frameon=False)
+    figure_caption_footer(fig, [*axes, legend], WORST_CASE_COMPARABILITY_NOTE)
+
+    stem = f"worst_case_risk_band_{gcm}_{water_scenario}"
     out_path = save_figure(fig, OUTPUT_MAPS / "combined" / f"{stem}.png")
     logger.info("%s saved to %s", stem, out_path)
     return {"combined": out_path}
@@ -397,21 +446,27 @@ def plot_heat_risk_band_map(
 # Category 10 -- data-completeness / computable-base map
 # --------------------------------------------------------------------------
 def plot_computable_base_map(
-    countries: list[str] | None = None, final: pd.DataFrame | None = None, combined: bool = False,
-    water_scenarios: tuple[str, ...] = WATER_SCENARIOS,
+    countries: list[str] | None = None, water_scenario: str = "bau", final: pd.DataFrame | None = None,
 ) -> dict[str, pathlib.Path]:
     """Plants excluded from the V6 computable base (missing
     ``commissioning_year`` -> neutral ``age_factor``) -- same
     "never omit, mark distinctly" convention as every other bubble map here
-    (``_draw_bubble_panel``), just without the top-quantile ring (the point
-    of this map is the grey ``x`` markers, not a risk ranking). Generated for
-    all three water scenarios in one figure (B2) -- membership in the
-    computable base does not vary by scenario, but the panel grid is kept
-    consistent with categories 1/3 for layout uniformity and because Douglas's
-    review asked for all three scenarios here too."""
+    (``_draw_bubble_panel``), just without the top-quantile ring. One
+    figure per ``water_scenario`` (call once per scenario to cover all
+    three) -- membership in the computable base does not vary by scenario,
+    but the layout is kept consistent with categories 1/3/4."""
     countries = countries or COUNTRIES
     final = final if final is not None else vdata.load_ccrs_final()
-    return _render_scenario_bubble_figure(
-        countries, final, None, "", "Data completeness -- V6 computable base",
-        "computable_base", combined, water_scenarios,
+    handles = bucket_legend_handles() + [not_computable_legend_handle()]
+
+    def draw_and_title(ax, country):
+        frame = _country_frame(final, country, water_scenario)
+        stats = _draw_bubble_panel(ax, country, frame, None)
+        panel_title(ax, country, stats["n_computable"], stats["n_excluded"])
+
+    stem = f"computable_base_{water_scenario}"
+    out_path = _render_country_row_figure(
+        countries, draw_and_title, handles, OUTPUT_MAPS / "combined" / f"{stem}.png",
     )
+    logger.info("%s saved to %s", stem, out_path)
+    return {"combined": out_path}

@@ -250,3 +250,60 @@ def test_real_data_bands_and_pooled_heat_split():
     shares = frame["heat_risk_band"].value_counts(normalize=True)
     assert shares["LOW"] == pytest.approx(0.25, abs=0.03)
     assert shares["EXTREME"] == pytest.approx(0.05, abs=0.02)
+
+
+# --------------------------------------------------------------------------
+# 9. worst_case_band -- ordinal max across the two independent scales
+# (Douglas's 2026-09-05 request), NOT a merge -- see the module comment
+# above worst_case_band for the proposed rank mapping and tie-break.
+# --------------------------------------------------------------------------
+def test_worst_case_rank_tables_span_0_to_1_in_scale_order():
+    assert [rb.WATER_BAND_RANK[b] for b in rb.WATER_RISK_BANDS] == [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert [rb.HEAT_BAND_RANK[b] for b in rb.HEAT_RISK_BANDS] == pytest.approx(
+        [0.0, 1 / 3, 2 / 3, 1.0]
+    )
+
+
+def test_worst_case_band_water_worse():
+    # water at "High" (0.75) outranks heat at "MEDIUM" (0.333)
+    label, determinant = rb.worst_case_band("High", "MEDIUM")
+    assert (label, determinant) == ("High", "water")
+
+
+def test_worst_case_band_heat_worse():
+    # heat at "EXTREME" (1.0) outranks water at "Low-Medium" (0.25)
+    label, determinant = rb.worst_case_band("Low-Medium", "EXTREME")
+    assert (label, determinant) == ("EXTREME", "heat")
+
+
+def test_worst_case_band_tie_defaults_to_water():
+    # both at the bottom of their own scale -- a rank tie (0.0 == 0.0)
+    label, determinant = rb.worst_case_band("Low", "LOW")
+    assert (label, determinant) == ("Low", "water")
+    # both at the top of their own scale -- a rank tie (1.0 == 1.0)
+    label, determinant = rb.worst_case_band("Extremely-High", "EXTREME")
+    assert (label, determinant) == ("Extremely-High", "water")
+
+
+def test_worst_case_band_both_lowest_is_the_tie_case_not_an_error():
+    # explicit 4th case from the brief: both at their own lowest level
+    label, determinant = rb.worst_case_band("Low", "LOW")
+    assert label in rb.WATER_RISK_BANDS  # resolves to the water label on tie
+    assert determinant == rb.WORST_CASE_TIE_BREAK
+
+
+def test_worst_case_band_none_when_either_input_is_unbanded():
+    assert rb.worst_case_band(None, "HIGH") == (None, None)
+    assert rb.worst_case_band("High", None) == (None, None)
+
+
+def test_worst_case_band_frame_adds_two_columns_not_a_score():
+    frame = pd.DataFrame({
+        "water_risk_band": ["Low", "High", "Extremely-High", None],
+        "heat_risk_band": ["LOW", "MEDIUM", "EXTREME", "HIGH"],
+    })
+    out = rb.worst_case_band_frame(frame)
+    # row 2 is a top-of-scale tie (Extremely-High == EXTREME, both rank 1.0) -> water wins
+    assert list(out["worst_case_band"]) == ["Low", "High", "Extremely-High", None]
+    assert list(out["worst_case_determinant"]) == ["water", "water", "water", None]
+    assert not any(pd.api.types.is_numeric_dtype(out[c]) for c in ("worst_case_band", "worst_case_determinant"))

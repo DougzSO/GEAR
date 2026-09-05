@@ -146,7 +146,7 @@ def _capture_figures(monkeypatch, module):
 def test_category_1_ccrs_overview_map(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     paths = maps.plot_ccrs_overview_map(countries=["Portugal"], final=synth["final"])
-    assert paths["Portugal"].exists()
+    assert paths["combined"].exists()
 
 
 @boundaries_needed
@@ -160,7 +160,7 @@ def test_category_2_scenario_delta_map(synth, tmp_path, monkeypatch):
 def test_category_3_water_risk_band_map(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     paths = maps.plot_water_risk_band_map(countries=["Portugal"], final=synth["final"])
-    assert paths["Portugal"].exists()
+    assert paths["combined"].exists()
 
 
 @boundaries_needed
@@ -220,7 +220,7 @@ def test_category_9_event_multiplier_removed_replaced_by_table():
 def test_category_10_computable_base_map(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     paths = maps.plot_computable_base_map(countries=["Brazil"], final=synth["final"])
-    assert paths["Brazil"].exists()
+    assert paths["combined"].exists()
 
 
 def test_category_11_top_n_ccrs_breakdown_by_bucket(synth, tmp_path, monkeypatch):
@@ -249,7 +249,7 @@ def test_india_map_renders_with_disputed_admin1(synth, tmp_path, monkeypatch):
     drawing the disputed admin-1 polygons."""
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     paths = maps.plot_ccrs_overview_map(countries=["India"], final=synth["final"])
-    assert paths["India"].exists()
+    assert paths["combined"].exists()
 
 
 # --------------------------------------------------------------------------
@@ -273,31 +273,25 @@ def test_excluded_plants_are_marked_never_dropped(synth):
 
 
 @boundaries_needed
-def test_computable_base_map_includes_excluded_in_footer_count(synth, tmp_path, monkeypatch):
+def test_computable_base_map_includes_excluded_plants(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     final = synth["final"]
     frame_country = final[(final["country"] == "Brazil") & (final["water_scenario"] == "bau")]
     assert (~frame_country["computable"]).any()
     paths = maps.plot_computable_base_map(countries=["Brazil"], final=final)
-    assert paths["Brazil"].exists()
+    assert paths["combined"].exists()
 
 
 # --------------------------------------------------------------------------
-# 4. Per-country + combined produce the correct number of files
+# 4. One combined figure per call, with its PDF
 # --------------------------------------------------------------------------
 @boundaries_needed
-def test_per_country_and_combined_file_counts(synth, tmp_path, monkeypatch):
+def test_overview_map_produces_one_combined_file_with_pdf(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
-    per_country = maps.plot_ccrs_overview_map(final=synth["final"], combined=False)
-    assert len(per_country) == len(COUNTRIES)
-    assert set(per_country) == set(COUNTRIES)
-    for p in per_country.values():
-        assert p.exists() and _common.pdf_path_for(p).exists()
-
-    combined = maps.plot_ccrs_overview_map(final=synth["final"], combined=True)
-    assert len(combined) == 1
-    assert "combined" in combined
-    assert combined["combined"].exists() and _common.pdf_path_for(combined["combined"]).exists()
+    paths = maps.plot_ccrs_overview_map(final=synth["final"])
+    assert len(paths) == 1
+    assert "combined" in paths
+    assert paths["combined"].exists() and _common.pdf_path_for(paths["combined"]).exists()
 
 
 # --------------------------------------------------------------------------
@@ -364,7 +358,7 @@ def test_save_figure_isolates_pdf_in_a_subfolder(tmp_path):
 def test_no_figure_prints_a_title(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     captured = _capture_figures(monkeypatch, maps)
-    maps.plot_ccrs_overview_map(countries=["Portugal"], final=synth["final"], combined=False)
+    maps.plot_ccrs_overview_map(countries=["Portugal"], final=synth["final"])
     assert len(captured) == 1
     assert captured[0]._suptitle is None
 
@@ -384,51 +378,219 @@ def test_panel_title_uses_power_plants_wording_and_is_bold():
 
 
 # --------------------------------------------------------------------------
-# 7. B1/B2 -- scenario-grid generation
+# 7. Correction 1 (2026-09-05) -- one figure per scenario, countries side by
+# side (the layout category 4/HeatRiskBand already used correctly; B2 was
+# misread on 2026-09-04 as "pack all 3 scenarios into one figure" -- it
+# asked for generation ACROSS all 3 scenarios, one file each).
 # --------------------------------------------------------------------------
 @boundaries_needed
-def test_overview_map_combined_is_a_country_by_scenario_grid(synth, tmp_path, monkeypatch):
+def test_overview_map_is_one_file_per_scenario_countries_side_by_side(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     captured = _capture_figures(monkeypatch, maps)
-    maps.plot_ccrs_overview_map(countries=["Brazil", "Portugal"], final=synth["final"], combined=True)
-    fig = captured[0]
-    assert len(fig.axes) == 2 * len(WATER_SCENARIOS)  # 2 countries x 3 scenarios
+    maps.plot_ccrs_overview_map(countries=["Brazil", "Portugal"], final=synth["final"], water_scenario="bau")
+    assert len(captured) == 1
+    assert len(captured[0].axes) == 2  # one panel per country, no scenario dimension in this figure
 
 
 @boundaries_needed
-def test_overview_map_per_country_has_one_panel_per_scenario(synth, tmp_path, monkeypatch):
+def test_overview_map_generates_a_distinct_file_per_scenario(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
-    captured = _capture_figures(monkeypatch, maps)
-    maps.plot_ccrs_overview_map(countries=["Portugal"], final=synth["final"], combined=False)
-    fig = captured[0]
-    assert len(fig.axes) == len(WATER_SCENARIOS)
+    paths = {ws: maps.plot_ccrs_overview_map(countries=["Portugal"], final=synth["final"], water_scenario=ws)["combined"]
+             for ws in WATER_SCENARIOS}
+    assert len(set(paths.values())) == 3  # 3 distinct files, one per scenario
+    for p in paths.values():
+        assert p.exists()
 
 
 @boundaries_needed
-def test_water_risk_band_map_generated_for_all_scenarios(synth, tmp_path, monkeypatch):
+def test_water_risk_band_map_is_one_file_per_scenario(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
-    paths = maps.plot_water_risk_band_map(countries=["Portugal"], final=synth["final"], combined=False)
-    assert paths["Portugal"].exists()
+    captured = _capture_figures(monkeypatch, maps)
+    paths = maps.plot_water_risk_band_map(countries=["Portugal"], final=synth["final"], water_scenario="bau")
+    assert paths["combined"].exists()
+    assert len(captured[0].axes) == 1  # one country requested -> one panel
 
 
 @boundaries_needed
-def test_computable_base_map_generated_for_all_scenarios(synth, tmp_path, monkeypatch):
+def test_computable_base_map_is_one_file_per_scenario(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     captured = _capture_figures(monkeypatch, maps)
-    maps.plot_computable_base_map(countries=["Portugal"], final=synth["final"], combined=False)
-    fig = captured[0]
-    assert len(fig.axes) == len(WATER_SCENARIOS)
+    maps.plot_computable_base_map(countries=["Brazil", "Portugal", "India"], final=synth["final"], water_scenario="bau")
+    assert len(captured[0].axes) == 3  # one panel per country, this call's single scenario only
 
 
 @boundaries_needed
 def test_heat_risk_band_map_gfdl_only_three_countries(synth, tmp_path, monkeypatch):
-    """B1: no more MIROC6 panel row -- one figure, GFDL-ESM4 only, one panel
-    per country."""
+    """Reference layout every other category above now matches: GFDL-ESM4
+    only, one panel per country, no GCM row split."""
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     captured = _capture_figures(monkeypatch, maps)
     maps.plot_heat_risk_band_map(countries=["Brazil", "Portugal", "India"], final=synth["final"])
     fig = captured[0]
     assert len(fig.axes) == 3  # one per country, no GCM row split
+
+
+# --------------------------------------------------------------------------
+# 7a2. Category 3b -- worst-case (Water vs. Heat) risk-band map
+# (Douglas's 2026-09-05 request). Four synthetic plants, one per extreme
+# combination named in the brief: water worse, heat worse, tie at the
+# lowest level, tie at the highest level.
+# --------------------------------------------------------------------------
+def _worst_case_final(water_bands, heat_bands) -> pd.DataFrame:
+    rows = []
+    for i, (wb, hb) in enumerate(zip(water_bands, heat_bands)):
+        rows.append({
+            "plant_uid": f"WC-{i:02d}", "country": "Portugal", "plant_name": f"plant {i}",
+            "water_scenario": "bau", "heat_scenario": "ssp370",
+            "lat": 39.5 + i * 0.3, "lon": -8.0 + i * 0.3, "bucket": "thermal",
+            "capacity_mw": 100.0, "commissioning_year": 2000.0,
+            "water_risk_band": wb, "heat_risk_band_gfdl_esm4": hb, "computable": True,
+        })
+    return pd.DataFrame(rows)
+
+
+@boundaries_needed
+def test_worst_case_map_water_worse_colors_by_water_band(tmp_path, monkeypatch):
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    final = _worst_case_final(["High"], ["MEDIUM"])
+    maps.plot_worst_case_risk_band_map(countries=["Portugal"], final=final)
+    ax = captured[0].axes[0]
+    np.testing.assert_allclose(ax.collections[-1].get_facecolor()[0][:3],
+                                matplotlib.colors.to_rgb(_common.WATER_BAND_COLORS["High"]))
+
+
+@boundaries_needed
+def test_worst_case_map_heat_worse_colors_by_heat_band(tmp_path, monkeypatch):
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    final = _worst_case_final(["Low-Medium"], ["EXTREME"])
+    maps.plot_worst_case_risk_band_map(countries=["Portugal"], final=final)
+    ax = captured[0].axes[0]
+    np.testing.assert_allclose(ax.collections[-1].get_facecolor()[0][:3],
+                                matplotlib.colors.to_rgb(_common.HEAT_BAND_COLORS["EXTREME"]))
+
+
+@boundaries_needed
+def test_worst_case_map_tie_at_lowest_level_defaults_to_water(tmp_path, monkeypatch):
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    final = _worst_case_final(["Low"], ["LOW"])
+    maps.plot_worst_case_risk_band_map(countries=["Portugal"], final=final)
+    ax = captured[0].axes[0]
+    np.testing.assert_allclose(ax.collections[-1].get_facecolor()[0][:3],
+                                matplotlib.colors.to_rgb(_common.WATER_BAND_COLORS["Low"]))
+
+
+@boundaries_needed
+def test_worst_case_map_tie_at_highest_level_defaults_to_water(tmp_path, monkeypatch):
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    final = _worst_case_final(["Extremely-High"], ["EXTREME"])
+    maps.plot_worst_case_risk_band_map(countries=["Portugal"], final=final)
+    ax = captured[0].axes[0]
+    np.testing.assert_allclose(ax.collections[-1].get_facecolor()[0][:3],
+                                matplotlib.colors.to_rgb(_common.WATER_BAND_COLORS["Extremely-High"]))
+
+
+@boundaries_needed
+def test_worst_case_map_legend_labels_both_axes(synth, tmp_path, monkeypatch):
+    """Legend must make the determinant readable without polluting the map
+    itself: 5 'Water: <band>' entries + 4 'Heat: <band>' entries."""
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    maps.plot_worst_case_risk_band_map(countries=["Brazil", "Portugal", "India"], final=synth["final"])
+    fig = captured[0]
+    legend_labels = {t.get_text() for legend in fig.legends for t in legend.get_texts()}
+    assert all(f"Water: {b}" in legend_labels for b in WATER_RISK_BANDS)
+    assert all(f"Heat: {b}" in legend_labels for b in HEAT_RISK_BANDS)
+
+
+@boundaries_needed
+def test_worst_case_map_carries_the_comparability_caption(synth, tmp_path, monkeypatch):
+    """Approved as an explicit exception to Correction 2 -- this figure keeps
+    a caption footer because HeatRiskBand's sample-relative cuts make part of
+    the map non-comparable across runs, and that must be stated on the
+    figure, not only in risk_bands.py's text report."""
+    from src.index.risk_bands import WORST_CASE_COMPARABILITY_NOTE
+
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    maps.plot_worst_case_risk_band_map(countries=["Brazil", "Portugal", "India"], final=synth["final"])
+    fig = captured[0]
+    assert len(fig.texts) == 1
+    assert "sample-relative" in fig.texts[0].get_text()
+    assert "HeatRiskBand" in fig.texts[0].get_text() or "not comparable" in fig.texts[0].get_text()
+    # sanity: the constant used at the call site is the one documented in risk_bands.py
+    assert "sample-relative" in WORST_CASE_COMPARABILITY_NOTE
+
+
+@boundaries_needed
+def test_worst_case_map_is_one_file_per_scenario(synth, tmp_path, monkeypatch):
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    paths = {ws: maps.plot_worst_case_risk_band_map(countries=["Portugal"], final=synth["final"], water_scenario=ws)["combined"]
+             for ws in WATER_SCENARIOS}
+    assert len(set(paths.values())) == 3
+    for p in paths.values():
+        assert p.exists()
+
+
+# --------------------------------------------------------------------------
+# 7b. Correction 2 (2026-09-05) -- no descriptive caption/disclaimer footer;
+# only the legend below the map.
+# --------------------------------------------------------------------------
+@boundaries_needed
+@pytest.mark.parametrize("plot_fn, kwargs", [
+    (maps.plot_ccrs_overview_map, {}),
+    (maps.plot_water_risk_band_map, {}),
+    (maps.plot_computable_base_map, {}),
+    (maps.plot_heat_risk_band_map, {}),
+])
+def test_map_figures_have_no_descriptive_caption_footer(synth, tmp_path, monkeypatch, plot_fn, kwargs):
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    plot_fn(countries=["Brazil", "Portugal", "India"], final=synth["final"], **kwargs)
+    fig = captured[0]
+    # fig.texts holds any fig.text(...) calls (the old caption/disclaimer footer);
+    # the legend is a separate artist (fig.legends), not a fig.text -- an empty
+    # fig.texts means no leftover descriptive/disclaimer line below the map.
+    assert fig.texts == []
+
+
+# --------------------------------------------------------------------------
+# 7c. Correction 3 (2026-09-05) -- a compass rose on every geographic map panel
+# --------------------------------------------------------------------------
+@boundaries_needed
+@pytest.mark.parametrize("plot_fn, kwargs", [
+    (maps.plot_ccrs_overview_map, {}),
+    (maps.plot_water_risk_band_map, {}),
+    (maps.plot_computable_base_map, {}),
+    (maps.plot_heat_risk_band_map, {}),
+    (maps.plot_worst_case_risk_band_map, {}),
+])
+def test_map_panels_each_get_their_own_compass_rose(synth, tmp_path, monkeypatch, plot_fn, kwargs):
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    plot_fn(countries=["Brazil", "Portugal", "India"], final=synth["final"], **kwargs)
+    fig = captured[0]
+    assert len(fig.axes) == 3
+    for ax in fig.axes:
+        # add_compass_rose adds 4 kite Polygon patches plus an "N" text, per panel
+        assert len(ax.patches) >= 4
+        assert any(t.get_text() == "N" for t in ax.texts)
+
+
+def test_add_compass_rose_is_a_star_not_a_single_arrow():
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots()
+    try:
+        _common.add_compass_rose(ax)
+        assert len(ax.patches) == 4  # 4 kite quadrilaterals (N/E/S/W), not one arrow patch
+        for patch in ax.patches:
+            assert len(patch.get_xy()) == 5  # closed quadrilateral (4 vertices + repeat of first)
+        assert sum(1 for t in ax.texts if t.get_text() == "N") == 1
+    finally:
+        plt.close(fig)
 
 
 def test_heat_band_gcm_comparison_table_replaces_the_second_panel(synth):
