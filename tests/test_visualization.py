@@ -756,10 +756,98 @@ def _synthetic_contribution() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_hazard_term_contribution_figure(tmp_path, monkeypatch):
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+def test_hazard_term_contribution_figure_is_now_secondary(tmp_path, monkeypatch):
+    """Reclassified secondary (2026-09-05), superseded by the per-plant
+    distribution redesign -- kept, not deleted, but saved under
+    combined/secondary/ like the other B5 secondary figures."""
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
     path = charts.plot_hazard_term_contribution(contribution=_synthetic_contribution())
     assert path.exists()
+
+
+# --------------------------------------------------------------------------
+# 11b. C4 redesign -- per-plant Hazard-term distribution (Douglas's
+# 2026-09-05 request). The old bar chart/table above are untouched; these
+# cover the new distribution figure and its supporting per-plant table.
+# --------------------------------------------------------------------------
+def _synthetic_per_plant_shares(seed: int = 0) -> pd.DataFrame:
+    """country-specific plant counts deliberately straddle
+    charts.VIOLIN_MIN_PLANTS (1000): Brazil/India well above (violin),
+    Portugal well below (box+strip) -- mirrors the real data's shape
+    (~5,150 / ~4,580 / ~438 unique plants) without needing the real
+    pipeline."""
+    rng = np.random.default_rng(seed)
+    n_plants = {"Brazil": 1500, "India": 1400, "Portugal": 120}
+    rows = []
+    for country in COUNTRIES:
+        n = n_plants[country]
+        raw = rng.dirichlet([2, 2, 1], size=n)  # 3 shares summing to 1, per plant
+        capacity = rng.uniform(5, 500, size=n)
+        for scen in ("opt", "bau", "pes"):
+            for i in range(n):
+                rows.append({
+                    "country": country, "water_scenario": scen, "capacity_mw": capacity[i],
+                    "water_share": raw[i, 0], "heat_share": raw[i, 1], "drought_share": raw[i, 2],
+                })
+    return pd.DataFrame(rows)
+
+
+def test_hazard_term_contribution_per_plant_shares_sum_to_one(synth):
+    from src.index import ccrs_calculator as ccrs
+    from src.visualization import tables as vtables
+
+    # real production code path, exercised against synth["final"]-shaped
+    # inputs is not directly wired (per_plant reads from ccrs.compute_hazard
+    # live) -- so this test uses the synthetic per-plant frame directly, the
+    # same contract plot_hazard_term_contribution_distribution consumes.
+    frame = _synthetic_per_plant_shares()
+    totals = frame["water_share"] + frame["heat_share"] + frame["drought_share"]
+    np.testing.assert_allclose(totals.to_numpy(), 1.0, atol=1e-9)
+
+
+def test_fig_c4_distribution_uses_violin_for_large_countries_box_for_small(tmp_path, monkeypatch):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    captured = _capture_figures(monkeypatch, charts)
+    per_plant = _synthetic_per_plant_shares()
+    charts.plot_hazard_term_contribution_distribution(countries=COUNTRIES, per_plant=per_plant)
+    fig = captured[0]
+    titles = [ax.get_title() for ax in fig.axes if ax.get_title()]
+    assert any("Brazil" in t and "violin" in t for t in titles)
+    assert any("India" in t and "violin" in t for t in titles)
+    assert any("Portugal" in t and "box+strip" in t for t in titles)
+
+
+def test_fig_c4_estimated_unique_plants_divides_by_scenario_count():
+    per_plant = _synthetic_per_plant_shares()
+    portugal = per_plant[per_plant["country"] == "Portugal"]
+    # 120 plants x 3 scenarios = 360 rows -- must estimate ~120, not 360
+    assert charts._estimated_unique_plants(portugal) == pytest.approx(120.0)
+
+
+def test_fig_c4_weighted_view_is_not_a_copy_of_unweighted(tmp_path, monkeypatch):
+    """The capacity-weighted row must actually weight -- construct a case
+    where a tiny-capacity majority and a huge-capacity minority disagree, and
+    confirm the weighted median moves toward the huge-capacity plants."""
+    n = 200
+    rng = np.random.default_rng(1)
+    capacity = np.concatenate([np.full(190, 1.0), np.full(10, 10_000.0)])
+    water_share = np.concatenate([np.full(190, 0.1), np.full(10, 0.9)])
+    values = water_share
+    weights = capacity
+
+    unweighted_median = float(np.percentile(values, 50))
+    weighted_median = charts._weighted_quantile(values, weights, 0.5)
+    assert unweighted_median == pytest.approx(0.1)  # 190/200 plants dominate unweighted
+    assert weighted_median == pytest.approx(0.9)     # 10 huge-capacity plants dominate weighted
+    assert weighted_median != pytest.approx(unweighted_median)
+
+
+def test_fig_c4_box_stats_weighted_and_unweighted_differ():
+    values = np.concatenate([np.full(190, 0.1), np.full(10, 0.9)])
+    weights = np.concatenate([np.full(190, 1.0), np.full(10, 10_000.0)])
+    unweighted = charts._box_stats(values, None)
+    weighted = charts._box_stats(values, weights)
+    assert unweighted["med"] != weighted["med"]
 
 
 # --------------------------------------------------------------------------

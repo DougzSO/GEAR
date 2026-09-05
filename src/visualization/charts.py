@@ -28,6 +28,19 @@ bar chart with two annotation lines squeezed above each bar -- see
 the exact same numbers.
 
 --------------------------------------------------------------------------
+2026-09-05 -- C4 reclassified secondary, replaced by a per-plant redesign
+--------------------------------------------------------------------------
+``plot_hazard_term_contribution`` (the capacity-weighted-mean bar chart) and
+``tables.hazard_term_contribution_table`` (its numbers) move to
+``combined/secondary/`` -- see the module comment directly above
+``plot_hazard_term_contribution`` for the full reasoning. In one line: the
+new ``plot_hazard_term_contribution_distribution`` (per-plant violin/
+box+strip, unweighted vs. capacity-weighted) showed that Brazil's aggregate
+bar was masking a real divergence between the typical plant and the typical
+installed capacity -- a failure mode a single mean bar cannot surface.
+Neither function is deleted; both are demoted, not removed.
+
+--------------------------------------------------------------------------
 Reused / adapted techniques
 --------------------------------------------------------------------------
 The per-column-normalized-for-color / real-value-annotated matrix technique
@@ -689,7 +702,187 @@ def plot_ccrs_rank_probability(
 
 
 # --------------------------------------------------------------------------
-# C4 -- relative contribution of water/heat/drought to Hazard, by country
+# C4 redesign -- per-plant distribution of each Hazard term's share, by
+# country (Douglas's 2026-09-05 request). The original bar chart
+# (``plot_hazard_term_contribution``, kept below UNCHANGED, not removed --
+# Douglas has not authorized retiring it yet) compresses ~5,000-15,000
+# plants per country into one capacity-weighted mean bar per term, which
+# cannot show whether a term's apparent dominance (e.g. "water dominates in
+# Brazil") holds across most plants or is pulled by a handful of large/
+# atypical ones -- exactly the failure mode Douglas flagged.
+#
+# --------------------------------------------------------------------------
+# Chart type per country: violin OR box+strip, chosen by sample size, not by
+# country name
+# --------------------------------------------------------------------------
+# Real plant-scenario row counts (V6 computable base, 3 water_scenarios
+# pooled per plant): Brazil 15,446, India 13,734, Portugal 1,314 -- roughly
+# 5,150 / 4,580 / 438 UNIQUE plants once divided by the 3 pooled scenarios.
+# A KDE-based violin implies a smooth, continuously-supported distribution --
+# defensible at Brazil/India's volume, but at Portugal's ~438 unique plants
+# a violin would visually claim smoothness the sample cannot support
+# (Douglas's own concern, stated in the brief). The decision is thresholded
+# on the ESTIMATED UNIQUE PLANT COUNT (``VIOLIN_MIN_PLANTS`` = 1,000; row
+# count / number of distinct water_scenario values present), not the raw
+# pooled row count -- thresholding on rows directly would have put Portugal
+# (1,314 rows) on the wrong side of a naive 1,000-row cutoff despite having
+# only a third that many actual plants. Not a hardcoded country name either,
+# so if a future country/dataset changes size, the chart type follows the
+# data. Below the threshold: a box (weighted or unweighted quantiles) plus a
+# strip of the actual per-plant points -- exactly Douglas's "box/strip para
+# Portugal" suggestion.
+#
+# --------------------------------------------------------------------------
+# Weighting: BOTH unweighted and capacity-weighted views, stacked as rows
+# --------------------------------------------------------------------------
+# This is the same question that motivated the redesign in the first place
+# (a few large plants can dominate the aggregate) -- so both views are shown
+# rather than picking one. Row 1 (unweighted): every plant counts equally,
+# answers "is this term dominant across most of the FLEET". Row 2
+# (capacity-weighted): each plant's contribution to the shown density/box is
+# weighted by ``capacity_mw`` (``scipy.stats.gaussian_kde``'s native
+# ``weights`` argument for the violin; a weighted-quantile box for the
+# small-N countries), answers "is this term dominant across most of the
+# installed CAPACITY". For the box+strip countries, the weighted row also
+# scales each strip point's marker size by its own capacity -- the same
+# "where is the capacity actually concentrated" question, visible directly
+# on the individual plants rather than only in the box's shape.
+# --------------------------------------------------------------------------
+VIOLIN_MIN_PLANTS = 1000
+_HAZARD_TERM_COLS = (("water_share", "water"), ("heat_share", "heat"), ("drought_share", "drought"))
+
+
+def _estimated_unique_plants(sub: pd.DataFrame) -> float:
+    """Row count / number of distinct ``water_scenario`` values present --
+    an estimate of unique plants behind a pooled-scenario frame (each plant
+    contributes one row per scenario). Used only to pick violin vs. box+strip
+    (``VIOLIN_MIN_PLANTS``), never as a displayed statistic."""
+    n_scenarios = sub["water_scenario"].nunique() or 1
+    return len(sub) / n_scenarios
+
+
+def _weighted_quantile(values: np.ndarray, weights: np.ndarray, q: float) -> float:
+    order = np.argsort(values)
+    values, weights = values[order], weights[order]
+    cum = np.cumsum(weights) - 0.5 * weights
+    cum /= weights.sum()
+    return float(np.interp(q, cum, values))
+
+
+def _box_stats(values: np.ndarray, weights: np.ndarray | None) -> dict:
+    if weights is None:
+        q1, med, q3 = np.percentile(values, [25, 50, 75])
+    else:
+        q1, med, q3 = (_weighted_quantile(values, weights, q) for q in (0.25, 0.5, 0.75))
+    iqr = q3 - q1
+    lo_fence, hi_fence = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+    inside = values[(values >= lo_fence) & (values <= hi_fence)]
+    whislo = float(inside.min()) if len(inside) else float(q1)
+    whishi = float(inside.max()) if len(inside) else float(q3)
+    return {"med": float(med), "q1": float(q1), "q3": float(q3),
+            "whislo": whislo, "whishi": whishi, "fliers": []}
+
+
+def _draw_violin(ax, x: float, values: np.ndarray, weights: np.ndarray | None, color: str, width: float = 0.7) -> None:
+    from scipy import stats as sp_stats
+
+    if len(values) < 2 or np.ptp(values) == 0:
+        return
+    kde = sp_stats.gaussian_kde(values, weights=weights)
+    grid = np.linspace(values.min(), values.max(), 200)
+    density = kde(grid)
+    density = density / density.max() * (width / 2)
+    ax.fill_betweenx(grid, x - density, x + density, color=color, alpha=0.6, linewidth=0.6, edgecolor="black")
+
+
+def _draw_box_and_strip(ax, x: float, values: np.ndarray, weights: np.ndarray | None, color: str,
+                         rng: np.random.Generator, width: float = 0.5) -> None:
+    stats = _box_stats(values, weights)
+    bp = ax.bxp([stats], positions=[x], widths=width, patch_artist=True, showfliers=False)
+    for patch in bp["boxes"]:
+        patch.set_facecolor(color)
+        patch.set_alpha(0.5)
+    jitter = rng.uniform(-width / 4, width / 4, size=len(values))
+    if weights is not None:
+        sizes = 4 + 46 * (weights / weights.max())
+    else:
+        sizes = 6
+    ax.scatter(x + jitter, values, s=sizes, color=color, alpha=0.4, edgecolors="none", zorder=3)
+
+
+def plot_hazard_term_contribution_distribution(
+    countries: list[str] | None = None, per_plant: pd.DataFrame | None = None, gcm: str = PRIMARY_GCM,
+) -> pathlib.Path:
+    """Redesigned C4: 2 rows (unweighted / capacity-weighted) x one panel
+    per country, each panel showing all 3 Hazard terms' per-plant share
+    distribution side by side (violin above ``VIOLIN_MIN_ROWS`` plant-
+    scenario rows, box+strip below it -- see the module comment above).
+    Uses ``tables.hazard_term_contribution_per_plant`` -- the per-plant
+    frame ``hazard_term_contribution_table``'s bar-chart numbers already
+    aggregate away; that table/bar-chart pair is untouched by this addition."""
+    from src.visualization import tables as vtables
+
+    countries = countries or COUNTRIES
+    per_plant = (per_plant if per_plant is not None
+                 else vtables.hazard_term_contribution_per_plant(gcm=gcm, countries=countries))
+    rng = np.random.default_rng(0)
+
+    fig, axes = plt.subplots(2, len(countries), figsize=(4.6 * len(countries), 9), sharey=True)
+    axes = np.atleast_2d(axes)
+
+    for col, country in enumerate(countries):
+        sub = per_plant[per_plant["country"] == country]
+        use_violin = _estimated_unique_plants(sub) >= VIOLIN_MIN_PLANTS
+        for row, weighted in enumerate((False, True)):
+            ax = axes[row, col]
+            weights_all = sub["capacity_mw"].to_numpy("float64") if weighted else None
+            for i, (term_col, label) in enumerate(_HAZARD_TERM_COLS):
+                values = sub[term_col].to_numpy("float64")
+                color = HAZARD_TERM_COLORS[term_col]
+                if use_violin:
+                    _draw_violin(ax, i, values, weights_all, color)
+                else:
+                    _draw_box_and_strip(ax, i, values, weights_all, color, rng)
+            ax.set_xticks(range(len(_HAZARD_TERM_COLS)))
+            ax.set_xticklabels([label for _, label in _HAZARD_TERM_COLS], fontsize=fs(9))
+            ax.set_ylim(-0.02, 1.02)
+            style = "violin" if use_violin else "box+strip"
+            weight_label = "capacity-weighted" if weighted else "unweighted"
+            if row == 0:
+                ax.set_title(f"{country} (n={len(sub):,} plant-scenario rows, {style})",
+                              fontsize=fs(9.5), fontweight="bold")
+            ax.set_xlabel(weight_label, fontsize=fs(8.5))
+        axes[0, col].set_xlabel("")
+
+    for row in range(2):
+        axes[row, 0].set_ylabel("Share of Hazard", fontsize=fs(10))
+
+    fig.tight_layout()
+    out_path = save_figure(fig, OUT_DIR / "combined" / f"hazard_term_contribution_distribution_{gcm}.png")
+    logger.info("Hazard term contribution distribution saved to %s", out_path)
+    return out_path
+
+
+# --------------------------------------------------------------------------
+# C4 (reclassified secondary, 2026-09-05) -- relative contribution of
+# water/heat/drought to Hazard, by country
+#
+# Demoted from primary to ``combined/secondary/`` -- this single
+# capacity-weighted-mean bar per (country, water_scenario) is no longer a
+# manuscript-figure candidate now that ``plot_hazard_term_contribution_
+# distribution`` (the per-plant redesign, same task round) has demonstrated
+# what it hides: the typical PLANT and the typical CAPACITY can disagree,
+# and one aggregate bar cannot show that they do. Concretely, on the real
+# data, Brazil's *unweighted* per-plant distribution has heat/drought
+# dominating most individual plants (water_share concentrated near 0), but
+# once weighted by capacity, water rises substantially and drought becomes
+# even MORE extreme -- i.e. the single bar this function draws is shaped
+# disproportionately by a handful of large-capacity plants, not
+# representative of the median plant, and gives no visual indication that
+# this is happening. Kept here, not deleted -- still a valid, correct
+# capacity-weighted mean, useful as a quick single-number reference -- but
+# the distribution figure is the one to cite for the actual water/heat/
+# drought-dominance claim.
 # --------------------------------------------------------------------------
 def plot_hazard_term_contribution(
     countries: list[str] | None = None, contribution: pd.DataFrame | None = None, gcm: str = PRIMARY_GCM,
@@ -697,7 +890,12 @@ def plot_hazard_term_contribution(
     """The structural argument for why Brazil/Portugal/India differ: the
     share of ``Hazard_{i,s}`` coming from water_sub, heat and drought,
     capacity-weighted, per country x water_scenario. Uses
-    ``src/visualization/tables.py``'s ``hazard_term_contribution_table``."""
+    ``src/visualization/tables.py``'s ``hazard_term_contribution_table``.
+
+    Secondary, not a manuscript-figure candidate -- see the module comment
+    immediately above for why (superseded by ``plot_hazard_term_contribution_
+    distribution``'s per-plant redesign, which surfaced a real
+    unweighted-vs-capacity-weighted divergence this single bar cannot show)."""
     from src.visualization import tables as vtables
 
     countries = countries or COUNTRIES
@@ -729,6 +927,6 @@ def plot_hazard_term_contribution(
     ax.set_ylim(0, 1.05)
     ax.legend(fontsize=fs(9), loc="upper right", ncol=3)
     fig.tight_layout()
-    out_path = save_figure(fig, OUT_DIR / "combined" / f"hazard_term_contribution_{gcm}.png")
-    logger.info("Hazard term contribution saved to %s", out_path)
+    out_path = save_figure(fig, SECONDARY_DIR / f"hazard_term_contribution_{gcm}.png")
+    logger.info("Hazard term contribution (secondary) saved to %s", out_path)
     return out_path

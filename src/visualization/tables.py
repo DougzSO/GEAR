@@ -23,6 +23,14 @@ tables complement (or, in one case, replace) a figure:
   (removed, B5): three numbers per country are better read as a table row
   than as a 3-bar chart -- see ``charts.py`` module docstring for the removal
   note.
+- ``hazard_term_contribution_table`` -- capacity-weighted mean water/heat/
+  drought share per (country, water_scenario), the numbers behind
+  ``charts.plot_hazard_term_contribution``. Both reclassified secondary
+  (2026-09-05): superseded, for the water/heat/drought-dominance claim
+  itself, by ``hazard_term_contribution_per_plant`` + ``charts.
+  plot_hazard_term_contribution_distribution`` (per-plant violin/box+strip,
+  unweighted vs. capacity-weighted) -- see that table function's docstring.
+  Neither the old table nor its bar chart is deleted, only demoted.
 """
 
 from __future__ import annotations
@@ -219,15 +227,20 @@ def hazard_weight_provenance_table() -> pd.DataFrame:
 # --------------------------------------------------------------------------
 # C4 -- relative contribution of each Hazard term, by country
 # --------------------------------------------------------------------------
-def hazard_term_contribution_table(
+def hazard_term_contribution_per_plant(
     gcm: str = PRIMARY_GCM, countries: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Capacity-weighted mean contribution of water/heat/drought to
-    ``Hazard_{i,s}``, per country (and water_scenario) -- the numbers behind
-    the C4 figure. Contribution is each term's weighted, transformed value
-    (``w_water*water_sub``, ``w_heat*T_heat``, ``w_drought*T_spei``) as a
-    share of their sum (``= Hazard``, by construction of ``ccrs_calculator.
-    hazard``), capacity-weighted-averaged over the V6 computable base."""
+    """One row per plant x water_scenario (V6 computable base): each of
+    water/heat/drought's weighted, transformed contribution to
+    ``Hazard_{i,s}`` (``w_water*water_sub``, ``w_heat*T_heat``,
+    ``w_drought*T_spei``) as a share of their sum (``= Hazard``, by
+    construction of ``ccrs_calculator.hazard``). ``water_share`` +
+    ``heat_share`` + ``drought_share`` == 1.0 for every row by construction.
+
+    This is the per-plant frame ``hazard_term_contribution_table`` (C4's
+    original bar-chart numbers) aggregates away -- kept as its own function
+    for the FIG redesign (Douglas's 2026-09-05 request) needing the
+    per-plant distribution, not just its capacity-weighted mean."""
     countries = countries or COUNTRIES
     hz = ccrs.compute_hazard(gcm)
     hz = hz[hz["country"].isin(countries)]
@@ -249,6 +262,27 @@ def hazard_term_contribution_table(
         "heat_share": (heat_contrib / total).where(total > 0),
         "drought_share": (drought_contrib / total).where(total > 0),
     }).dropna(subset=["water_share", "heat_share", "drought_share"])
+    return frame
+
+
+def hazard_term_contribution_table(
+    gcm: str = PRIMARY_GCM, countries: list[str] | None = None,
+) -> pd.DataFrame:
+    """Capacity-weighted mean contribution of water/heat/drought to
+    ``Hazard_{i,s}``, per country (and water_scenario) -- the numbers behind
+    the (now secondary) bar chart, ``charts.plot_hazard_term_contribution``.
+    See ``hazard_term_contribution_per_plant`` for the per-plant frame this
+    aggregates.
+
+    Reclassified secondary alongside that bar chart (2026-09-05, not
+    deleted): a single capacity-weighted mean per (country, water_scenario)
+    is exactly the kind of number ``plot_hazard_term_contribution_
+    distribution`` showed can mask a real unweighted-vs-capacity-weighted
+    divergence (Brazil's water/drought shares move substantially once
+    weighted by capacity -- invisible in this table's one number per
+    group). Still correct, still useful as a quick reference; not the
+    number to cite for the water/heat/drought-dominance claim itself."""
+    frame = hazard_term_contribution_per_plant(gcm, countries)
 
     def _wmean(g: pd.DataFrame) -> pd.Series:
         w = g["capacity_mw"]
