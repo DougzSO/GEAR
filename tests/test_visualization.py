@@ -82,7 +82,7 @@ def _synthetic_bands(final: pd.DataFrame) -> dict[str, BandTable]:
     out = {}
     for gcm in ("gfdl_esm4", "miroc6"):
         frame = final[["plant_uid", "country", "water_scenario", "heat_scenario", "capacity_mw",
-                        "commissioning_year", "water_risk_band"]].copy()
+                        "commissioning_year", "bucket", "water_risk_band"]].copy()
         frame["heat_risk_band"] = final[f"heat_risk_band_{gcm}"]
         out[gcm] = BandTable(frame=frame, heat_cuts={25: 1.0, 75: 2.0, 95: 3.0}, heat_gcm=gcm)
     return out
@@ -205,6 +205,65 @@ def test_category_8_capacity_by_risk_band(synth, tmp_path, monkeypatch):
     heat_shares = vdata.load_heat_band_shares(synth["bands"])
     path = charts.plot_capacity_by_risk_band(water_shares=water_shares, heat_shares=heat_shares)
     assert path.exists()
+
+
+# --------------------------------------------------------------------------
+# FIG 3a/3b -- capacity vulnerability by bucket x scenario, one sister figure
+# per risk-band axis (Douglas's 2026-09-05 request, both axes shown side by
+# side rather than heat alone -- see the module comment in charts.py),
+# promoted out of combined/secondary/ into the primary output dir.
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("plot_fn, kwargs", [
+    (charts.plot_capacity_vulnerability_by_bucket_water, {}),
+    (charts.plot_capacity_vulnerability_by_bucket_heat, {}),
+])
+def test_fig3_saved_to_primary_dir(synth, tmp_path, monkeypatch, plot_fn, kwargs):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    path = plot_fn(bands=synth["bands"], **kwargs)
+    assert path.exists()
+    assert "secondary" not in str(path)  # promoted, not left in combined/secondary/
+
+
+@pytest.mark.parametrize("band_col, bands_tuple", [
+    ("water_risk_band", WATER_RISK_BANDS),
+    ("heat_risk_band", HEAT_RISK_BANDS),
+])
+def test_fig3_capacity_shares_sum_to_100_pct_per_bucket_country_scenario(synth, band_col, bands_tuple):
+    from src.index import ccrs_report as cr
+
+    frame = synth["bands"][PRIMARY_GCM].frame
+    shares = cr.band_capacity_shares(frame, band_col, bands_tuple, ["bucket", "country", "water_scenario"])
+    totals = shares.groupby(["bucket", "country", "water_scenario"])["capacity_share"].sum()
+    # each (bucket, country, scenario) cell's bands + NO_BAND sum to 1.0 --
+    # same convention as risk_bands/ccrs_report (never silently short of 100%)
+    np.testing.assert_allclose(totals.to_numpy(), 1.0, atol=1e-9)
+
+
+@pytest.mark.parametrize("band_col, bands_tuple", [
+    ("water_risk_band", WATER_RISK_BANDS),
+    ("heat_risk_band", HEAT_RISK_BANDS),
+])
+def test_fig3_all_four_buckets_are_segregated_not_mixed(synth, band_col, bands_tuple):
+    from src.index import ccrs_report as cr
+
+    frame = synth["bands"][PRIMARY_GCM].frame
+    shares = cr.band_capacity_shares(frame, band_col, bands_tuple, ["bucket", "country", "water_scenario"])
+    assert set(shares["bucket"].unique()) == set(BUCKETS)
+    # one row per band (+ NO_BAND) per (bucket, country, scenario) cell -- no
+    # cross-bucket blending anywhere in the grouped frame
+    for bucket in BUCKETS:
+        sub = shares[shares["bucket"] == bucket]
+        assert set(sub["country"]) <= set(COUNTRIES)
+        n_expected_rows = len(sub[["country", "water_scenario"]].drop_duplicates()) * (len(bands_tuple) + 1)
+        assert len(sub) == n_expected_rows
+
+
+def test_fig3a_and_fig3b_are_distinct_files_with_different_band_axes(synth, tmp_path, monkeypatch):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    water_path = charts.plot_capacity_vulnerability_by_bucket_water(bands=synth["bands"])
+    heat_path = charts.plot_capacity_vulnerability_by_bucket_heat(bands=synth["bands"])
+    assert water_path != heat_path
+    assert water_path.exists() and heat_path.exists()
 
 
 def test_category_9_event_multiplier_removed_replaced_by_table():

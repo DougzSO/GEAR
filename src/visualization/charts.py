@@ -298,6 +298,149 @@ def plot_capacity_by_risk_band(
 
 
 # --------------------------------------------------------------------------
+# FIG 3 -- systemic capacity vulnerability by technology bucket x scenario
+# (Douglas's 2026-09-05 request -- promoted from secondary to a primary
+# manuscript figure)
+#
+# "Parte da lógica já existe em capacity_by_risk_band ... falta o corte por
+# bucket tecnológico" -- this is a direct, minimal extension of category 8's
+# HeatRiskBand panel: ``ccrs_report.band_capacity_shares`` already accepts
+# an arbitrary ``group_cols`` list, and ``bucket`` is already a column on
+# every ``BandTable.frame`` (carried from T1 through risk_bands.py) -- no
+# change to ccrs_report.py or risk_bands.py was needed, just a new call site
+# with ``"bucket"`` added to the grouping, and ``_stacked_bar`` (already
+# generic over group_cols) reused as-is.
+#
+# --------------------------------------------------------------------------
+# Layout choice: (a) one panel per bucket, not (b) one merged figure
+# --------------------------------------------------------------------------
+# Option (b) would need a legend distinguishing every (bucket, band)
+# combination that appears in a single stacked segment -- up to 4 buckets x
+# 5 bands (4 HeatRiskBand levels + NO_BAND) = 20 combinations, on top of 9
+# country x scenario x-groups already on one axis. That is not legible.
+# Option (a) keeps each panel to ONE stacking dimension (band, at most 5
+# colors) and moves bucket to the panel facet -- the same small-multiple
+# principle already used by category 6 (``plot_ccrs_distribution_by_bucket``)
+# and category 11 (Top-N breakdown), so it is also visually consistent with
+# the other bucket-faceted figures in this module.
+#
+# --------------------------------------------------------------------------
+# Risk-band axis: BOTH WaterRiskBand and HeatRiskBand, as two sister figures
+# (Douglas's 2026-09-05 follow-up, replacing the HeatRiskBand-only version)
+# --------------------------------------------------------------------------
+# The HeatRiskBand-only version was a judgment call flagged for confirmation
+# -- rejected: showing only the sample-relative axis would silently inherit
+# HeatRiskBand's cross-run non-comparability (the same limitation already
+# documented for the worst-case map, T4) without making that visible on the
+# figure itself. Putting WaterRiskBand (stable, absolute WRI cuts) and
+# HeatRiskBand (this run's own p25/p75/p95) side by side as two DIFFERENTLY
+# LABELLED figures makes that asymmetry obvious from the figure identity
+# alone (FIG 3a vs. FIG 3b), not just from a caption a reader might skip.
+#
+# --------------------------------------------------------------------------
+# Two sister figures (3a, 3b), not one 8-panel figure -- legibility choice
+# --------------------------------------------------------------------------
+# The already-generated 4-panel HeatRiskBand-only version needed
+# ~4.6in/panel x 4 = ~18in width to keep 9 country x scenario x-groups
+# readable per panel. Doubling to 8 panels in one image would need ~37in
+# width -- either an impractically large single image, or shrinking every
+# panel to fit a normal page/column width, which directly undoes the
+# legibility this small-multiple layout was chosen for in the first place.
+# Two same-sized sister figures (FIG 3a: WaterRiskBand x 4 buckets, FIG 3b:
+# HeatRiskBand x 4 buckets) keep each figure at the exact panel size already
+# validated, placed side by side on the manuscript page (a page-layout
+# decision, not something this code needs to force into one file) --
+# achieving the same "obvious side-by-side asymmetry" Douglas asked for
+# without the width/legibility tradeoff of a single 8-panel image.
+#
+# --------------------------------------------------------------------------
+# Denominator convention (unchanged from the first version)
+# --------------------------------------------------------------------------
+# ``capacity_share`` in each (bucket, country, water_scenario) cell is a
+# percentage of THAT BUCKET's own V6-computable-base capacity in that
+# country/scenario -- e.g. "42% of Brazil's thermal capacity is
+# HIGH/EXTREME under pes", not "42% of Brazil's total cross-technology
+# capacity". This is the standard ``band_capacity_shares`` convention
+# (same function, just with ``bucket`` in ``group_cols`` instead of held
+# fixed), and it is the only denominator that makes "vulnerability of THIS
+# technology" a legible statement -- a technology with little capacity in a
+# country would otherwise round to ~0% under a whole-country denominator
+# regardless of how exposed its own fleet is.
+# --------------------------------------------------------------------------
+def _capacity_vulnerability_by_bucket_figure(
+    shares: pd.DataFrame, band_order: tuple, band_colors: dict, legend_title: str, out_path: pathlib.Path,
+) -> pathlib.Path:
+    """Shared 4-panel (one per bucket) renderer for FIG 3a/3b -- the two
+    figures differ only in which band column/palette/legend title they
+    were built with, not in panel layout."""
+    fig, axes = plt.subplots(1, len(BUCKETS), figsize=(4.6 * len(BUCKETS), 6), sharey=True)
+    axes = np.atleast_1d(axes)
+    for ax, bucket in zip(axes, BUCKETS):
+        bucket_shares = shares[shares["bucket"] == bucket]
+        _stacked_bar(ax, bucket_shares, ["country", "water_scenario"], "band",
+                     band_order, band_colors)
+        # bucket identity uses the project's fixed qualitative bucket palette
+        # (BUCKET_COLORS, reused from maps.py/charts.py, no new color) --
+        # the stacking dimension itself (the risk band) stays on its own
+        # existing WATER_BAND_COLORS/HEAT_BAND_COLORS.
+        ax.set_title(bucket, fontweight="bold", fontsize=fs(11), color=BUCKET_COLORS[bucket])
+    axes[0].set_ylabel("Share of this bucket's own computable capacity", fontsize=fs(10))
+    axes[-1].legend(fontsize=fs(7), loc="upper right", ncol=1,
+                     title=legend_title, title_fontsize=fs(7))
+    fig.tight_layout()
+    out = save_figure(fig, out_path)
+    logger.info("Capacity vulnerability by bucket saved to %s", out)
+    return out
+
+
+def plot_capacity_vulnerability_by_bucket_water(
+    countries: list[str] | None = None, bands: dict | None = None,
+) -> pathlib.Path:
+    """FIG 3a -- one panel per technology bucket, WaterRiskBand-stacked
+    bars, country x water_scenario on the x-axis. WaterRiskBand does not
+    depend on GCM (risk_bands.py), so this figure has no ``gcm`` parameter,
+    same convention as ``maps.plot_water_risk_band_map``. Promoted out of
+    ``combined/secondary/`` -- saved directly under ``OUT_DIR``."""
+    from src.index import ccrs_report as cr
+
+    countries = countries or COUNTRIES
+    bands = bands if bands is not None else vdata.load_band_tables()
+    frame = bands[PRIMARY_GCM].frame  # water_risk_band is GCM-independent; any BandTable carries the same values
+    shares = cr.band_capacity_shares(
+        frame, "water_risk_band", WATER_RISK_BANDS, ["bucket", "country", "water_scenario"],
+    )
+    shares = shares[shares["country"].isin(countries)]
+    return _capacity_vulnerability_by_bucket_figure(
+        shares, WATER_RISK_BANDS + ("NO_BAND",), {**WATER_BAND_COLORS, "NO_BAND": "#e0e0e0"},
+        "WaterRiskBand", OUT_DIR / "combined" / "capacity_vulnerability_by_bucket_water.png",
+    )
+
+
+def plot_capacity_vulnerability_by_bucket_heat(
+    countries: list[str] | None = None, gcm: str = PRIMARY_GCM, bands: dict | None = None,
+) -> pathlib.Path:
+    """FIG 3b -- one panel per technology bucket, HeatRiskBand-stacked bars
+    (GFDL-ESM4 primary), country x water_scenario on the x-axis. Same
+    denominator/promotion/style convention as FIG 3a (WaterRiskBand) --
+    see the module comment above for why these are two sister figures
+    rather than one 8-panel image, and why BOTH axes are shown rather than
+    heat alone."""
+    from src.index import ccrs_report as cr
+
+    countries = countries or COUNTRIES
+    bands = bands if bands is not None else vdata.load_band_tables()
+    frame = bands[gcm].frame
+    shares = cr.band_capacity_shares(
+        frame, "heat_risk_band", HEAT_RISK_BANDS, ["bucket", "country", "water_scenario"],
+    )
+    shares = shares[shares["country"].isin(countries)]
+    return _capacity_vulnerability_by_bucket_figure(
+        shares, HEAT_RISK_BANDS + ("NO_BAND",), {**HEAT_BAND_COLORS, "NO_BAND": "#e0e0e0"},
+        f"HeatRiskBand ({gcm})", OUT_DIR / "combined" / f"capacity_vulnerability_by_bucket_heat_{gcm}.png",
+    )
+
+
+# --------------------------------------------------------------------------
 # Category 11 -- Top-N CCRS breakdown, by bucket (B4 rewrite)
 # --------------------------------------------------------------------------
 def plot_top_n_ccrs_breakdown_by_bucket(
