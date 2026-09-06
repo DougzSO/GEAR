@@ -326,6 +326,29 @@ def test_figure2_has_no_bucket_cut_and_no_historical_baseline():
     assert "baseline" not in figure2_src.lower()
 
 
+def test_figure2_panel_titles_and_legends_use_spaced_band_names_without_method_notes(
+    synth, tmp_path, monkeypatch,
+):
+    """2026-09-06 follow-up: panel titles are "a -- Water Risk Band" /
+    "b -- Heat Risk Band" (spaced, no "(fixed WRI Aqueduct 4.0 cuts)" /
+    "(... sample-relative cuts)" parenthetical); each panel's own legend
+    title matches."""
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    captured = _capture_figures(monkeypatch, charts)
+    water_shares = vdata.load_water_band_shares(synth["bands"])
+    heat_shares = vdata.load_heat_band_shares(synth["bands"])
+    charts.plot_figure2_capacity_exposure_by_band(water_shares=water_shares, heat_shares=heat_shares)
+    fig = captured[0]
+    titles = [ax.get_title() for ax in fig.axes]
+    assert any("Water Risk Band" in t for t in titles)
+    assert any("Heat Risk Band" in t for t in titles)
+    for t in titles:
+        assert "cuts)" not in t
+        assert "WaterRiskBand" not in t and "HeatRiskBand" not in t
+    legend_titles = {lg.get_title().get_text() for ax in fig.axes if (lg := ax.get_legend())}
+    assert legend_titles == {"Water Risk Band", "Heat Risk Band"}
+
+
 # --------------------------------------------------------------------------
 # FIGURE 6 (2026-09-05 article-figure-numbering round): CCRS-by-technology
 # violin + age-vs-age_factor scatter, PES only -- extracted from the
@@ -448,6 +471,38 @@ def test_figure6_exposure_panel_pools_countries_not_per_country():
     assert "enumerate(BUCKETS)" in src
     assert "for country in" not in src
     assert "for c in countries" not in src
+
+
+def test_figure6_yaxis_labels_have_no_gcm_scenario_suffix(synth):
+    """2026-09-06 follow-up: Panel A's y-axis is just "CCRS" (no
+    "(gfdl_esm4, PES)"); Panel B's y-axis is "Age Factor" (title case)."""
+    import matplotlib.pyplot as plt
+
+    fig, (ax_a, ax_b) = plt.subplots(1, 2)
+    try:
+        charts._draw_technology_exposure_panel(ax_a, synth["final"], PRIMARY_GCM, scenario="pes")
+        charts._draw_age_amplification_scatter(ax_b, synth["age_factors"])
+        assert ax_a.get_ylabel() == "CCRS"
+        assert ax_b.get_ylabel() == "Age Factor"
+    finally:
+        plt.close(fig)
+
+
+def test_figure6_opt_and_bau_variants_go_to_secondary(synth, tmp_path, monkeypatch):
+    """2026-09-06 follow-up: PES is the numbered Figure 6; opt/bau produce
+    the same two-panel structure, saved to combined/secondary/."""
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path / "combined" / "secondary")
+    for scen in ("opt", "bau"):
+        path = charts.plot_figure6_technology_age_vulnerability_pes(
+            final=synth["final"], age_factors=synth["age_factors"], scenario=scen,
+        )
+        assert path.parent == tmp_path / "combined" / "secondary"
+        assert f"_{scen}_" in path.name
+    pes_path = charts.plot_figure6_technology_age_vulnerability_pes(
+        final=synth["final"], age_factors=synth["age_factors"], scenario="pes",
+    )
+    assert pes_path.parent == tmp_path / "combined"
 
 
 def test_category_9_event_multiplier_removed_replaced_by_table():
@@ -992,12 +1047,33 @@ def _synthetic_draws(seed: int = 0) -> pd.DataFrame:
 
 
 def test_fig4_rank_stability_figure(tmp_path, monkeypatch):
-    """2026-09-05 article-figure-numbering round: this all-3-scenarios,
-    fused-panel version is no longer the article's headline Monte Carlo
-    figure (that is Figure 7, PES only, tested below) -- moved to
-    combined/secondary/ as a Supplementary candidate, logic unchanged."""
-    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
+    """2026-09-06 follow-up: this all-3-scenarios, fused-panel version IS the
+    article's Figure 7 -- saved to combined/ under the filename the PES-only
+    figure previously used, so the manuscript reference does not move."""
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
     path = charts.plot_ccrs_rank_stability(draws=_synthetic_draws())
+    assert path.exists()
+    assert path.parent == tmp_path / "combined"
+    assert path.name == f"figure7_montecarlo_stability_pes_{PRIMARY_GCM}.png"
+
+
+def test_fig4_rank_stability_uses_a_log_x_axis_by_default(tmp_path, monkeypatch):
+    """2026-09-06 follow-up: same x-axis treatment as the PES-only figure --
+    a log x-axis (default) separates the crowded Brazil/Portugal low end.
+    All three scenario panels get it; xscale="linear" stays available."""
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    captured = _capture_figures(monkeypatch, charts)
+    charts.plot_ccrs_rank_stability(draws=_synthetic_draws())
+    fig = captured[0]
+    assert len(fig.axes) == 3
+    for ax in fig.axes:
+        assert ax.get_xscale() == "log"
+
+
+@pytest.mark.parametrize("xscale", ["log", "linear"])
+def test_fig4_rank_stability_both_xscales_render(tmp_path, monkeypatch, xscale):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    path = charts.plot_ccrs_rank_stability(draws=_synthetic_draws(), xscale=xscale)
     assert path.exists()
 
 
@@ -1013,7 +1089,7 @@ def test_fig4_rank_stability_annotates_pairwise_order_stability(tmp_path, monkey
     carry the pairwise dominance evidence -- with India's synthetic mean
     (0.8) far above Brazil's (0.4) and Portugal's (0.3), "India > ..." must
     appear somewhere on the figure."""
-    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
     captured = _capture_figures(monkeypatch, charts)
     charts.plot_ccrs_rank_stability(draws=_synthetic_draws())
     fig = captured[0]
@@ -1031,16 +1107,26 @@ def test_fig4_country_colors_defined_for_every_country():
 # inset annotation (the separate rank-probability bar panel was dropped).
 # --------------------------------------------------------------------------
 def test_figure7_runs_without_error_on_synthetic_data(tmp_path, monkeypatch):
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
     path = charts.plot_figure7_montecarlo_stability_pes(draws=_synthetic_draws())
     assert path.exists()
+
+
+def test_figure7_pes_only_is_now_a_secondary_piece(tmp_path, monkeypatch):
+    """2026-09-06 follow-up: the article's Figure 7 became the 3-scenario
+    ``plot_ccrs_rank_stability``; this PES-only single panel is kept as a
+    standalone secondary figure with its own name."""
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
+    path = charts.plot_figure7_montecarlo_stability_pes(draws=_synthetic_draws())
+    assert path.parent == tmp_path
+    assert path.name == f"figure7_montecarlo_stability_pes_only_{PRIMARY_GCM}.png"
 
 
 def test_figure7_is_a_single_panel(tmp_path, monkeypatch):
     """2026-09-06: fused from two panels to one -- density curves only, with
     the ranking evidence as an inset text box (matching the decision already
     taken for ``plot_ccrs_rank_stability``)."""
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
     captured = _capture_figures(monkeypatch, charts)
     charts.plot_figure7_montecarlo_stability_pes(draws=_synthetic_draws())
     fig = captured[0]
@@ -1050,7 +1136,7 @@ def test_figure7_is_a_single_panel(tmp_path, monkeypatch):
 def test_figure7_only_uses_pes_draws(tmp_path, monkeypatch):
     """The density panel must be built from PES rows only -- opt/bau draws in
     the input frame must not leak in."""
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
     draws = _synthetic_draws()
     # Sabotage non-PES rows with an out-of-range value; if they leaked in,
     # the panel's x-range would reflect them.
@@ -1067,7 +1153,7 @@ def test_figure7_annotates_the_ordinal_ranking(tmp_path, monkeypatch):
     """The dropped rank-probability panel is replaced by an inset -- with
     India's synthetic mean (0.8) far above Brazil's (0.4) and Portugal's
     (0.3), the panel text must state the full ordering and a percentage."""
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
     captured = _capture_figures(monkeypatch, charts)
     charts.plot_figure7_montecarlo_stability_pes(draws=_synthetic_draws())
     fig = captured[0]
@@ -1076,9 +1162,22 @@ def test_figure7_annotates_the_ordinal_ranking(tmp_path, monkeypatch):
     assert "100%" in text
 
 
+def test_figure7_xaxis_label_has_no_gcm_suffix(tmp_path, monkeypatch):
+    """2026-09-06 follow-up: "(gfdl_esm4)" removed from the x-axis label on
+    both the primary (3-scenario) and the secondary (PES-only) figure."""
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    captured = _capture_figures(monkeypatch, charts)
+    charts.plot_figure7_montecarlo_stability_pes(draws=_synthetic_draws())
+    charts.plot_ccrs_rank_stability(draws=_synthetic_draws())
+    for fig in captured:
+        for ax in fig.axes:
+            assert PRIMARY_GCM not in ax.get_xlabel()
+
+
 @pytest.mark.parametrize("xscale", ["log", "linear"])
 def test_figure7_both_xscales_render(tmp_path, monkeypatch, xscale):
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
     path = charts.plot_figure7_montecarlo_stability_pes(draws=_synthetic_draws(), xscale=xscale)
     assert path.exists()
 

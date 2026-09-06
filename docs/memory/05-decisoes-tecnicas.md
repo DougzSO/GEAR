@@ -1113,3 +1113,47 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   ranking, ambos os `xscale`). Suíte completa verde (pandas 2.3.3).
 - **Status:** Ativa (commitada, "Fine-tune Figures 2, 6
   and 7 after the manuscript review").
+
+### 23.2 Segundo ajuste fino: texto, rosa dos ventos, variantes por cenário (2026-09-06)
+
+- **Fig 2:** títulos de painel passam a "a -- Water Risk Band" / "b -- Heat
+  Risk Band" (com espaço, sem o parentético metodológico "(fixed WRI
+  Aqueduct 4.0 cuts)" / "(... sample-relative cuts)"). Título de cada
+  legenda idem. `pad=12` no título do painel e `bbox_to_anchor` da legenda
+  de -0.2 → -0.28 para dar respiro vertical.
+- **Fig 6:** eixo Y do painel A passa de "CCRS (gfdl_esm4, PES)" para só
+  "CCRS"; eixo Y do painel B de "age_factor ( >= 1 )" para "Age Factor". A
+  função `plot_figure6_technology_age_vulnerability_pes` ganhou parâmetro
+  `scenario="pes"`; opt/bau geram a mesma estrutura de 2 painéis e vão para
+  `combined/secondary/figure6_technology_age_vulnerability_{scenario}_{gcm}`.
+  Painel B é idêntico nos três (invariante a cenário, por design).
+- **Fig 7:** a **Figure 7 do artigo passa a ser a versão de 3 cenários**
+  (`plot_ccrs_rank_stability`), salva em `combined/` com o nome que a
+  PES-only tinha (`figure7_montecarlo_stability_pes_{gcm}`) — a referência
+  do manuscrito não se move. A antiga PES-only
+  (`plot_figure7_montecarlo_stability_pes`) vira peça secundária isolada:
+  `combined/secondary/figure7_montecarlo_stability_pes_only_{gcm}`. O
+  `ccrs_rank_stability_{gcm}` órfão em secondary/ foi removido. "(gfdl_esm4)"
+  saiu do rótulo do eixo X das duas.
+  - **Correção final (mesma data):** `plot_ccrs_rank_stability` ganhou
+    `xscale="log"` (default), mesmo tratamento da PES-only — os 3 painéis
+    opt/bau/pes em escala log no eixo X (Brasil/Portugal deixam de ficar
+    espremidos). `FIGURE7_CAPTION` reescrito para a figura de 3 cenários
+    (texto-base fornecido por Douglas). Ajuste de precisão na frase final:
+    India > (Brasil e Portugal) em 100% dos draws nos 3 cenários, mas a
+    ordem Brasil↔Portugal **não** é estável (Brasil à frente em OPT/PES,
+    Portugal em BAU) — a legenda afirma robustez só para a divergência
+    India-vs-resto e declara a reversão Brasil-Portugal.
+- **Rosa dos ventos:** nenhuma mudança de código — `add_compass_rose` já
+  produz tamanho/estilo uniforme desde o fix de "final pass" de 2026-09-05
+  (o teste `test_compass_rose_is_the_same_physical_size_across_every_map_
+  category` já cobre isso). A divergência que Douglas viu eram PNGs velhos
+  no disco (opt/ssp126 gerados 09-05 07:45, antes do fix). Resolvido
+  regenerando todas as categorias de mapa.
+- **Testes:** novos — Fig 2 (títulos/legendas sem parentético, com espaço),
+  Fig 6 (eixos Y, variantes opt/bau → secondary), Fig 7
+  (`test_fig4_rank_stability_figure` agora afirma nome/pasta de Figure 7
+  primária; `test_figure7_pes_only_is_now_a_secondary_piece`; rótulo de eixo
+  X sem sufixo de GCM). Vários testes de Fig 7 trocaram
+  `monkeypatch OUT_DIR` ↔ `SECONDARY_DIR` por causa da troca de pasta.
+- **Status:** Ativa. Nenhum commit nesta sub-rodada — aguardando autorização.

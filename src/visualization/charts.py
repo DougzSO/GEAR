@@ -99,11 +99,14 @@ exists. Its panels are split across the article's real figure numbering:
   Panel B has no scenario dimension to restrict in the first place
   (age_factor does not vary by water_scenario) -- by design.
 
-``plot_ccrs_rank_stability`` (the fused, all-3-scenarios Monte Carlo
-figure) moves to ``combined/secondary/`` -- the article's headline Monte
-Carlo figure is now ``plot_figure7_montecarlo_stability_pes``, PES only, a
-single density panel with the ranking stability as an inset annotation
-(2026-09-06 fuse; was two panels).
+Figure 7 (2026-09-06 follow-up): the article's Figure 7 is
+``plot_ccrs_rank_stability`` -- the fused all-3-scenarios Monte Carlo
+density figure -- saved to ``combined/`` under the filename the PES-only
+figure previously used (``figure7_montecarlo_stability_pes_{gcm}``), so the
+manuscript reference does not move. ``plot_figure7_montecarlo_stability_
+pes`` (PES only, single density panel, ranking inset -- 2026-09-06 fuse;
+was two panels) is kept as a standalone secondary piece
+(``combined/secondary/figure7_montecarlo_stability_pes_only_{gcm}``).
 
 ``plot_hazard_term_contribution_distribution`` moves to
 ``combined/secondary/`` -- not cited in the current Results draft, kept as
@@ -543,9 +546,12 @@ def _draw_grouped_band_exposure_panel(ax, shares: pd.DataFrame, countries: list[
     ax.set_xlim(-0.8, positions[-1] + 0.8)
     ax.set_ylim(0, 1.05)
     for center, country in zip(block_centers, countries):
-        ax.text(center, -0.11, country, transform=ax.get_xaxis_transform(),
+        ax.text(center, -0.13, country, transform=ax.get_xaxis_transform(),
                 ha="center", va="top", fontweight="bold", fontsize=fs(10))
-    ax.set_title(title, fontweight="bold", fontsize=fs(11))
+    # ``pad`` lifts the panel title clear of the top of the bars -- the
+    # 2026-09-06 follow-up asked for a little more air between the title and
+    # what sits directly below it (here: the stacked bars).
+    ax.set_title(title, fontweight="bold", fontsize=fs(11), pad=12)
     ax.set_ylabel("Share of national computable capacity", fontsize=fs(9.5))
 
 
@@ -566,20 +572,27 @@ def plot_figure2_capacity_exposure_by_band(
     present = [c for c in countries if c in set(water["country"]) | set(heat["country"])]
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    # 2026-09-06 follow-up: the parenthetical methodology notes ("fixed WRI
+    # Aqueduct 4.0 cuts" / "sample-relative cuts") are dropped from the panel
+    # titles -- that detail lives in this module's / risk_bands.py's
+    # docstrings and the manuscript caption, not on the figure. The band-axis
+    # names are spelled with spaces ("Water Risk Band", not "WaterRiskBand").
     _draw_grouped_band_exposure_panel(
         axes[0], water, present, WATER_RISK_BANDS + ("NO_BAND",),
-        {**WATER_BAND_COLORS, "NO_BAND": "#e0e0e0"}, "a -- WaterRiskBand (fixed WRI Aqueduct 4.0 cuts)",
+        {**WATER_BAND_COLORS, "NO_BAND": "#e0e0e0"}, "a -- Water Risk Band",
     )
     _draw_grouped_band_exposure_panel(
         axes[1], heat, present, HEAT_RISK_BANDS + ("NO_BAND",),
-        {**HEAT_BAND_COLORS, "NO_BAND": "#e0e0e0"}, f"b -- HeatRiskBand ({gcm}, sample-relative cuts)",
+        {**HEAT_BAND_COLORS, "NO_BAND": "#e0e0e0"}, "b -- Heat Risk Band",
     )
+    # ``bbox_to_anchor`` y dropped from -0.2 to -0.28: a little more gap
+    # between the per-country x labels and the legend above it (2026-09-06).
     axes[0].legend(handles=_band_swatch_handles({**WATER_BAND_COLORS, "NO_BAND": "#e0e0e0"}),
-                    loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3, fontsize=fs(7.5),
-                    frameon=False, title="WaterRiskBand", title_fontsize=fs(8.5))
+                    loc="upper center", bbox_to_anchor=(0.5, -0.28), ncol=3, fontsize=fs(7.5),
+                    frameon=False, title="Water Risk Band", title_fontsize=fs(8.5))
     axes[1].legend(handles=_band_swatch_handles({**HEAT_BAND_COLORS, "NO_BAND": "#e0e0e0"}),
-                    loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3, fontsize=fs(7.5),
-                    frameon=False, title="HeatRiskBand", title_fontsize=fs(8.5))
+                    loc="upper center", bbox_to_anchor=(0.5, -0.28), ncol=3, fontsize=fs(7.5),
+                    frameon=False, title="Heat Risk Band", title_fontsize=fs(8.5))
 
     fig.tight_layout()
     out_path = save_figure(fig, OUT_DIR / "combined" / "figure2_capacity_exposure_by_band.png")
@@ -631,7 +644,10 @@ def _draw_technology_exposure_panel(ax, final: pd.DataFrame, gcm: str, scenario:
         labels.append(f"{bucket.capitalize()}\n{note}")
     ax.set_xticks(range(len(BUCKETS)))
     ax.set_xticklabels(labels, fontsize=fs(8))
-    ax.set_ylabel(f"CCRS ({gcm}, {scenario.upper()})", fontsize=fs(9.5))
+    # 2026-09-06 follow-up: no "(gfdl_esm4, PES)" suffix on the y-axis label
+    # -- the GCM and scenario are already stated in the panel title and the
+    # manuscript caption.
+    ax.set_ylabel("CCRS", fontsize=fs(9.5))
     ax.set_title(f"a -- Technology exposure ({scenario.upper()})", fontweight="bold", fontsize=fs(11))
 
 
@@ -654,7 +670,7 @@ def _draw_age_amplification_scatter(ax, age_factors: pd.DataFrame) -> None:
                    color=BUCKET_COLORS[bucket], edgecolors="none")
     ax.axhline(1.0, color="black", linewidth=0.6, linestyle=":")
     ax.set_xlabel("Operational age (years) -- marker area proportional to plant capacity", fontsize=fs(9))
-    ax.set_ylabel("age_factor ( >= 1 )", fontsize=fs(9.5))
+    ax.set_ylabel("Age Factor", fontsize=fs(9.5))
     ax.set_title("b -- Age-driven risk amplification", fontweight="bold", fontsize=fs(11))
 
     wm = []
@@ -673,8 +689,14 @@ def _draw_age_amplification_scatter(ax, age_factors: pd.DataFrame) -> None:
 def plot_figure6_technology_age_vulnerability_pes(
     countries: list[str] | None = None,
     final: pd.DataFrame | None = None, age_factors: pd.DataFrame | None = None,
-    gcm: str = PRIMARY_GCM,
+    gcm: str = PRIMARY_GCM, scenario: str = "pes",
 ) -> pathlib.Path:
+    """PES is the manuscript's Figure 6. ``scenario="opt"``/``"bau"`` produce
+    the same two-panel structure for the other trajectories -- saved to
+    ``combined/secondary/`` (2026-09-06 follow-up), not promoted to a
+    numbered figure. Only Panel A (technology exposure) changes with the
+    scenario; Panel B (age vs age_factor) is scenario-invariant by design
+    (see the module comment above) and is identical in all three."""
     countries = countries or COUNTRIES
     final = final if final is not None else vdata.load_ccrs_final()
     age_factors = age_factors if age_factors is not None else vdata.load_age_factors()
@@ -682,15 +704,19 @@ def plot_figure6_technology_age_vulnerability_pes(
     age_factors = age_factors[age_factors["country"].isin(countries)]
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6.5))
-    _draw_technology_exposure_panel(axes[0], final, gcm, scenario="pes")
+    _draw_technology_exposure_panel(axes[0], final, gcm, scenario=scenario)
     _draw_age_amplification_scatter(axes[1], age_factors)
     handles = _bucket_identity_legend_handles()
     axes[1].legend(handles=handles, fontsize=fs(8), loc="upper left", bbox_to_anchor=(1.02, 1.0),
                     ncol=1, borderaxespad=0, title="Technology", title_fontsize=fs(8.5))
 
     fig.tight_layout()
-    out_path = save_figure(fig, OUT_DIR / "combined" / f"figure6_technology_age_vulnerability_pes_{gcm}.png")
-    logger.info("Figure 6 saved to %s", out_path)
+    if scenario == "pes":
+        out_path = OUT_DIR / "combined" / f"figure6_technology_age_vulnerability_pes_{gcm}.png"
+    else:
+        out_path = SECONDARY_DIR / f"figure6_technology_age_vulnerability_{scenario}_{gcm}.png"
+    out_path = save_figure(fig, out_path)
+    logger.info("Figure 6 (%s) saved to %s", scenario, out_path)
     return out_path
 
 
@@ -743,11 +769,11 @@ def plot_figure6_technology_age_vulnerability_pes(
 # NOT reopened here -- ``FIGURE7_CAPTION`` below is text only. It lives in
 # the manuscript's own figure-caption text, not printed on the figure
 # itself: this project's convention is no figure prints its own
-# multi-sentence caption. An earlier version of this caption named "a"/"b"
-# panels; the 2026-09-06 fuse removed that split, and the caption below now
-# describes the single density panel with its ranking inset. The fused
-# 3-scenario ``plot_ccrs_rank_stability`` is unrelated to this caption and
-# has none of its own (it moved to secondary/, a Supplementary candidate).
+# multi-sentence caption. Caption history: an early version named "a"/"b"
+# panels; the 2026-09-06 fuse removed that split; the same-day follow-up
+# then made the 3-scenario ``plot_ccrs_rank_stability`` the article's
+# Figure 7, and the caption below was rewritten to describe THAT figure
+# (opt/bau/pes density panels, one ranking inset each).
 #
 # 2026-09-05 follow-up: the caption previously claimed the distributions
 # "capture structural uncertainties between global circulation models
@@ -763,21 +789,32 @@ def plot_figure6_technology_age_vulnerability_pes(
 # figure for what it is -- parametric uncertainty under GFDL-ESM4 (the
 # primary model) on SSP5-8.5.
 #
-# 2026-09-06: Figure 7 fused to ONE panel (see the comment above the
-# function) -- the caption no longer has an "a"/"b" split; the ranking
-# evidence is now an inset annotation on the single density panel.
+# 2026-09-06: Figure 7 fused to ONE panel; then, in the same-day follow-up,
+# the article's Figure 7 became the 3-scenario ``plot_ccrs_rank_stability``
+# (the PES-only single panel is now a standalone secondary piece). The
+# caption below was rewritten to describe that 3-scenario figure.
+#
+# Final-clause accuracy check against the real-data figure: India tops the
+# ranking in 100% of draws under every scenario (India > Brazil and India >
+# Portugal are both 100% in opt/bau/pes). The Brazil-Portugal order, by
+# contrast, is NOT stable -- Brazil leads under OPT (94%) and PES (100%),
+# Portugal leads under BAU (100%) -- so the caption claims robustness only
+# for the India-vs-rest divergence and states the Brazil-Portugal reversal
+# explicitly rather than implying a fixed three-way order.
 # --------------------------------------------------------------------------
 FIGURE7_CAPTION = (
+    "Figure 7 | Monte Carlo uncertainty propagation and comparative risk stability. "
     "Probability density functions of the aggregate Climate Change Risk Score (CCRS) for "
-    "Brazil, Portugal, and India generated through 1,000 Monte Carlo iterations. The "
-    "distributions capture parametric uncertainty in the framework's bounding assumptions "
-    "(the thermal water/heat/drought weighting ratio, the age-factor retention rates, and the "
-    "EventMultiplier constant) under GFDL-ESM4, the framework's primary climate model, on the "
-    "high-emission SSP5-8.5 trajectory. The inset reports the ordinal risk ranking held across "
-    "the Monte Carlo draws. Despite stochastic parameter variation and the expected widening of "
-    "probability density under extreme warming, the relative infrastructural risk divergence -- "
-    "wherein India's compounded multi-hazard exposure systematically outpaces Portugal's "
-    "localized thermal risk -- remains structurally robust."
+    "Brazil, Portugal, and India under the OPT (SSP1-2.6), BAU (SSP3-7.0), and PES (SSP5-8.5) "
+    "trajectories, generated through 1,000 Monte Carlo iterations under GFDL-ESM4, the "
+    "framework's primary climate model. Inset annotations report the ordinal risk ranking held "
+    "across the simulated draws. Despite stochastic parameter variation and the expected "
+    "broadening of probability density under higher-emission trajectories, the relative "
+    "infrastructural risk divergence -- wherein India's compounded multi-hazard exposure "
+    "systematically outpaces Portugal's more localized risk profile -- remains structurally "
+    "robust: India ranks first in every scenario and every simulated draw. The Brazil-Portugal "
+    "ordering, by contrast, is not stable across trajectories (Brazil ranks above Portugal "
+    "under OPT and PES, Portugal above Brazil under BAU)."
 )
 
 
@@ -804,7 +841,7 @@ def _pairwise_dominant_direction(pairwise: pd.DataFrame, scenario: str) -> list[
 
 def plot_ccrs_rank_stability(
     countries: list[str] | None = None, draws: pd.DataFrame | None = None,
-    pre: "mc._Precomputed | None" = None,
+    pre: "mc._Precomputed | None" = None, xscale: str = "log",
 ) -> pathlib.Path:
     """FIG 4 (fused), all 3 scenarios -- one panel per water_scenario,
     overlaid CCRS density curves (one per country, ``COUNTRY_COLORS``) with
@@ -815,12 +852,14 @@ def plot_ccrs_rank_stability(
     prototypes (density + rank-probability bars) generated in the first
     redesign round.
 
-    2026-09-05 article-figure-numbering round: this 3-scenario version is
-    no longer the article's headline Monte Carlo figure -- that is now
-    ``plot_figure7_montecarlo_stability_pes`` (PES only, 2 panels: density
-    + a genuine separate ranking-stability panel). This function is KEPT,
-    unchanged in logic, saved to ``combined/secondary/`` as a Supplementary
-    candidate ("all 3 scenarios at once" reference), not deleted."""
+    2026-09-06 follow-up: this 3-scenario version becomes the article's
+    Figure 7 -- it carries opt/bau/pes in one figure, which the PES-only
+    single panel could not. It is saved to ``combined/`` under the exact
+    filename the PES-only figure used (``figure7_montecarlo_stability_pes_
+    {gcm}``), so the manuscript's Figure 7 reference does not move. The
+    former PES-only figure is kept as a standalone secondary piece
+    (``plot_figure7_montecarlo_stability_pes`` -> ``combined/secondary/
+    figure7_montecarlo_stability_pes_only_{gcm}``)."""
     from scipy import stats as sp_stats
 
     countries = countries or COUNTRIES
@@ -833,9 +872,22 @@ def plot_ccrs_rank_stability(
     fig, axes = plt.subplots(1, len(scenarios), figsize=(5.8 * len(scenarios), 5.8), sharey=True)
     axes = np.atleast_1d(axes)
     lo, hi = draws["ccrs"].min(), draws["ccrs"].max()
-    grid = np.linspace(lo, hi, 400) if hi > lo else np.array([lo])
+    # X-axis (2026-09-06 follow-up): same treatment as the PES-only figure --
+    # Brazil and Portugal sit close together far below India, and a linear
+    # axis crushes them against the left. A log x-axis (default) gives the
+    # low end proportionally more room and separates the two; the density
+    # SHAPE is preserved (this is not the point+CI form). ``xscale="linear"``
+    # stays available for comparison. The grid is global (min..max over every
+    # scenario) so all three panels share one x extent.
+    log_axis = xscale == "log" and lo > 0 and hi > lo
+    if log_axis:
+        grid = np.geomspace(lo, hi, 400)
+    else:
+        grid = np.linspace(lo, hi, 400) if hi > lo else np.array([lo])
 
     for ax, scenario in zip(axes, scenarios):
+        if log_axis:
+            ax.set_xscale("log")
         for country in countries:
             values = draws.loc[(draws["country"] == country) & (draws["water_scenario"] == scenario), "ccrs"]
             values = values.dropna().to_numpy()
@@ -846,7 +898,7 @@ def plot_ccrs_rank_stability(
             ax.fill_between(grid, density, color=COUNTRY_COLORS[country], alpha=0.25)
             ax.axvline(np.median(values), color=COUNTRY_COLORS[country], linestyle="--", linewidth=1.0)
         ax.set_title(scenario, fontweight="bold", fontsize=fs(11))
-        ax.set_xlabel(f"CCRS ({PRIMARY_GCM}, capacity-weighted mean per draw)", fontsize=fs(9))
+        ax.set_xlabel("CCRS (capacity-weighted mean per draw)", fontsize=fs(9))
 
         lines = _pairwise_dominant_direction(pairwise, scenario)
         if lines:
@@ -860,22 +912,24 @@ def plot_ccrs_rank_stability(
     fig.legend(handles=handles, fontsize=fs(9), loc="lower center", ncol=len(countries), frameon=False,
                bbox_to_anchor=(0.5, -0.02))
     fig.tight_layout(rect=(0, 0.05, 1, 1))
-    out_path = save_figure(fig, SECONDARY_DIR / f"ccrs_rank_stability_{PRIMARY_GCM}.png")
-    logger.info("CCRS rank stability, all scenarios (secondary) saved to %s", out_path)
+    out_path = save_figure(fig, OUT_DIR / "combined" / f"figure7_montecarlo_stability_pes_{PRIMARY_GCM}.png")
+    logger.info("Figure 7 (all scenarios) saved to %s", out_path)
     return out_path
 
 
 # --------------------------------------------------------------------------
-# FIGURE 7 -- Monte Carlo CCRS density + ordinal ranking stability, PES only
-# (article figure numbering round, 2026-09-05; fused to one panel 2026-09-06)
+# PES-only Monte Carlo CCRS density + ordinal ranking stability
+# (article figure numbering round, 2026-09-05; fused to one panel 2026-09-06;
+# demoted to a standalone secondary piece 2026-09-06 follow-up -- the
+# article's Figure 7 is now the 3-scenario ``plot_ccrs_rank_stability``).
 #
 # ONE panel: overlaid CCRS density curves for the three countries under PES,
 # with the ranking-stability evidence as a small inset text box ("India >
 # Brazil > Portugal in 100% of draws"), not a second bar panel. This matches
 # the decision already taken for ``plot_ccrs_rank_stability`` (the fused
-# 3-scenario Supplementary figure above): the rank-probability bar chart
-# repeats, on a 0-100% axis, what the density separation and one line of
-# text already say. N=1,000 Monte Carlo iterations is unchanged
+# 3-scenario figure above, now the article's Figure 7): the rank-probability
+# bar chart repeats, on a 0-100% axis, what the density separation and one
+# line of text already say. N=1,000 Monte Carlo iterations is unchanged
 # (ARCHITECTURE.md Sec. 8, not reopened) -- same ``run_country_scenario_
 # draws`` output, sliced to PES.
 #
@@ -940,7 +994,7 @@ def plot_figure7_montecarlo_stability_pes(
                           boxstyle="round,pad=0.35"))
 
     ax.set_title("CCRS density and ranking stability (SSP5-8.5/PES)", fontweight="bold", fontsize=fs(11))
-    ax.set_xlabel(f"CCRS ({PRIMARY_GCM}, capacity-weighted mean per draw)", fontsize=fs(9.5))
+    ax.set_xlabel("CCRS (capacity-weighted mean per draw)", fontsize=fs(9.5))
     ax.set_ylabel("Density (Monte Carlo draws)", fontsize=fs(10))
     # Legend below the panel, not inside it -- on a log x-axis the Brazil/
     # Portugal peaks sit hard against the left edge, exactly where an
@@ -952,8 +1006,8 @@ def plot_figure7_montecarlo_stability_pes(
                frameon=False, bbox_to_anchor=(0.5, -0.02))
 
     fig.tight_layout(rect=(0, 0.05, 1, 1))
-    out_path = save_figure(fig, OUT_DIR / "combined" / f"figure7_montecarlo_stability_pes_{PRIMARY_GCM}.png")
-    logger.info("Figure 7 saved to %s", out_path)
+    out_path = save_figure(fig, SECONDARY_DIR / f"figure7_montecarlo_stability_pes_only_{PRIMARY_GCM}.png")
+    logger.info("Figure 7 PES-only (secondary) saved to %s", out_path)
     return out_path
 
 
