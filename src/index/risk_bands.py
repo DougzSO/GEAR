@@ -283,13 +283,14 @@ WORST_CASE_TIE_BREAK = "water"
 # surface this warning on the figure itself, not only in this module's
 # text report, since the reader has no other way to tell that part of what
 # they are looking at is sample-relative.
+# 2026-09-05 review: the on-figure note was too long (six lines of running
+# text under the legend). Shortened to the one essential fact a reader needs
+# from the figure itself; the full reasoning (why HeatRiskBand is
+# sample-relative, why water uses fixed WRI cuts) stays in this module's
+# docstring/comments above, not duplicated on the figure.
 WORST_CASE_COMPARABILITY_NOTE = (
-    "Worst-case band per plant (water vs. heat, whichever ranks more severe on "
-    "its own scale). WaterRiskBand uses fixed absolute WRI Aqueduct 4.0 cuts "
-    "(stable across runs); HeatRiskBand uses THIS run's own sample-relative "
-    "p25/p75/p95 cuts and is not comparable across runs with a different "
-    "scenario/GCM pool -- where heat is the determinant (see legend), this "
-    "figure inherits that limitation."
+    "Water and heat bands are not comparable on the same scale "
+    "(HeatRiskBand's cuts are specific to this run's own sample)."
 )
 
 

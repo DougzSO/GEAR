@@ -89,7 +89,11 @@ def _synthetic_bands(final: pd.DataFrame) -> dict[str, BandTable]:
 
 
 def _synthetic_age_factors(final: pd.DataFrame) -> pd.DataFrame:
-    return final[["plant_uid", "country", "bucket", "age_factor",
+    # "age" included (2026-09-05, Figure 3 Panel C) -- production
+    # age_factor.compute_age_factors() carries it alongside age_factor
+    # itself; earlier synthetic fixtures omitted it since no consumer
+    # needed it before Panel C's age-vs-age_factor scatter.
+    return final[["plant_uid", "country", "bucket", "age", "age_factor",
                    "age_factor_neutralized_missing_year"]].drop_duplicates("plant_uid")
 
 
@@ -147,6 +151,50 @@ def test_category_1_ccrs_overview_map(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     paths = maps.plot_ccrs_overview_map(countries=["Portugal"], final=synth["final"])
     assert paths["combined"].exists()
+
+
+# --------------------------------------------------------------------------
+# Scenario mapping confirmation (2026-09-05 article-figure-numbering
+# round): OPT=SSP1-2.6, BAU=SSP3-7.0, PES=SSP5-8.5. Confirmed against
+# ``src.config.AQUEDUCT_SCENARIO_FOR_CMIP6`` -- the single source of truth
+# every ``heat_risk_band_{heat_scenario}`` filename derives from
+# (``WATER_TO_HEAT`` is its exact inverse). No code fix was needed: the
+# mapping was already correct.
+# --------------------------------------------------------------------------
+def test_scenario_mapping_opt_bau_pes_matches_ssp_labels():
+    from src.config import AQUEDUCT_SCENARIO_FOR_CMIP6
+    from src.index.ccrs_calculator import WATER_TO_HEAT
+
+    assert AQUEDUCT_SCENARIO_FOR_CMIP6 == {"ssp126": "opt", "ssp370": "bau", "ssp585": "pes"}
+    assert WATER_TO_HEAT == {"opt": "ssp126", "bau": "ssp370", "pes": "ssp585"}
+
+
+# --------------------------------------------------------------------------
+# FIGURE 5 (2026-09-05 article-figure-numbering round): asset-level CCRS
+# map, PES only, continuous viridis color instead of category 1's bucket
+# coloring.
+# --------------------------------------------------------------------------
+@boundaries_needed
+def test_figure5_runs_without_error_on_synthetic_data(synth, tmp_path, monkeypatch):
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    paths = maps.plot_figure5_ccrs_asset_level_pes(countries=["Portugal"], final=synth["final"])
+    assert paths["combined"].exists()
+
+
+@boundaries_needed
+def test_figure5_color_is_continuous_ccrs_not_bucket(synth, tmp_path, monkeypatch):
+    """Distinguishes Figure 5 from category 1 -- the marker color array
+    must be the actual CCRS values (varying continuously), not a small set
+    of bucket hex colors."""
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    captured = _capture_figures(monkeypatch, maps)
+    maps.plot_figure5_ccrs_asset_level_pes(countries=["Brazil", "Portugal", "India"], final=synth["final"])
+    fig = captured[0]
+    scatter_collections = [c for ax in fig.axes for c in ax.collections if hasattr(c, "get_array")
+                            and c.get_array() is not None]
+    assert scatter_collections
+    all_values = set(np.concatenate([np.asarray(c.get_array()).ravel() for c in scatter_collections]).tolist())
+    assert len(all_values) > len(BUCKETS)  # more distinct colors than the 4 bucket hexes, pooled across panels
 
 
 @boundaries_needed
@@ -208,62 +256,154 @@ def test_category_8_capacity_by_risk_band(synth, tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# FIG 3a/3b -- capacity vulnerability by bucket x scenario, one sister figure
-# per risk-band axis (Douglas's 2026-09-05 request, both axes shown side by
-# side rather than heat alone -- see the module comment in charts.py),
-# promoted out of combined/secondary/ into the primary output dir.
+# Old FIG 3 designs (bucket-paneled, then scenario-paneled bucket-cut
+# figures, then the 2x2 composite) -- ALL DELETED outright across two
+# rounds, none relocated again. The article's real figure numbering is
+# Figure 2 (band exposure) and Figure 6 (technology violin + age scatter),
+# tested further below.
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("plot_fn, kwargs", [
-    (charts.plot_capacity_vulnerability_by_bucket_water, {}),
-    (charts.plot_capacity_vulnerability_by_bucket_heat, {}),
-])
-def test_fig3_saved_to_primary_dir(synth, tmp_path, monkeypatch, plot_fn, kwargs):
+def test_old_fig3_designs_are_gone():
+    assert not hasattr(charts, "plot_capacity_vulnerability_by_bucket_water")
+    assert not hasattr(charts, "plot_capacity_vulnerability_by_bucket_heat")
+    assert not hasattr(charts, "_capacity_vulnerability_scenario_figure")
+    assert not hasattr(charts, "plot_figure3_capacity_vulnerability_profiles")
+
+
+# --------------------------------------------------------------------------
+# FIGURE 2 (2026-09-05 article-figure-numbering round): national capacity
+# exposure by risk band, water + heat sub-blocks, opt/bau/pes only --
+# extracted from the (now-deleted) composite's Panel A.
+# --------------------------------------------------------------------------
+def test_figure2_runs_without_error_on_synthetic_data(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
-    path = plot_fn(bands=synth["bands"], **kwargs)
+    water_shares = vdata.load_water_band_shares(synth["bands"])
+    heat_shares = vdata.load_heat_band_shares(synth["bands"])
+    path = charts.plot_figure2_capacity_exposure_by_band(water_shares=water_shares, heat_shares=heat_shares)
     assert path.exists()
-    assert "secondary" not in str(path)  # promoted, not left in combined/secondary/
 
 
-@pytest.mark.parametrize("band_col, bands_tuple", [
-    ("water_risk_band", WATER_RISK_BANDS),
-    ("heat_risk_band", HEAT_RISK_BANDS),
+def test_figure2_is_two_panels_water_and_heat(synth, tmp_path, monkeypatch):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    captured = _capture_figures(monkeypatch, charts)
+    water_shares = vdata.load_water_band_shares(synth["bands"])
+    heat_shares = vdata.load_heat_band_shares(synth["bands"])
+    charts.plot_figure2_capacity_exposure_by_band(water_shares=water_shares, heat_shares=heat_shares)
+    fig = captured[0]
+    assert len(fig.axes) == 2
+
+
+@pytest.mark.parametrize("band_col, bands_tuple, group_cols", [
+    ("water_risk_band", WATER_RISK_BANDS, ["country", "water_scenario"]),
+    ("heat_risk_band", HEAT_RISK_BANDS, ["country", "heat_scenario"]),
 ])
-def test_fig3_capacity_shares_sum_to_100_pct_per_bucket_country_scenario(synth, band_col, bands_tuple):
+def test_figure2_sums_to_100_pct_per_group_both_sub_blocks(synth, band_col, bands_tuple, group_cols):
+    """Figure 2's data (band_capacity_shares, no bucket cut, national
+    aggregation) must sum to 1.0 per group in BOTH the water and the heat
+    sub-block."""
     from src.index import ccrs_report as cr
 
     frame = synth["bands"][PRIMARY_GCM].frame
-    shares = cr.band_capacity_shares(frame, band_col, bands_tuple, ["bucket", "country", "water_scenario"])
-    totals = shares.groupby(["bucket", "country", "water_scenario"])["capacity_share"].sum()
-    # each (bucket, country, scenario) cell's bands + NO_BAND sum to 1.0 --
-    # same convention as risk_bands/ccrs_report (never silently short of 100%)
+    shares = cr.band_capacity_shares(frame, band_col, bands_tuple, group_cols)
+    totals = shares.groupby(group_cols)["capacity_share"].sum()
     np.testing.assert_allclose(totals.to_numpy(), 1.0, atol=1e-9)
 
 
-@pytest.mark.parametrize("band_col, bands_tuple", [
-    ("water_risk_band", WATER_RISK_BANDS),
-    ("heat_risk_band", HEAT_RISK_BANDS),
-])
-def test_fig3_all_four_buckets_are_segregated_not_mixed(synth, band_col, bands_tuple):
-    from src.index import ccrs_report as cr
+def test_figure2_has_no_bucket_cut_and_no_historical_baseline():
+    """Figure 2 is a national aggregation (no bucket cut, unlike the
+    deleted bucket-vulnerability designs) and has no "historical baseline"
+    scenario -- confirmed by checking the underlying data function's source
+    (no bucket grouping) and that only 3 scenarios are ever iterated over
+    anywhere this figure's data comes from."""
+    import inspect
 
-    frame = synth["bands"][PRIMARY_GCM].frame
-    shares = cr.band_capacity_shares(frame, band_col, bands_tuple, ["bucket", "country", "water_scenario"])
-    assert set(shares["bucket"].unique()) == set(BUCKETS)
-    # one row per band (+ NO_BAND) per (bucket, country, scenario) cell -- no
-    # cross-bucket blending anywhere in the grouped frame
-    for bucket in BUCKETS:
-        sub = shares[shares["bucket"] == bucket]
-        assert set(sub["country"]) <= set(COUNTRIES)
-        n_expected_rows = len(sub[["country", "water_scenario"]].drop_duplicates()) * (len(bands_tuple) + 1)
-        assert len(sub) == n_expected_rows
+    from src.visualization import data as vdata_module
+
+    water_src = inspect.getsource(vdata_module.compute_water_band_shares)
+    assert "bucket" not in water_src
+    figure2_src = inspect.getsource(charts.plot_figure2_capacity_exposure_by_band)
+    assert "historical" not in figure2_src.lower()
+    assert "baseline" not in figure2_src.lower()
 
 
-def test_fig3a_and_fig3b_are_distinct_files_with_different_band_axes(synth, tmp_path, monkeypatch):
+# --------------------------------------------------------------------------
+# FIGURE 6 (2026-09-05 article-figure-numbering round): CCRS-by-technology
+# violin + age-vs-age_factor scatter, PES only -- extracted from the
+# (now-deleted) composite's Panels B/C.
+# --------------------------------------------------------------------------
+def test_figure6_runs_without_error_on_synthetic_data(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
-    water_path = charts.plot_capacity_vulnerability_by_bucket_water(bands=synth["bands"])
-    heat_path = charts.plot_capacity_vulnerability_by_bucket_heat(bands=synth["bands"])
-    assert water_path != heat_path
-    assert water_path.exists() and heat_path.exists()
+    path = charts.plot_figure6_technology_age_vulnerability_pes(
+        final=synth["final"], age_factors=synth["age_factors"],
+    )
+    assert path.exists()
+
+
+def test_figure6_is_two_panels(synth, tmp_path, monkeypatch):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    captured = _capture_figures(monkeypatch, charts)
+    charts.plot_figure6_technology_age_vulnerability_pes(final=synth["final"], age_factors=synth["age_factors"])
+    fig = captured[0]
+    assert len(fig.axes) == 2
+
+
+def test_figure6_violin_panel_is_restricted_to_pes(synth, tmp_path, monkeypatch):
+    """Confirms Panel A's data only ever includes PES rows -- this was
+    ALREADY true before this round (default ``scenario="pes"``), reported
+    rather than silently "fixed" since there was no bug."""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    try:
+        charts._draw_technology_violin_panel(ax, synth["final"], PRIMARY_GCM, scenario="pes")
+        assert "PES" in ax.get_title()
+    finally:
+        plt.close(fig)
+
+
+def test_figure6_scatter_skips_a_bucket_with_zero_known_age_plants(tmp_path, monkeypatch):
+    """A bucket where every plant's age is NaN (missing commissioning_year)
+    must not crash the scatter -- it simply contributes no points."""
+    import matplotlib.pyplot as plt
+
+    age_factors = pd.DataFrame({
+        "plant_uid": [f"P{i}" for i in range(8)],
+        "country": ["Brazil"] * 8,
+        "bucket": (["hydro"] * 4) + (["wind"] * 4),
+        "age": [10.0, 20.0, 30.0, 40.0] + [np.nan] * 4,  # wind: zero known-age plants
+        "age_factor": [1.1, 1.2, 1.3, 1.4] + [1.0] * 4,
+        "age_factor_neutralized_missing_year": [False] * 4 + [True] * 4,
+    })
+    fig, ax = plt.subplots()
+    try:
+        charts._draw_age_amplification_scatter(ax, age_factors)
+        assert len(ax.collections) == 1  # only hydro plotted -- wind contributed nothing, did not crash
+    finally:
+        plt.close(fig)
+
+
+def test_figure6_scatter_panel_has_no_scenario_filter():
+    """age_factor does not vary by water_scenario -- Panel B's data is not
+    (and should not be) restricted to PES the way Panel A's is. Checks for
+    an actual water_scenario COLUMN ACCESS/comparison, not just the word
+    (which legitimately appears in the docstring's explanation)."""
+    import inspect
+
+    src = inspect.getsource(charts._draw_age_amplification_scatter)
+    assert '["water_scenario"]' not in src
+    assert "== \"pes\"" not in src
+
+
+def test_figure6_violin_panel_pools_countries_not_per_country():
+    """Panel A is a per-TECHNOLOGY cut pooling all 3 countries, unlike
+    ``plot_hazard_term_contribution_distribution`` (per-country) -- confirmed
+    by checking ``_draw_technology_violin_panel`` groups only by bucket, not
+    country."""
+    import inspect
+
+    src = inspect.getsource(charts._draw_technology_violin_panel)
+    assert "enumerate(BUCKETS)" in src
+    assert "for country in" not in src
+    assert "for c in countries" not in src
 
 
 def test_category_9_event_multiplier_removed_replaced_by_table():
@@ -570,7 +710,10 @@ def test_worst_case_map_carries_the_comparability_caption(synth, tmp_path, monke
     """Approved as an explicit exception to Correction 2 -- this figure keeps
     a caption footer because HeatRiskBand's sample-relative cuts make part of
     the map non-comparable across runs, and that must be stated on the
-    figure, not only in risk_bands.py's text report."""
+    figure, not only in risk_bands.py's text report. 2026-09-05 review: the
+    note text itself was shortened to one short sentence -- the full
+    reasoning stays in risk_bands.py's comments/docstring, not on the
+    figure."""
     from src.index.risk_bands import WORST_CASE_COMPARABILITY_NOTE
 
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
@@ -578,10 +721,13 @@ def test_worst_case_map_carries_the_comparability_caption(synth, tmp_path, monke
     maps.plot_worst_case_risk_band_map(countries=["Brazil", "Portugal", "India"], final=synth["final"])
     fig = captured[0]
     assert len(fig.texts) == 1
-    assert "sample-relative" in fig.texts[0].get_text()
-    assert "HeatRiskBand" in fig.texts[0].get_text() or "not comparable" in fig.texts[0].get_text()
+    assert "not comparable" in fig.texts[0].get_text()
+    assert "HeatRiskBand" in fig.texts[0].get_text()
     # sanity: the constant used at the call site is the one documented in risk_bands.py
-    assert "sample-relative" in WORST_CASE_COMPARABILITY_NOTE
+    assert "not comparable" in WORST_CASE_COMPARABILITY_NOTE
+    # the shortened note must still fit on one/two short lines, not the old
+    # six-sentence paragraph
+    assert len(WORST_CASE_COMPARABILITY_NOTE) < 200
 
 
 @boundaries_needed
@@ -592,6 +738,27 @@ def test_worst_case_map_is_one_file_per_scenario(synth, tmp_path, monkeypatch):
     assert len(set(paths.values())) == 3
     for p in paths.values():
         assert p.exists()
+
+
+@boundaries_needed
+def test_worst_case_map_saves_to_secondary(synth, tmp_path, monkeypatch):
+    """2026-09-05 article-figure-numbering round: not cited in the current
+    Results draft -- moved to combined/secondary/ (Supplementary
+    candidate, not deleted)."""
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    path = maps.plot_worst_case_risk_band_map(countries=["Portugal"], final=synth["final"])["combined"]
+    assert path.parent == tmp_path / "combined" / "secondary"
+
+
+@boundaries_needed
+def test_ccrs_scenario_delta_combined_saves_to_secondary(synth, tmp_path, monkeypatch):
+    """Same treatment as the worst-case map -- not cited in the current
+    Results draft."""
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    path = maps.plot_ccrs_scenario_delta_map(
+        countries=["Portugal"], final=synth["final"], combined=True,
+    )["combined"]
+    assert path.parent == tmp_path / "combined" / "secondary"
 
 
 # --------------------------------------------------------------------------
@@ -634,22 +801,86 @@ def test_map_panels_each_get_their_own_compass_rose(synth, tmp_path, monkeypatch
     fig = captured[0]
     assert len(fig.axes) == 3
     for ax in fig.axes:
-        # add_compass_rose adds 4 kite Polygon patches plus an "N" text, per panel
-        assert len(ax.patches) >= 4
-        assert any(t.get_text() == "N" for t in ax.texts)
+        # add_compass_rose adds COMPASS_ROSE_POINTS (8) kite Polygon patches
+        # plus an "N" text, per panel -- only "N" is labelled (2026-09-05
+        # review: previously every direction was spelled out)
+        assert len(ax.patches) >= _common.COMPASS_ROSE_POINTS
+        texts = [t.get_text() for t in ax.texts]
+        assert texts.count("N") == 1
+        for direction in ("NE", "E", "SE", "S", "SW", "W", "NW"):
+            assert direction not in texts
 
 
-def test_add_compass_rose_is_a_star_not_a_single_arrow():
+def test_add_compass_rose_is_an_8_point_star_not_a_single_arrow():
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots()
     try:
         _common.add_compass_rose(ax)
-        assert len(ax.patches) == 4  # 4 kite quadrilaterals (N/E/S/W), not one arrow patch
+        # 8 kite quadrilaterals, not one arrow patch and not the old 4-point version
+        assert len(ax.patches) == _common.COMPASS_ROSE_POINTS == 8
         for patch in ax.patches:
             assert len(patch.get_xy()) == 5  # closed quadrilateral (4 vertices + repeat of first)
         assert sum(1 for t in ax.texts if t.get_text() == "N") == 1
     finally:
         plt.close(fig)
+
+
+def test_compass_rose_size_is_fixed_physical_inches_not_axes_fraction():
+    """2026-09-05 review: the rose must NOT grow with the panel -- it is
+    sized in a fixed number of inches (``COMPASS_ROSE_SIZE_IN``), converted
+    to each panel's own axes-fraction units, rather than a flat
+    axes-fraction diameter that would render larger on a bigger panel."""
+    import matplotlib.pyplot as plt
+
+    fig_small, ax_small = plt.subplots(figsize=(3, 3))
+    fig_big, ax_big = plt.subplots(figsize=(14, 14))
+    try:
+        _common.add_compass_rose(ax_small)
+        _common.add_compass_rose(ax_big)
+        # tip-to-center distance in DISPLAY (pixel) space should match
+        # across panel sizes, at the same dpi -- fixed physical size, not a
+        # fraction of a differently sized axes box.
+        small_tip = ax_small.patches[0].get_xy()[2]  # the "tip" vertex of the first kite
+        big_tip = ax_big.patches[0].get_xy()[2]
+        small_disp = ax_small.transAxes.transform(small_tip) - ax_small.transAxes.transform((0.90, 0.88))
+        big_disp = ax_big.transAxes.transform(big_tip) - ax_big.transAxes.transform((0.90, 0.88))
+        np.testing.assert_allclose(small_disp, big_disp, atol=1.0)
+    finally:
+        plt.close(fig_small)
+        plt.close(fig_big)
+
+
+@boundaries_needed
+def test_compass_rose_is_the_same_physical_size_across_every_map_category(synth, tmp_path, monkeypatch):
+    """2026-09-05 follow-up review's core complaint: the fixed-inches rose
+    was, in practice, only rendering consistently for
+    ``ccrs_scenario_delta`` -- categories that add a shared legend AFTER
+    drawing panels (overview/water/heat/computable_base/worst_case) measured
+    a stale, pre-legend bbox because ``add_compass_rose`` used to be called
+    from inside each panel's own drawing helper. Fixed by moving every call
+    to a final pass, after the legend/colorbar is added. This test catches a
+    regression by comparing the rendered tip-to-center PIXEL distance for
+    the SAME country (Brazil) across three different map categories that
+    each add their post-hoc chrome differently."""
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+
+    def _brazil_tip_pixels(fig):
+        brazil_ax = fig.axes[0]  # Brazil is first in the synth countries list
+        tip = brazil_ax.patches[0].get_xy()[2]
+        return brazil_ax.transAxes.transform(tip) - brazil_ax.transAxes.transform((0.90, 0.88))
+
+    captured = _capture_figures(monkeypatch, maps)
+    maps.plot_water_risk_band_map(countries=["Brazil", "Portugal", "India"], final=synth["final"])
+    water_tip = _brazil_tip_pixels(captured[-1])
+
+    maps.plot_worst_case_risk_band_map(countries=["Brazil", "Portugal", "India"], final=synth["final"])
+    worst_case_tip = _brazil_tip_pixels(captured[-1])
+
+    maps.plot_ccrs_scenario_delta_map(countries=["Brazil", "Portugal", "India"], final=synth["final"], combined=True)
+    delta_tip = _brazil_tip_pixels(captured[-1])
+
+    np.testing.assert_allclose(water_tip, worst_case_tip, atol=2.0)
+    np.testing.assert_allclose(water_tip, delta_tip, atol=2.0)
 
 
 def test_heat_band_gcm_comparison_table_replaces_the_second_panel(synth):
@@ -671,14 +902,14 @@ def test_water_heat_contingency_capacity_table(synth):
 
 
 # --------------------------------------------------------------------------
-# 9. C1/C2 -- national aggregate CCRS with CI, figure + table
+# 9. C1/C2 -- national aggregate CCRS with CI (table survives; figure removed)
 # --------------------------------------------------------------------------
-def test_national_ccrs_with_ci_figure(tmp_path, monkeypatch):
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
-    ci_primary = _synthetic_national_ci()
-    ci_secondary = _synthetic_national_ci(seed=1)
-    path = charts.plot_national_ccrs_with_ci(ci_primary=ci_primary, ci_secondary=ci_secondary)
-    assert path.exists()
+def test_national_ccrs_with_ci_figure_was_removed():
+    """DELETED outright (2026-09-05, not moved again) -- Douglas's decision
+    after reviewing the fused FIG 4 rank-stability figure: it no longer adds
+    anything that isn't already covered. The summary TABLE
+    (national_ccrs_summary_table) is unaffected and still tested below."""
+    assert not hasattr(charts, "plot_national_ccrs_with_ci")
 
 
 def test_national_ccrs_summary_table_ranks_within_scenario():
@@ -691,9 +922,15 @@ def test_national_ccrs_summary_table_ranks_within_scenario():
 
 
 # --------------------------------------------------------------------------
-# 9b. FIG 4 redesign -- rank-stability prototypes (Douglas's 2026-09-05
-# request), built directly on a synthetic per-draw frame (no raster
-# pipeline / real Monte Carlo run needed).
+# 9b. FIG 4 -- ordinal rank stability, built directly on a synthetic
+# per-draw frame (no raster pipeline / real Monte Carlo run needed).
+# 2026-09-05 follow-up review: the two separate prototypes (density,
+# rank-probability bars) generated in the first round are fused into one
+# figure (``plot_ccrs_rank_stability``) -- rank-probability was judged not
+# useful and dropped; density was kept and now carries the pairwise
+# order-stability evidence as an on-panel annotation instead of a second bar
+# chart. See the module comment above ``plot_ccrs_rank_stability`` in
+# charts.py for the full reasoning.
 # --------------------------------------------------------------------------
 def _synthetic_draws(seed: int = 0) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
@@ -710,20 +947,90 @@ def _synthetic_draws(seed: int = 0) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_fig4_rank_density_prototype(tmp_path, monkeypatch):
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
-    path = charts.plot_ccrs_rank_density(draws=_synthetic_draws())
+def test_fig4_rank_stability_figure(tmp_path, monkeypatch):
+    """2026-09-05 article-figure-numbering round: this all-3-scenarios,
+    fused-panel version is no longer the article's headline Monte Carlo
+    figure (that is Figure 7, PES only, tested below) -- moved to
+    combined/secondary/ as a Supplementary candidate, logic unchanged."""
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
+    path = charts.plot_ccrs_rank_stability(draws=_synthetic_draws())
     assert path.exists()
 
 
-def test_fig4_rank_probability_prototype(tmp_path, monkeypatch):
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
-    path = charts.plot_ccrs_rank_probability(draws=_synthetic_draws())
-    assert path.exists()
+def test_fig4_rank_probability_prototype_was_dropped():
+    """Discarded per Douglas's 2026-09-05 review -- the grouped
+    rank-probability bar chart communicated nothing the fused density
+    figure doesn't already show; not kept as a secondary variant either."""
+    assert not hasattr(charts, "plot_ccrs_rank_probability")
+
+
+def test_fig4_rank_stability_annotates_pairwise_order_stability(tmp_path, monkeypatch):
+    """The on-panel text replacing the discarded bar chart must actually
+    carry the pairwise dominance evidence -- with India's synthetic mean
+    (0.8) far above Brazil's (0.4) and Portugal's (0.3), "India > ..." must
+    appear somewhere on the figure."""
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
+    captured = _capture_figures(monkeypatch, charts)
+    charts.plot_ccrs_rank_stability(draws=_synthetic_draws())
+    fig = captured[0]
+    all_text = " ".join(t.get_text() for ax in fig.axes for t in ax.texts)
+    assert "India >" in all_text
 
 
 def test_fig4_country_colors_defined_for_every_country():
     assert set(charts.COUNTRY_COLORS) == set(COUNTRIES)
+
+
+# --------------------------------------------------------------------------
+# FIGURE 7 (2026-09-05 article-figure-numbering round): Monte Carlo CCRS
+# density + ordinal ranking stability, PES only, as TWO genuinely separate
+# panels (resolving the caption/figure mismatch flagged for the fused
+# all-scenarios version, ``plot_ccrs_rank_stability``, now in secondary/).
+# --------------------------------------------------------------------------
+def test_figure7_runs_without_error_on_synthetic_data(tmp_path, monkeypatch):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    path = charts.plot_figure7_montecarlo_stability_pes(draws=_synthetic_draws())
+    assert path.exists()
+
+
+def test_figure7_is_two_panels(tmp_path, monkeypatch):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    captured = _capture_figures(monkeypatch, charts)
+    charts.plot_figure7_montecarlo_stability_pes(draws=_synthetic_draws())
+    fig = captured[0]
+    assert len(fig.axes) == 2
+
+
+def test_figure7_only_uses_pes_draws(tmp_path, monkeypatch):
+    """Both panels must be built from PES rows only -- opt/bau draws in the
+    input frame must not leak into either panel."""
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    draws = _synthetic_draws()
+    # Sabotage non-PES rows with an out-of-range value; if they leaked in,
+    # the density panel's x-range would reflect them.
+    draws = draws.copy()
+    draws.loc[draws["water_scenario"] != "pes", "ccrs"] = 999.0
+    captured = _capture_figures(monkeypatch, charts)
+    charts.plot_figure7_montecarlo_stability_pes(draws=draws)
+    fig = captured[0]
+    density_ax = fig.axes[0]
+    xlim = density_ax.get_xlim()
+    assert xlim[1] < 900  # the sabotaged non-PES value never entered the density panel's range
+
+
+def test_figure7_rank_panel_probabilities_sum_to_100_pct():
+    """The rank-probability bars (Panel b) must still sum to 1.0 per
+    country, the same invariant already tested for
+    ``monte_carlo.rank_probability_table`` in general -- checked here on
+    the PES-only slice Figure 7 actually uses."""
+    from src.index import monte_carlo as mc
+
+    draws = _synthetic_draws()
+    pes_draws = draws[draws["water_scenario"] == "pes"]
+    ranked = mc.rank_per_draw(pes_draws)
+    table = mc.rank_probability_table(ranked)
+    totals = table.groupby("country")["probability"].sum()
+    np.testing.assert_allclose(totals.to_numpy(), 1.0, atol=1e-9)
 
 
 # --------------------------------------------------------------------------
@@ -772,10 +1079,12 @@ def test_hazard_term_contribution_figure_is_now_secondary(tmp_path, monkeypatch)
 # --------------------------------------------------------------------------
 def _synthetic_per_plant_shares(seed: int = 0) -> pd.DataFrame:
     """country-specific plant counts deliberately straddle
-    charts.VIOLIN_MIN_PLANTS (1000): Brazil/India well above (violin),
-    Portugal well below (box+strip) -- mirrors the real data's shape
-    (~5,150 / ~4,580 / ~438 unique plants) without needing the real
-    pipeline."""
+    charts.STRIP_MAX_POINTS (600): Brazil/India well above (strip gets
+    subsampled), Portugal well below (strip shows every point) -- mirrors
+    the real data's shape (~5,150 / ~4,580 / ~438 unique plants) without
+    needing the real pipeline. Box+strip is used for every country
+    (2026-09-05 review dropped violin entirely); only the STRIP is
+    subsampled at high counts, never the box statistics."""
     rng = np.random.default_rng(seed)
     n_plants = {"Brazil": 1500, "India": 1400, "Portugal": 120}
     rows = []
@@ -805,23 +1114,45 @@ def test_hazard_term_contribution_per_plant_shares_sum_to_one(synth):
     np.testing.assert_allclose(totals.to_numpy(), 1.0, atol=1e-9)
 
 
-def test_fig_c4_distribution_uses_violin_for_large_countries_box_for_small(tmp_path, monkeypatch):
-    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+def test_fig_c4_distribution_uses_box_strip_for_every_country(tmp_path, monkeypatch):
+    """2026-09-05 review: violin dropped entirely -- box+strip for every
+    country regardless of plant count, with the strip subsampled (not the
+    chart type switched) above ``STRIP_MAX_POINTS``. Saves to
+    combined/secondary/ as of the article-figure-numbering round (not cited
+    in the current Results draft)."""
+    monkeypatch.setattr(charts, "SECONDARY_DIR", tmp_path)
     captured = _capture_figures(monkeypatch, charts)
     per_plant = _synthetic_per_plant_shares()
     charts.plot_hazard_term_contribution_distribution(countries=COUNTRIES, per_plant=per_plant)
     fig = captured[0]
     titles = [ax.get_title() for ax in fig.axes if ax.get_title()]
-    assert any("Brazil" in t and "violin" in t for t in titles)
-    assert any("India" in t and "violin" in t for t in titles)
-    assert any("Portugal" in t and "box+strip" in t for t in titles)
+    assert any("Brazil" in t for t in titles)
+    assert any("India" in t for t in titles)
+    assert any("Portugal" in t for t in titles)
+    # no violin/box+strip style label anywhere -- box+strip is the only chart type now
+    assert not any("violin" in t for t in titles)
 
 
-def test_fig_c4_estimated_unique_plants_divides_by_scenario_count():
-    per_plant = _synthetic_per_plant_shares()
-    portugal = per_plant[per_plant["country"] == "Portugal"]
-    # 120 plants x 3 scenarios = 360 rows -- must estimate ~120, not 360
-    assert charts._estimated_unique_plants(portugal) == pytest.approx(120.0)
+def test_fig_c4_strip_subsamples_above_max_points_but_box_uses_full_data(tmp_path, monkeypatch):
+    """The visual strip must cap at STRIP_MAX_POINTS, but the box's own
+    quantiles (via ``_box_stats``) must still reflect the FULL per-plant
+    data, not the subsample -- subsampling changes what is drawn, never what
+    is reported."""
+    import matplotlib.pyplot as plt
+
+    rng = np.random.default_rng(0)
+    n = charts.STRIP_MAX_POINTS + 400
+    values = np.concatenate([np.full(n - 10, 0.1), np.full(10, 0.9)])  # median stays 0.1 either way
+    fig, ax = plt.subplots()
+    try:
+        n_plotted = charts._draw_box_and_strip(ax, 0, values, None, "#1f77b4", rng)
+        assert n_plotted == charts.STRIP_MAX_POINTS
+        # the box (bxp) must have been built from the true 0.1 median of the
+        # full 1990-row array, not from whatever the capped-size sample drew
+        box_stats = charts._box_stats(values, None)
+        assert box_stats["med"] == pytest.approx(0.1)
+    finally:
+        plt.close(fig)
 
 
 def test_fig_c4_weighted_view_is_not_a_copy_of_unweighted(tmp_path, monkeypatch):
@@ -1000,25 +1331,57 @@ def _emdat_full_grid_result(portugal_skipped: bool = True) -> dict[str, pd.DataF
 def test_emdat_spatial_validation_figure_with_synthetic_result(tmp_path, monkeypatch):
     from src.visualization import emdat_validation as vev
 
-    monkeypatch.setattr(vev, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(vev, "SECONDARY_DIR", tmp_path)
     path = vev.plot_emdat_spatial_validation(result=_emdat_full_grid_result())
     assert path.exists()
 
 
+def test_emdat_spatial_validation_saves_to_secondary_by_default():
+    """2026-09-05 follow-up review: moved from combined/ to combined/
+    secondary/ -- still a useful exploratory figure, just no longer a
+    manuscript-figure candidate."""
+    from src.visualization import emdat_validation as vev
+
+    assert vev.SECONDARY_DIR == vev.OUT_DIR / "combined" / "secondary"
+
+
 def test_emdat_spatial_validation_figure_reports_caveats_in_caption(tmp_path, monkeypatch):
-    """Douglas's explicit requirement (unchanged by the redesign): coverage/
-    proxy caveats must be printed on the figure itself, not only in the
-    code."""
+    """Douglas's explicit requirement (unchanged by the redesign): the
+    exploratory status must be printed on the figure itself, not only in
+    the code. 2026-09-05 review shortened the on-figure caption to one/two
+    lines -- the full coverage/proxy caveats (GADM Admin Units coverage,
+    Storm being untested, etc.) moved to the module docstring instead, so
+    this test only checks what the figure itself still carries."""
     from src.visualization import _common, emdat_validation as vev
 
-    monkeypatch.setattr(vev, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(vev, "SECONDARY_DIR", tmp_path)
     captured = _capture_figures(monkeypatch, vev)
     vev.plot_emdat_spatial_validation(result=_emdat_full_grid_result())
     fig = captured[0]
     footer_texts = " ".join(t.get_text() for t in fig.texts)
     assert "EXPLORATORY" in footer_texts
-    assert "GADM Admin Units" in footer_texts
-    assert "Storm" in footer_texts
+    assert "partial" in footer_texts.lower()
+    assert "0.05" in footer_texts  # significance threshold stays on-figure
+
+
+def test_emdat_spatial_validation_caption_is_short():
+    """2026-09-05 review's explicit ask -- cut the caption to one/two
+    sentences, moving full methodology detail to the docstring instead."""
+    from src.visualization import emdat_validation as vev
+
+    assert len(vev.CAPTION) < 320
+
+
+def test_emdat_spatial_validation_full_caveats_kept_in_module_docstring():
+    """Nothing is lost -- the caveats cut from the on-figure caption must
+    still be documented somewhere in the module. Docstring text may wrap
+    across lines, so whitespace is normalized before the substring check."""
+    from src.visualization import emdat_validation as vev
+
+    doc = " ".join(vev.__doc__.split())
+    assert "GADM Admin Units" in doc
+    assert "Storm" in doc
+    assert "water STRESS" in doc
 
 
 def test_emdat_spatial_validation_grid_is_always_3x3():
@@ -1040,7 +1403,7 @@ def test_emdat_spatial_validation_skip_does_not_break_the_grid_layout(tmp_path, 
     from src.index import emdat_validation as ev
     from src.visualization import emdat_validation as vev
 
-    monkeypatch.setattr(vev, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(vev, "SECONDARY_DIR", tmp_path)
     captured = _capture_figures(monkeypatch, vev)
     vev.plot_emdat_spatial_validation(result=_emdat_full_grid_result(portugal_skipped=True))
     fig = captured[0]
@@ -1073,7 +1436,7 @@ def test_emdat_spatial_validation_significant_panels_are_visually_distinct(tmp_p
     significance styling; Brazil (never significant) must not."""
     from src.visualization import emdat_validation as vev
 
-    monkeypatch.setattr(vev, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(vev, "SECONDARY_DIR", tmp_path)
     captured = _capture_figures(monkeypatch, vev)
     vev.plot_emdat_spatial_validation(result=_emdat_full_grid_result())
     fig = captured[0]

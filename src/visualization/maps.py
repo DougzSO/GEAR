@@ -45,6 +45,19 @@ Douglas's 2026-09-05 review round -- corrections
   one for the whole figure. Category 2 (scenario delta) is included (a
   geographic map like the other four) even though it was not named in the
   B1-B3 2026-09-04 corrections.
+
+--------------------------------------------------------------------------
+Douglas's 2026-09-05 visual-review round
+--------------------------------------------------------------------------
+- The compass rose itself (``_common.add_compass_rose``) was simplified --
+  8-point star, only "N" labelled, fixed physical size instead of scaling
+  with the panel. See that function's own docstring in ``_common.py``.
+- The worst-case map's comparability caption
+  (``risk_bands.WORST_CASE_COMPARABILITY_NOTE``) was shortened to one
+  sentence -- see that constant's own comment in ``risk_bands.py``.
+- Category 2's ``combined`` layout now matches category 1's space usage
+  (bigger maps, a thin/elongated colorbar instead of a short/thick one) --
+  see the comment inline at ``plot_ccrs_scenario_delta_map``.
 """
 
 from __future__ import annotations
@@ -68,6 +81,7 @@ from src.visualization._common import (
     HEAT_BAND_COLORS,
     NOT_COMPUTABLE_COLOR,
     NOT_COMPUTABLE_MARKER,
+    SEQUENTIAL_CMAP,
     WATER_BAND_COLORS,
     add_compass_rose,
     aspect_ratio_width,
@@ -83,6 +97,18 @@ from src.visualization._common import (
 )
 
 logger = logging.getLogger(__name__)
+
+# 2026-09-05 article-figure-numbering round: figures not cited in the
+# current Results draft (worst_case_risk_band, ccrs_scenario_delta's
+# combined view) move here -- kept as Supplementary candidates, not
+# deleted, pending Douglas's final call on what becomes Supplementary. A
+# FUNCTION, not a precomputed module constant -- every test in this file
+# redirects output by monkeypatching the module-level ``OUTPUT_MAPS`` name
+# (e.g. ``monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)``), which only
+# works if the secondary path is resolved fresh from that name at call
+# time, not baked in once at import time.
+def _secondary_dir() -> pathlib.Path:
+    return OUTPUT_MAPS / "combined" / "secondary"
 
 
 def _country_frame(final: pd.DataFrame, country: str, water_scenario: str) -> pd.DataFrame:
@@ -112,6 +138,11 @@ def _render_country_row_figure(
         draw_and_title(ax, country)
     legend_below_artists(fig, list(axes), handles, ncol=legend_ncol or len(handles),
                           fontsize=fs(legend_fontsize), frameon=False)
+    # Compass rose LAST, after the shared legend below has already shrunk
+    # the axes -- see add_compass_rose's own docstring for why the order
+    # matters for its fixed-inches sizing to render consistently.
+    for ax in axes:
+        add_compass_rose(ax)
     return save_figure(fig, out_path)
 
 
@@ -125,9 +156,11 @@ def _draw_bubble_panel(ax, country: str, frame_country: pd.DataFrame, ring_col: 
     as a distinct grey ``x`` marker, same convention for every category that
     uses this panel (item 1's overview ring and item 10's completeness map
     both go through here). Does not set the panel title -- the caller does,
-    via ``_common.panel_title``, since the label text differs by category."""
+    via ``_common.panel_title``, since the label text differs by category.
+    Does NOT add the compass rose either -- callers add it in a final pass
+    over all panels, after the figure's shared legend (see
+    ``add_compass_rose``'s docstring for why the order matters)."""
     draw_country_boundary(ax, country)
-    add_compass_rose(ax)
     computable = frame_country[frame_country["computable"]]
     not_computable = frame_country[~frame_country["computable"]]
 
@@ -188,11 +221,99 @@ def plot_ccrs_overview_map(
 
 
 # --------------------------------------------------------------------------
+# FIGURE 5 -- asset-level CCRS map, PES only, continuous color (article
+# figure numbering round, 2026-09-05)
+#
+# Same map structure as category 1 (country boundary, disputed-territory
+# handling, sqrt-of-capacity marker size, compass rose) but the marker
+# COLOR is CCRS_i,s itself (continuous, ``SEQUENTIAL_CMAP``/viridis --
+# consistent with every other sequential/ordinal quantity in this project,
+# never a diverging map for a quantity with no natural zero) rather than
+# technology-bucket identity. Category 1's bucket coloring answers "which
+# technology is most exposed"; this answers "how severe is any given
+# plant's score, on its own continuous scale" -- a different question, kept
+# as its own figure rather than a variant flag on category 1 since the
+# color channel means something structurally different (a score vs. a
+# category) and the legend/colorbar each needs is not interchangeable.
+#
+# GEM capacity thresholds (hydro >=45MW, wind >=10MW, solar >=20MW
+# utility/1MW distributed, ARCHITECTURE.md Sec. 0): already satisfied by
+# construction, not something this (or any) figure needs to filter for.
+# The Global Energy Monitor Global Integrated Power Tracker -- this
+# project's ONLY asset source -- only tracks plants meeting its own
+# per-technology thresholds in the first place; every row already in
+# ``vdata.load_ccrs_final()`` cleared that bar before the pipeline ever
+# saw it. Confirmed by inspecting the asset base directly, not assumed --
+# there is no capacity-based row filter anywhere in ``src/index/*`` to
+# remove or add. Nothing extra is needed here, display-only or otherwise.
+# --------------------------------------------------------------------------
+def _draw_ccrs_continuous_panel(ax, country: str, frame_country: pd.DataFrame, ccrs_col: str,
+                                 vmin: float, vmax: float, alpha: float = 0.7):
+    """Does NOT add the compass rose -- the caller adds it in a final pass,
+    after the shared colorbar (see ``add_compass_rose``'s docstring)."""
+    draw_country_boundary(ax, country)
+    computable = frame_country[frame_country["computable"]]
+    sizes = marker_sizes(computable["capacity_mw"])
+    sc = ax.scatter(computable["lon"], computable["lat"], s=sizes, c=computable[ccrs_col],
+                     cmap=SEQUENTIAL_CMAP, vmin=vmin, vmax=vmax, alpha=alpha, zorder=3,
+                     edgecolors="black", linewidths=0.3)
+    not_computable = frame_country[~frame_country["computable"]]
+    if len(not_computable):
+        ax.scatter(not_computable["lon"], not_computable["lat"], s=16,
+                   c=NOT_COMPUTABLE_COLOR, marker=NOT_COMPUTABLE_MARKER, linewidths=1.2, zorder=4)
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    return sc, len(computable), len(not_computable)
+
+
+def plot_figure5_ccrs_asset_level_pes(
+    countries: list[str] | None = None, gcm: str = PRIMARY_GCM, final: pd.DataFrame | None = None,
+    base_height: float = 10.0,
+) -> dict[str, pathlib.Path]:
+    """Figure 5 -- SSP5-8.5/PES only (this is a headline manuscript figure,
+    not a scenario-swept category like categories 1/3/4/10), continuous
+    CCRS color. See the module comment above for the full design."""
+    countries = countries or COUNTRIES
+    final = final if final is not None else vdata.load_ccrs_final()
+    ccrs_col = f"ccrs_{gcm}"
+    pes_frame = final[final["water_scenario"] == "pes"]
+    vmin = float(pes_frame.loc[pes_frame["computable"], ccrs_col].min())
+    vmax = float(pes_frame.loc[pes_frame["computable"], ccrs_col].max())
+
+    widths = [aspect_ratio_width(c, base_height) for c in countries]
+    fig, axes = plt.subplots(1, len(countries), figsize=(sum(widths), base_height),
+                              gridspec_kw={"width_ratios": widths}, constrained_layout=True)
+    axes = np.atleast_1d(axes)
+    sc = None
+    for ax, country in zip(axes, countries):
+        frame = _country_frame(final, country, "pes")
+        sc, n_computable, n_excluded = _draw_ccrs_continuous_panel(ax, country, frame, ccrs_col, vmin, vmax)
+        panel_title(ax, country, n_computable, n_excluded)
+
+    # No separate legend below -- unlike category 1, there is only one
+    # non-color-coded marker category here (excluded plants), and its count
+    # is already reported per panel via ``panel_title``'s "excluded=N"
+    # (the same convention category 1/10 already use); a second legend
+    # would only repeat that number while competing with the colorbar for
+    # the same strip of space below the panels.
+    cbar = fig.colorbar(sc, ax=axes.tolist(), orientation="horizontal", pad=0.03, shrink=0.5, aspect=40)
+    cbar.set_label(f"CCRS ({gcm}, SSP5-8.5/PES)", fontsize=fs(9))
+    for ax in axes:
+        add_compass_rose(ax)
+
+    stem = f"figure5_ccrs_asset_level_pes_{gcm}"
+    out_path = save_figure(fig, OUTPUT_MAPS / "combined" / f"{stem}.png")
+    logger.info("%s saved to %s", stem, out_path)
+    return {"combined": out_path}
+
+
+# --------------------------------------------------------------------------
 # Category 2 -- CCRS scenario-delta map
 # --------------------------------------------------------------------------
 def _draw_delta_panel(ax, country: str, frame_country: pd.DataFrame, max_abs: float, alpha: float = 0.6):
+    """Does NOT add the compass rose -- callers add it in a final pass, after
+    the colorbar (see ``add_compass_rose``'s docstring)."""
     draw_country_boundary(ax, country)
-    add_compass_rose(ax)
     sizes = marker_sizes(frame_country["capacity_mw"])
     sc = ax.scatter(frame_country["lon"], frame_country["lat"], s=sizes, c=frame_country["delta"],
                      cmap=DIVERGING_CMAP, vmin=-max_abs, vmax=max_abs, alpha=alpha, zorder=3,
@@ -225,18 +346,33 @@ def plot_ccrs_scenario_delta_map(
     stem = f"ccrs_scenario_delta_{gcm}_{scenario_a}_vs_{scenario_b}"
 
     if combined:
-        widths = [aspect_ratio_width(c, 9.0) for c in countries]
-        fig, axes = plt.subplots(1, len(countries), figsize=(sum(widths), 9.0),
+        # 2026-09-05 review: match ccrs_overview's space usage -- bigger,
+        # closer-together map panels. The colorbar previously ate a large
+        # vertical band below the maps (shrink=0.5, aspect=30, a short/thick
+        # bar) for no reason tied to content; made thin and elongated
+        # instead (aspect=60, shrink=0.92, pad trimmed), freeing that
+        # vertical room for the maps themselves -- ``base_height`` raised
+        # from 9.0 to match, same dynamic per-bbox figsize/constrained_layout
+        # mechanism ``_render_country_row_figure`` already uses for category
+        # 1/3/4/10.
+        base_height = 10.0
+        widths = [aspect_ratio_width(c, base_height) for c in countries]
+        fig, axes = plt.subplots(1, len(countries), figsize=(sum(widths), base_height),
                                   gridspec_kw={"width_ratios": widths}, constrained_layout=True)
         axes = np.atleast_1d(axes)
         sc = None
         for ax, country in zip(axes, countries):
             sc = _draw_delta_panel(ax, country, frames[country], max_abs)
             panel_title(ax, country, len(frames[country]))
-        cbar = fig.colorbar(sc, ax=axes.tolist(), orientation="horizontal", pad=0.08, shrink=0.5, aspect=30)
+        cbar = fig.colorbar(sc, ax=axes.tolist(), orientation="horizontal", pad=0.03, shrink=0.92, aspect=60)
         cbar.set_label(f"CCRS delta ({scenario_b} minus {scenario_a})", fontsize=fs(9))
-        out_path = save_figure(fig, OUTPUT_MAPS / "combined" / f"{stem}.png")
-        logger.info("%s (combined) saved to %s", stem, out_path)
+        for ax in axes:
+            add_compass_rose(ax)
+        # 2026-09-05 article-figure-numbering round: not cited in the
+        # current Results draft -- moved to secondary/ (Supplementary
+        # candidate, not deleted).
+        out_path = save_figure(fig, _secondary_dir() / f"{stem}.png")
+        logger.info("%s (combined, secondary) saved to %s", stem, out_path)
         return {"combined": out_path}
 
     paths = {}
@@ -248,6 +384,7 @@ def plot_ccrs_scenario_delta_map(
         fig.subplots_adjust(top=0.88, bottom=0.20, left=0.10, right=0.97)
         cbar = fig.colorbar(sc, ax=ax, orientation="horizontal", pad=0.10, shrink=0.85, aspect=25)
         cbar.set_label(f"CCRS delta ({scenario_b} minus {scenario_a})", fontsize=fs(8))
+        add_compass_rose(ax)
         out_path = save_figure(fig, OUTPUT_MAPS / country / f"{stem}.png")
         paths[country] = out_path
         logger.info("%s (%s) saved to %s", stem, country, out_path)
@@ -259,8 +396,9 @@ def plot_ccrs_scenario_delta_map(
 # --------------------------------------------------------------------------
 def _draw_band_panel(ax, country: str, frame_country: pd.DataFrame, band_col: str,
                       band_colors: dict, alpha: float = 0.7) -> int:
+    """Does NOT add the compass rose -- called via ``_render_country_row_
+    figure``, which adds it in a final pass after the shared legend."""
     draw_country_boundary(ax, country)
-    add_compass_rose(ax)
     banded = frame_country.dropna(subset=[band_col])
     sizes = marker_sizes(banded["capacity_mw"])
     colors = banded[band_col].map(band_colors).fillna("#cccccc")
@@ -371,8 +509,9 @@ def plot_heat_risk_band_map(
 # --------------------------------------------------------------------------
 def _draw_worst_case_panel(ax, country: str, frame_country: pd.DataFrame, heat_band_col: str,
                             alpha: float = 0.7) -> int:
+    """Does NOT add the compass rose -- ``plot_worst_case_risk_band_map``
+    adds it in a final pass, after the legend/footer."""
     draw_country_boundary(ax, country)
-    add_compass_rose(ax)
     sub = frame_country.dropna(subset=["water_risk_band", heat_band_col])
     pairs = [worst_case_band(w, h) for w, h in zip(sub["water_risk_band"], sub[heat_band_col])]
     determinant = np.array([p[1] for p in pairs], dtype=object)
@@ -435,10 +574,15 @@ def plot_worst_case_risk_band_map(
 
     legend = legend_below_artists(fig, list(axes), handles, ncol=5, fontsize=fs(9), frameon=False)
     figure_caption_footer(fig, [*axes, legend], WORST_CASE_COMPARABILITY_NOTE)
+    for ax in axes:
+        add_compass_rose(ax)
 
     stem = f"worst_case_risk_band_{gcm}_{water_scenario}"
-    out_path = save_figure(fig, OUTPUT_MAPS / "combined" / f"{stem}.png")
-    logger.info("%s saved to %s", stem, out_path)
+    # 2026-09-05 article-figure-numbering round: not cited in the current
+    # Results draft -- moved to secondary/ (Supplementary candidate, not
+    # deleted).
+    out_path = save_figure(fig, _secondary_dir() / f"{stem}.png")
+    logger.info("%s (secondary) saved to %s", stem, out_path)
     return {"combined": out_path}
 
 

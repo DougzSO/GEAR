@@ -4,7 +4,11 @@
 # layer are added when that layer is written.
 
 numpy>=1.24.0
-pandas>=2.0.0
+# Ceiling at <3: the codebase was built and tested entirely against the
+# pandas 2.x series. pandas 3.0 changes None->NaN coercion in object columns,
+# which breaks existing None/NaN guards (risk_bands.worst_case_band,
+# visualization/emdat_validation). Revisit when the code is migrated.
+pandas>=2.0.0,<3.0.0
 xarray>=2023.0.0
 rioxarray>=0.14.0
 rasterio>=1.3.0

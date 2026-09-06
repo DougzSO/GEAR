@@ -81,6 +81,14 @@
   "abre e não está vazio".
 - **Natural Earth (naciscdn.org):** nome do `.shp` dentro do zip é assumido;
   `download_coastline`/`download_rivers` levantam se não encontrarem.
+- **pandas fixado em `<3`.** O código foi desenvolvido/testado contra pandas
+  2.x; **pandas 3.0 quebra** guardas `x is None` em colunas object cujo
+  `None` vira `NaN` (`risk_bands.worst_case_band`, `emdat_validation` no
+  caminho de dado real e um teste). `requirements.txt` pinado em
+  `pandas>=2.0.0,<3.0.0` (2026-09-05, autorizado por Douglas). `.venv/` de
+  trabalho: pandas 2.3.3. Migrar para pandas 3 (trocar os guardas por
+  `pd.isna`, revisar coerção de None em `pd.DataFrame(list_of_dicts)`) é
+  tarefa futura separada — ver `05-decisoes-tecnicas.md` item 23.
 
 ## Hardcode / suposições
 
@@ -106,6 +114,23 @@
   declarada no manuscrito, não bug (`docs/DECISIONS.md`, entrada MIROC6/V4,
   e `analysis/normalization_diagnostics.md`). Uma versão nova do GADM ainda
   poderia exigir recalibrar Índia/Portugal.
+
+## Camada de visualização
+
+- **Sem runner commitado.** Não há `python -m` que gere o conjunto de
+  figuras do artigo. Cada figura vem de importar `src/visualization/*.plot_*`
+  e chamar (figuras varridas por cenário: uma chamada por cenário; Fig 3/4
+  são cópia/rename pós-geração de `water_risk_band_pes` / `heat_risk_band_ssp585`).
+  `tables.py` e `diagrams.py` têm `__main__`; `charts.py` e `maps.py` não.
+  Risco: figura no disco pode ficar defasada do código sem sinal. Ver
+  `05-decisoes-tecnicas.md` item 23.
+- **Conjunto Fig 1–7 vs. `secondary/`.** O que está em
+  `data/outputs/maps/combined/` na raiz é candidato a figura principal; o
+  que está em `combined/secondary/` é candidato a Suplementar (decisão final
+  de Douglas pendente). `worst_case_risk_band`,
+  `hazard_term_contribution_distribution`, `ccrs_scenario_delta` (combined),
+  `emdat_spatial_validation`, `ccrs_rank_stability` (3 cenários) estão em
+  `secondary/` — não citados no rascunho de Results atual.
 
 ## TODOs que bloqueiam fases seguintes
 

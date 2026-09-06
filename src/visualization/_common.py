@@ -105,13 +105,14 @@ ADMIN1_LINE_WIDTH = 0.35
 
 # --------------------------------------------------------------------------
 # Fonts -- every figure text (axis labels, legends, annotations, footers) is
-# 20% larger than the pre-review baseline (Douglas's review round,
-# 2026-09-04). ``fs()`` scales any literal fontsize passed explicitly at a
+# scaled up from the pre-review baseline. Started at 1.2 (Douglas's
+# 2026-09-04 review, +20%); +10% more on top of that (2026-09-05 review) ->
+# 1.32 total. ``fs()`` scales any literal fontsize passed explicitly at a
 # call site; ``plt.rcParams`` below raises the *default* sizes matplotlib
 # applies where no explicit fontsize is passed (axis tick labels, unlabelled
 # ax.set_xlabel/ax.set_ylabel calls).
 # --------------------------------------------------------------------------
-FONT_SCALE = 1.2
+FONT_SCALE = 1.32
 
 
 def fs(base: float) -> float:
@@ -272,45 +273,94 @@ def draw_country_boundary(ax, country: str) -> None:
     ax.set_aspect("equal")
 
 
-COMPASS_ROSE_SIZE = 0.11          # axes-fraction diameter -- small, proportional to the panel
+# 2026-09-05 review: the rose was too large and named every direction
+# (N/E/S/O/NE/SE/SO/NO written out). Reduced to an 8-point star (keeps the
+# "star, not a single arrow" shape Douglas's reference image asked for) with
+# ONLY "N" labelled -- the other 7 points are left unlabelled, the star
+# shape itself already reads as an orientation marker without spelling out
+# every direction. Size is now a FIXED PHYSICAL diameter in inches, not an
+# axes-fraction (which made the rose grow with the panel -- a wide India
+# panel got a visibly larger rose than a narrow Portugal one for no reason
+# tied to content). ``COMPASS_ROSE_SIZE_IN`` is deliberately small enough to
+# stay out of the way of map content at any panel size.
+COMPASS_ROSE_SIZE_IN = 0.36       # fixed diameter, inches -- independent of panel size
+# 2026-09-05 follow-up review: raised 0.30in -> 0.36in (+20%), and this
+# fixed-inches convention is now applied to EVERY map category (previously
+# only ccrs_scenario_delta effectively rendered consistently -- see the
+# comment above ``add_compass_rose`` about WHEN it must be called for the
+# fixed-inches math to hold across categories that add a legend/colorbar
+# after the panels are drawn).
 COMPASS_ROSE_XY = (0.90, 0.88)    # axes-fraction center -- upper right of each map panel
 COMPASS_ROSE_COLORS = ("black", "white")
+COMPASS_ROSE_POINTS = 8
 
 
-def add_compass_rose(ax, xy: tuple[float, float] = COMPASS_ROSE_XY, size: float = COMPASS_ROSE_SIZE) -> None:
-    """Small 4-point compass-rose star (N/E/S/W kite quadrilaterals,
-    alternating black/white fill) in the upper-right corner of ``ax``, in
-    axes-fraction coordinates so it always sits in the same visual corner
-    regardless of the panel's data extent. A full compass-rose shape, not a
-    single directional arrow (Douglas's 2026-09-05 review); only the ``N``
-    point is labelled -- S/E/W are left unlabelled to avoid clutter at this
-    size, the rose shape itself already reads as "north-up" orientation
-    without needing every label. Called once per geographic map panel
-    (every country panel gets its own, not one for the whole figure)."""
+def add_compass_rose(ax, xy: tuple[float, float] = COMPASS_ROSE_XY,
+                      size_in: float = COMPASS_ROSE_SIZE_IN) -> None:
+    """Small 8-point compass-rose star (kite-shaped points, alternating
+    black/white fill) in the upper-right corner of ``ax``. Positioned in
+    axes-fraction coordinates (``xy``) so it always sits in the same visual
+    corner regardless of the panel's data extent, but SIZED in a fixed
+    physical diameter (``size_in``, inches) so it does not grow with the
+    panel -- a ``fig.canvas.draw()`` is forced first to read the panel's
+    real on-screen size (same pattern as ``tight_bottom_fraction`` below),
+    then the desired inch radius is converted to this panel's own
+    axes-fraction units (independently in x and y, so the star renders as a
+    true circle even when the panel's width-per-axes-fraction differs from
+    its height-per-axes-fraction). Only the ``N`` point is labelled -- S/E/W
+    and the four intercardinal points are left unlabelled to avoid clutter
+    at this size; the star shape itself already reads as "north-up"
+    orientation. Called once per geographic map panel (every country panel
+    gets its own, not one for the whole figure).
+
+    **Call this LAST**, after every other artist that could still shrink the
+    axes (a shared legend, a colorbar, ``tight_layout``/``constrained_
+    layout`` settling) has already been added to the figure -- the
+    ``fig.canvas.draw()`` below reads the panel's CURRENT on-screen bbox,
+    and that reading is only correct for the FINAL bbox. A 2026-09-05
+    regression (caught on real-data review) called this from inside each
+    panel's own drawing helper, before that panel's figure added its
+    shared legend/colorbar -- the legend/colorbar then shrank the axes
+    afterward, so the rose's fixed-inches conversion was computed against a
+    stale, larger bbox and rendered inconsistently in size ACROSS
+    categories that add post-hoc chrome differently (``ccrs_scenario_
+    delta``'s colorbar happened to match; the four ``_render_country_row_
+    figure`` categories with a legend did not). Fixed by moving every call
+    site to a final pass over the figure's axes, right before ``save_
+    figure``."""
+    fig = ax.figure
+    fig.canvas.draw()
+    bbox = ax.get_window_extent()
+    dpi = fig.dpi
+    ax_w_in = bbox.width / dpi
+    ax_h_in = bbox.height / dpi
+    r_tip_x = (size_in / 2) / ax_w_in if ax_w_in > 0 else size_in / 2
+    r_tip_y = (size_in / 2) / ax_h_in if ax_h_in > 0 else size_in / 2
+    r_notch_x = r_tip_x * 0.32
+    r_notch_y = r_tip_y * 0.32
     cx, cy = xy
-    r_tip = size / 2
-    r_notch = r_tip * 0.32
     trans = ax.transAxes
 
-    def _point(angle_deg: float, r: float) -> tuple[float, float]:
+    def _point(angle_deg: float, rx: float, ry: float) -> tuple[float, float]:
         rad = np.radians(angle_deg)
-        return (cx + r * np.sin(rad), cy + r * np.cos(rad))
+        return (cx + rx * np.sin(rad), cy + ry * np.cos(rad))
 
-    cardinal_angles = (0, 90, 180, 270)  # N, E, S, W -- 0 = up, clockwise
+    step = 360 / COMPASS_ROSE_POINTS
+    cardinal_angles = [i * step for i in range(COMPASS_ROSE_POINTS)]  # 0 = N, clockwise
     for i, angle in enumerate(cardinal_angles):
-        left_notch = _point(angle - 45, r_notch)
-        tip = _point(angle, r_tip)
-        right_notch = _point(angle + 45, r_notch)
+        left_notch = _point(angle - step / 2, r_notch_x, r_notch_y)
+        tip = _point(angle, r_tip_x, r_tip_y)
+        right_notch = _point(angle + step / 2, r_notch_x, r_notch_y)
         kite = mpatches.Polygon(
             [(cx, cy), left_notch, tip, right_notch], closed=True,
-            facecolor=COMPASS_ROSE_COLORS[i % 2], edgecolor="black", linewidth=0.5,
+            facecolor=COMPASS_ROSE_COLORS[i % 2], edgecolor="black", linewidth=0.4,
             transform=trans, zorder=10, clip_on=False,
         )
         ax.add_patch(kite)
 
-    n_tip_x, n_tip_y = _point(0, r_tip)
-    ax.text(n_tip_x, n_tip_y + r_tip * 0.35, "N", transform=trans, ha="center", va="bottom",
-            fontsize=fs(7), fontweight="bold", zorder=11, clip_on=False)
+    n_tip_x, n_tip_y = _point(0, r_tip_x, r_tip_y)
+    ax.text(n_tip_x, n_tip_y + r_tip_y * 0.45, "N", transform=trans, ha="center", va="bottom",
+            fontsize=fs(6), fontweight="bold", zorder=11, clip_on=False)
 
 
 # --------------------------------------------------------------------------

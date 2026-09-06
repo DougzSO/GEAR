@@ -935,3 +935,134 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   sintético, ressalvas no rodapé da figura).
 - **Status:** Ativa. Resultado é diagnóstico/exploratório — não altera
   `Hazard`/`CCRS`; aguardando decisão de Douglas sobre uso no artigo.
+
+## 23. Numeração de figuras do artigo (Fig 1–7) — rodada 2026-09-05
+
+> Entre o item 22 e esta entrada houve várias rodadas de redesenho de figura
+> commitadas mas não documentadas aqui (commits `4579fa7` Fig 1, `3ee85cc`
+> worst-case, `936c71e` reference CCRS, `1b0d66c` split Fig 3, `c0b72c0` rank
+> stability, `356664b` hazard-term distribution, `17373b2` grid EM-DAT). Esta
+> entrada cobre só a rodada de **numeração final** e é a fonte de verdade do
+> conjunto Fig 1–7.
+
+- **Contexto:** o rascunho de Results do artigo fixou a numeração das figuras
+  principais. Rodada de reorganização: extrair painéis de figuras compostas
+  intermediárias para figuras próprias com a numeração do artigo, restringir
+  as que o artigo cita a PES apenas, e mover para `combined/secondary/` tudo
+  que o rascunho atual **não** cita como figura principal (retido como
+  candidato a Suplementar — decisão final de Douglas pendente).
+- **Mapeamento de cenário confirmado (fonte única, nenhuma correção
+  necessária):** `OPT = SSP1-2.6 = ssp126`, `BAU = SSP3-7.0 = ssp370`,
+  `PES = SSP5-8.5 = ssp585`. `src.config.AQUEDUCT_SCENARIO_FOR_CMIP6`
+  (`{"ssp126":"opt","ssp370":"bau","ssp585":"pes"}`) é a única fonte;
+  `ccrs_calculator.WATER_TO_HEAT` é o inverso exato. Os arquivos
+  `heat_risk_band_ssp126/370/585.png` derivam de `heat_scenario` via essa
+  tabela — já mapeiam corretamente a opt/bau/pes. Novo teste de trava:
+  `test_scenario_mapping_opt_bau_pes_matches_ssp_labels`.
+- **Fig 1** — `diagrams.plot_pipeline_overview` → `diagrams/figure1_pipeline_overview.png`. Inalterada.
+- **Fig 2** — `charts.plot_figure2_capacity_exposure_by_band` →
+  `combined/figure2_capacity_exposure_by_band.png`. Extraída do painel A do
+  composto intermediário. 2 painéis: (a) WaterRiskBand (5 níveis nativos),
+  (b) HeatRiskBand (4 níveis nativos, GFDL-ESM4). Agregação **nacional**
+  (`band_capacity_shares` por `country × water_scenario` / `country ×
+  heat_scenario`, **sem** corte por bucket — reverte o corte usado no painel
+  A do composto). Eixo X = os 3 cenários apenas; **sem coluna "Historical"**
+  (não existe raster de presente no pipeline — confirmado de novo, não
+  fabricado). Quase-duplicata de `plot_capacity_by_risk_band` (categoria 8,
+  em `secondary/`), mantida de propósito: a categoria 8 é a figura de
+  método/referência interna, a Fig 2 é a mesma coisa promovida com o nome do
+  artigo — redundância sinalizada, decisão de Douglas se quer resolver.
+- **Fig 3 / Fig 4** — **cópias byte-idênticas**, não funções dedicadas.
+  `maps.plot_water_risk_band_map(water_scenario="pes")` →
+  `combined/water_risk_band_pes.png`, copiado para
+  `combined/figure3_water_risk_band_pes.png` (+pdf).
+  `maps.plot_heat_risk_band_map(water_scenario="pes")` →
+  `combined/heat_risk_band_ssp585.png`, copiado para
+  `combined/figure4_heat_risk_band_pes.png` (+pdf). A cópia/rename é passo de
+  geração ad-hoc (ver abaixo), não há lógica no código que grave esses nomes.
+- **Fig 5** — `maps.plot_figure5_ccrs_asset_level_pes` →
+  `combined/figure5_ccrs_asset_level_pes_{gcm}.png`. **Nova variante** de
+  `plot_ccrs_overview_map`: mesma estrutura de mapa (fronteira, território
+  disputado, marcador ∝ √capacidade, rosa dos ventos), mas **cor do marcador
+  = CCRS contínuo** (`SEQUENTIAL_CMAP`/viridis, nunca diverging para
+  quantidade sem zero natural), não identidade de bucket. PES apenas (é
+  figura-manchete, não categoria varrida por cenário). Thresholds de inclusão
+  do GEM (hydro ≥45 MW, wind ≥10 MW, etc.) **já satisfeitos por construção** —
+  o GEM Global Integrated Power Tracker só rastreia plantas acima do próprio
+  limiar; nenhuma linha em `vdata.load_ccrs_final()` está abaixo. Não há
+  filtro de capacidade em `src/index/*` para adicionar nem remover; nada é
+  filtrado só para exibição.
+- **Fig 6** — `charts.plot_figure6_technology_age_vulnerability_pes` →
+  `combined/figure6_technology_age_vulnerability_pes_{gcm}.png`. Painéis B/C
+  do composto, **PES apenas**. (a) violin CCRS por bucket tecnológico sob
+  PES (já era PES-only na rodada anterior — reportado, não "corrigido", não
+  havia bug); (b) scatter idade operacional × `age_factor` por bucket.
+  Painel (b) **não** tem filtro de cenário: `age_factor` é por planta e
+  invariante a `water_scenario` — "sob PES" não muda nada no painel b.
+  Reportado porque o pedido implicava dimensão de cenário nos dois painéis, e
+  só um tem.
+- **Fig 7** — `charts.plot_figure7_montecarlo_stability_pes` →
+  `combined/figure7_montecarlo_stability_pes_{gcm}.png`. **PES apenas**, 2
+  painéis **genuinamente separados** (resolve o descasamento legenda/figura
+  do painel fundido de 3 cenários): (a) densidade CCRS por país sob PES;
+  (b) barras de estabilidade de ranking ordinal (% de sorteios MC em que cada
+  país fica 1º/2º/3º). Mesma saída de `mc.run_country_scenario_draws`
+  (N=1000, GFDL-ESM4 — **não reaberto**, `ARCHITECTURE.md` Sec. 8), fatiada
+  para PES. `FIGURE7_CAPTION` **corrigido** (autorizado por Douglas): a
+  versão anterior alegava "structural uncertainties between global
+  circulation models (GFDL-ESM4 and MIROC6)" — falso para esta figura, que
+  só amostra de GFDL-ESM4. Reescrito para "parametric uncertainty ... under
+  GFDL-ESM4, the framework's primary climate model" (os 3 grupos de
+  perturbação aprovados, SSP5-8.5). Só texto — `FIGURE7_CAPTION` é constante
+  de legenda do manuscrito, **não** renderizada na figura, então a figura no
+  disco não precisou ser regerada. `run_country_scenario_draws` continua
+  GFDL-ESM4 apenas (pool de MIROC6 fora de escopo).
+- **Deletados de vez (não realocados):** `plot_figure3_capacity_vulnerability_profiles`
+  (composto 2×2 intermediário), `plot_national_ccrs_with_ci`,
+  `plot_capacity_vulnerability_by_bucket_water/_heat` +
+  `_capacity_vulnerability_scenario_figure`. `plot_ccrs_rank_probability` /
+  `plot_ccrs_rank_density` já não existiam (fundidos em rodada anterior).
+- **Movidos para `combined/secondary/` (candidatos a Suplementar, NÃO
+  citados no rascunho de Results, decisão final de Douglas pendente):**
+  `charts.plot_ccrs_rank_stability` (versão 3 cenários; `charts.SECONDARY_DIR`),
+  `charts.plot_hazard_term_contribution_distribution`,
+  `maps.plot_worst_case_risk_band_map` (todos os 3 cenários — antes só bau
+  no disco), `maps.plot_ccrs_scenario_delta_map(combined=True)` (via
+  `maps._secondary_dir()` — função, não constante, para o monkeypatch de
+  `OUTPUT_MAPS` dos testes funcionar),
+  `emdat_validation.plot_emdat_spatial_validation` (via novo
+  `emdat_validation.SECONDARY_DIR`). Nenhuma lógica geradora nem dado
+  apagado — só a pasta de output mudou. Os mapas `ccrs_scenario_delta`
+  **por país** (`maps/<país>/`) não foram tocados (não fazem parte do
+  conjunto `combined/` de figura principal).
+- **`_common`:** `FONT_SCALE` 1.2 → 1.32; rosa dos ventos reescrita —
+  estrela de 8 pontas, só "N" rotulado, diâmetro físico **fixo em
+  polegadas** (`COMPASS_ROSE_SIZE_IN`, não fração de eixo), e a chamada
+  `add_compass_rose` movida para um passo final por figura, **depois** da
+  legenda/colorbar (senão o bbox lido está desatualizado e a rosa sai com
+  tamanhos diferentes entre categorias).
+- **`risk_bands.py`:** única mudança é encurtar `WORST_CASE_COMPARABILITY_NOTE`
+  (texto na figura) para uma frase — sem mudança de fórmula/lógica.
+- **Geração das figuras — sem runner commitado.** Não existe `python -m`
+  para "gerar todas as figuras do artigo". Cada figura é gerada importando a
+  função `src/visualization/*.plot_*` e chamando-a (as figuras varridas por
+  cenário precisam de uma chamada por cenário). Esta rodada usou um script
+  descartável (`load_band_tables()` + `load_ccrs_final()` + draws MC
+  computados uma vez e passados adiante). Ver `06-areas-de-risco.md`.
+- **Ambiente (importante):** o `.venv/` estava **sem `scipy`** (import de
+  `charts.py`/`monte_carlo.py` quebrava). `pip install -r requirements.txt`
+  puxou **pandas 3.0.5**, que quebra 2 testes: guardas `x is None` em coluna
+  object do pandas — o `None` vira `NaN` no pandas 3 (`risk_bands.worst_case_band`
+  com fixture sintética, e um teste de `emdat_validation`). Revertido para
+  **pandas 2.3.3** (`pip install "pandas<3"`) — baseline em que o projeto foi
+  desenvolvido/testado. `requirements.txt` **pinado** em
+  `pandas>=2.0.0,<3.0.0` (autorizado por Douglas, 2026-09-05). Migração para
+  pandas 3 fica como tarefa futura separada.
+- **Arquivos:** `src/visualization/charts.py`, `maps.py`, `_common.py`,
+  `emdat_validation.py`, `src/index/risk_bands.py` (só a nota),
+  `tests/test_visualization.py` (Fig 2/5/6/7, trava de mapeamento de
+  cenário, remoção das figuras deletadas, secondary; ver diff),
+  `requirements.txt` (teto `pandas<3`).
+- **Status:** Ativa. Conjunto Fig 1–7 definido. Decisão de quais figuras
+  excedentes viram Suplementar: pendente de Douglas. Nenhum commit feito —
+  aguardando autorização.

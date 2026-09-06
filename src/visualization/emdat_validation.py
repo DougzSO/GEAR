@@ -51,6 +51,25 @@ layout + visual emphasis:
   inside the same grid as every valid-result cell (does not break the
   layout of the countries with a valid result -- Douglas's explicit test
   requirement).
+
+--------------------------------------------------------------------------
+2026-09-05 review -- caption shortened, full caveats moved here
+--------------------------------------------------------------------------
+The on-figure caption (``CAPTION`` below) was cut to one or two lines (the
+exploratory status and the gold/hatching legend only). The full coverage/
+proxy caveats it used to spell out in full, kept here verbatim so nothing is
+lost:
+
+- Compares only the ~50-53% of EM-DAT events with a structured GADM Admin Units
+  reference (point-level Lat/Lon covers just 5.3-12.1% of events, Portugal 2
+  events) -- a real sample-selection gap, not a random subsample.
+- Flood is compared against the water STRESS raster (scarcity), the closest
+  available term, not excess water.
+- Storm has no matching Hazard term (``DISASTER_TYPE_TO_TERM``) and is not
+  tested.
+- Gold background = statistically significant (p < ``ALPHA`` = 0.05); grey
+  hatching = skipped, no control group available (still shown with
+  whichever one group actually has data, never left blank).
 """
 
 from __future__ import annotations
@@ -70,19 +89,22 @@ from src.visualization._common import figure_caption_footer, fs, save_figure
 logger = logging.getLogger(__name__)
 
 OUT_DIR = OUTPUT_MAPS
+# 2026-09-05 follow-up review: moved to combined/secondary/ -- still a
+# useful exploratory figure (kept, not deleted), just no longer a
+# manuscript-figure candidate.
+SECONDARY_DIR = OUTPUT_MAPS / "combined" / "secondary"
 
+# 2026-09-05 review: shortened to the essential read of the figure itself
+# (exploratory status, partial coverage, the gold/hatching legend). The full
+# methodology -- exact coverage percentages, the flood/water-stress proxy
+# choice, why Storm is untested -- moved to this module's own docstring
+# (below) and to src/index/emdat_validation.py, rather than staying as
+# running text under the figure.
 CAPTION = (
-    "EXPLORATORY, diagnostic only -- does not feed back into Hazard/CCRS. "
-    "Compares only the ~50-53% of EM-DAT events with a structured GADM "
-    "Admin Units reference (point-level Lat/Lon covers just 5.3-12.1%, "
-    "Portugal 2 events) -- a real sample-selection gap, not a random "
-    "subsample. Flood is compared against the water STRESS raster "
-    "(scarcity), the closest available term, not excess water. Storm has "
-    "no matching Hazard term and is not tested. Gold background = "
-    "statistically significant (p<0.05); grey hatching = skipped, no "
-    "control group available (shown with its one available group, not "
-    "blank). See src/index/emdat_validation.py for the full method and "
-    "caveats."
+    "EXPLORATORY, diagnostic only -- partial EM-DAT coverage, does not feed "
+    "into Hazard/CCRS. Gold = statistically significant (p<0.05); grey "
+    "hatching = skipped, no control group. Full method and caveats: "
+    "src/index/emdat_validation.py."
 )
 
 _GROUP_COLORS = {"no event": "#cccccc", ">=1 event": "#d62728"}
@@ -221,6 +243,6 @@ def plot_emdat_spatial_validation(
                 _panel_skipped(ax, country, disaster_type, row["term"], sub, row["skip_reason"])
 
     figure_caption_footer(fig, list(axes.ravel()), CAPTION)
-    out_path = save_figure(fig, OUT_DIR / "combined" / "emdat_spatial_validation.png")
+    out_path = save_figure(fig, SECONDARY_DIR / "emdat_spatial_validation.png")
     logger.info("EM-DAT spatial validation saved to %s", out_path)
     return out_path
