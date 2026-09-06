@@ -89,11 +89,12 @@ def _synthetic_bands(final: pd.DataFrame) -> dict[str, BandTable]:
 
 
 def _synthetic_age_factors(final: pd.DataFrame) -> pd.DataFrame:
-    # "age" included (2026-09-05, Figure 3 Panel C) -- production
-    # age_factor.compute_age_factors() carries it alongside age_factor
-    # itself; earlier synthetic fixtures omitted it since no consumer
-    # needed it before Panel C's age-vs-age_factor scatter.
-    return final[["plant_uid", "country", "bucket", "age", "age_factor",
+    # "age" and "capacity_mw" included -- production
+    # age_factor.compute_age_factors() carries both alongside age_factor
+    # itself. "age" is needed by Figure 6 Panel B's age-vs-age_factor
+    # scatter, "capacity_mw" by its 2026-09-06 capacity-proportional marker
+    # sizing and the capacity-weighted mean-age annotation.
+    return final[["plant_uid", "country", "bucket", "age", "capacity_mw", "age_factor",
                    "age_factor_neutralized_missing_year"]].drop_duplicates("plant_uid")
 
 
@@ -346,16 +347,35 @@ def test_figure6_is_two_panels(synth, tmp_path, monkeypatch):
     assert len(fig.axes) == 2
 
 
-def test_figure6_violin_panel_is_restricted_to_pes(synth, tmp_path, monkeypatch):
-    """Confirms Panel A's data only ever includes PES rows -- this was
-    ALREADY true before this round (default ``scenario="pes"``), reported
-    rather than silently "fixed" since there was no bug."""
+def test_figure6_exposure_panel_is_restricted_to_pes(synth, tmp_path, monkeypatch):
+    """Confirms Panel A's data only ever includes PES rows (default
+    ``scenario="pes"``)."""
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots()
     try:
-        charts._draw_technology_violin_panel(ax, synth["final"], PRIMARY_GCM, scenario="pes")
+        charts._draw_technology_exposure_panel(ax, synth["final"], PRIMARY_GCM, scenario="pes")
         assert "PES" in ax.get_title()
+    finally:
+        plt.close(fig)
+
+
+def test_figure6_panel_a_is_box_strip_not_violin(synth):
+    """2026-09-06: Panel A is box+strip (same idiom as
+    ``plot_hazard_term_contribution_distribution``), not a KDE violin. A
+    box is drawn via ``ax.bxp`` (PathPatch boxes) and the strip via
+    ``ax.scatter``; the old violin used ``fill_betweenx`` (a PolyCollection
+    with no scatter). Also: the KDE-violin helper is gone."""
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import PathCollection
+
+    assert not hasattr(charts, "_draw_violin")
+    assert not hasattr(charts, "FIGURE6_VIOLIN_MIN_ROWS")
+    fig, ax = plt.subplots()
+    try:
+        charts._draw_technology_exposure_panel(ax, synth["final"], PRIMARY_GCM, scenario="pes")
+        assert any(isinstance(c, PathCollection) for c in ax.collections)  # the strip
+        assert len(ax.patches) > 0  # the box(es)
     finally:
         plt.close(fig)
 
@@ -370,6 +390,7 @@ def test_figure6_scatter_skips_a_bucket_with_zero_known_age_plants(tmp_path, mon
         "country": ["Brazil"] * 8,
         "bucket": (["hydro"] * 4) + (["wind"] * 4),
         "age": [10.0, 20.0, 30.0, 40.0] + [np.nan] * 4,  # wind: zero known-age plants
+        "capacity_mw": [100.0, 200.0, 300.0, 400.0] + [50.0] * 4,
         "age_factor": [1.1, 1.2, 1.3, 1.4] + [1.0] * 4,
         "age_factor_neutralized_missing_year": [False] * 4 + [True] * 4,
     })
@@ -377,6 +398,29 @@ def test_figure6_scatter_skips_a_bucket_with_zero_known_age_plants(tmp_path, mon
     try:
         charts._draw_age_amplification_scatter(ax, age_factors)
         assert len(ax.collections) == 1  # only hydro plotted -- wind contributed nothing, did not crash
+    finally:
+        plt.close(fig)
+
+
+def test_figure6_scatter_marker_size_scales_with_capacity(tmp_path):
+    """2026-09-06: marker AREA is proportional to capacity_mw -- a big plant
+    must get a visibly larger marker than a small one in the same bucket."""
+    import matplotlib.pyplot as plt
+
+    age_factors = pd.DataFrame({
+        "plant_uid": ["A", "B"],
+        "country": ["Brazil", "Brazil"],
+        "bucket": ["hydro", "hydro"],
+        "age": [30.0, 30.0],
+        "capacity_mw": [10.0, 1000.0],
+        "age_factor": [1.2, 1.2],
+        "age_factor_neutralized_missing_year": [False, False],
+    })
+    fig, ax = plt.subplots()
+    try:
+        charts._draw_age_amplification_scatter(ax, age_factors)
+        sizes = np.asarray(ax.collections[0].get_sizes())
+        assert sizes.max() > sizes.min() * 2
     finally:
         plt.close(fig)
 
@@ -393,14 +437,14 @@ def test_figure6_scatter_panel_has_no_scenario_filter():
     assert "== \"pes\"" not in src
 
 
-def test_figure6_violin_panel_pools_countries_not_per_country():
+def test_figure6_exposure_panel_pools_countries_not_per_country():
     """Panel A is a per-TECHNOLOGY cut pooling all 3 countries, unlike
     ``plot_hazard_term_contribution_distribution`` (per-country) -- confirmed
-    by checking ``_draw_technology_violin_panel`` groups only by bucket, not
-    country."""
+    by checking ``_draw_technology_exposure_panel`` groups only by bucket,
+    not country."""
     import inspect
 
-    src = inspect.getsource(charts._draw_technology_violin_panel)
+    src = inspect.getsource(charts._draw_technology_exposure_panel)
     assert "enumerate(BUCKETS)" in src
     assert "for country in" not in src
     assert "for c in countries" not in src
@@ -982,10 +1026,9 @@ def test_fig4_country_colors_defined_for_every_country():
 
 
 # --------------------------------------------------------------------------
-# FIGURE 7 (2026-09-05 article-figure-numbering round): Monte Carlo CCRS
-# density + ordinal ranking stability, PES only, as TWO genuinely separate
-# panels (resolving the caption/figure mismatch flagged for the fused
-# all-scenarios version, ``plot_ccrs_rank_stability``, now in secondary/).
+# FIGURE 7 (2026-09-05; fused to one panel 2026-09-06): Monte Carlo CCRS
+# density under PES, a single panel with the ordinal-ranking stability as an
+# inset annotation (the separate rank-probability bar panel was dropped).
 # --------------------------------------------------------------------------
 def test_figure7_runs_without_error_on_synthetic_data(tmp_path, monkeypatch):
     monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
@@ -993,36 +1036,57 @@ def test_figure7_runs_without_error_on_synthetic_data(tmp_path, monkeypatch):
     assert path.exists()
 
 
-def test_figure7_is_two_panels(tmp_path, monkeypatch):
+def test_figure7_is_a_single_panel(tmp_path, monkeypatch):
+    """2026-09-06: fused from two panels to one -- density curves only, with
+    the ranking evidence as an inset text box (matching the decision already
+    taken for ``plot_ccrs_rank_stability``)."""
     monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
     captured = _capture_figures(monkeypatch, charts)
     charts.plot_figure7_montecarlo_stability_pes(draws=_synthetic_draws())
     fig = captured[0]
-    assert len(fig.axes) == 2
+    assert len(fig.axes) == 1
 
 
 def test_figure7_only_uses_pes_draws(tmp_path, monkeypatch):
-    """Both panels must be built from PES rows only -- opt/bau draws in the
-    input frame must not leak into either panel."""
+    """The density panel must be built from PES rows only -- opt/bau draws in
+    the input frame must not leak in."""
     monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
     draws = _synthetic_draws()
     # Sabotage non-PES rows with an out-of-range value; if they leaked in,
-    # the density panel's x-range would reflect them.
+    # the panel's x-range would reflect them.
     draws = draws.copy()
     draws.loc[draws["water_scenario"] != "pes", "ccrs"] = 999.0
     captured = _capture_figures(monkeypatch, charts)
-    charts.plot_figure7_montecarlo_stability_pes(draws=draws)
+    charts.plot_figure7_montecarlo_stability_pes(draws=draws, xscale="linear")
     fig = captured[0]
-    density_ax = fig.axes[0]
-    xlim = density_ax.get_xlim()
-    assert xlim[1] < 900  # the sabotaged non-PES value never entered the density panel's range
+    xlim = fig.axes[0].get_xlim()
+    assert xlim[1] < 900  # the sabotaged non-PES value never entered the panel's range
 
 
-def test_figure7_rank_panel_probabilities_sum_to_100_pct():
-    """The rank-probability bars (Panel b) must still sum to 1.0 per
-    country, the same invariant already tested for
-    ``monte_carlo.rank_probability_table`` in general -- checked here on
-    the PES-only slice Figure 7 actually uses."""
+def test_figure7_annotates_the_ordinal_ranking(tmp_path, monkeypatch):
+    """The dropped rank-probability panel is replaced by an inset -- with
+    India's synthetic mean (0.8) far above Brazil's (0.4) and Portugal's
+    (0.3), the panel text must state the full ordering and a percentage."""
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    captured = _capture_figures(monkeypatch, charts)
+    charts.plot_figure7_montecarlo_stability_pes(draws=_synthetic_draws())
+    fig = captured[0]
+    text = " ".join(t.get_text() for t in fig.axes[0].texts)
+    assert "India > Brazil > Portugal" in text
+    assert "100%" in text
+
+
+@pytest.mark.parametrize("xscale", ["log", "linear"])
+def test_figure7_both_xscales_render(tmp_path, monkeypatch, xscale):
+    monkeypatch.setattr(charts, "OUT_DIR", tmp_path)
+    path = charts.plot_figure7_montecarlo_stability_pes(draws=_synthetic_draws(), xscale=xscale)
+    assert path.exists()
+
+
+def test_figure7_ranking_data_probabilities_sum_to_100_pct():
+    """The ordinal ranking the inset reports rests on
+    ``monte_carlo.rank_probability_table``, which must sum to 1.0 per
+    country -- checked here on the PES-only slice Figure 7 uses."""
     from src.index import monte_carlo as mc
 
     draws = _synthetic_draws()

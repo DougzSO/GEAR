@@ -1063,6 +1063,53 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   `tests/test_visualization.py` (Fig 2/5/6/7, trava de mapeamento de
   cenário, remoção das figuras deletadas, secondary; ver diff),
   `requirements.txt` (teto `pandas<3`).
-- **Status:** Ativa. Conjunto Fig 1–7 definido. Decisão de quais figuras
-  excedentes viram Suplementar: pendente de Douglas. Nenhum commit feito —
-  aguardando autorização.
+- **Status:** Ativa (commitada em `95fa515`, "Renumber the figure set to
+  the manuscript's Figure 1-7"). Decisão de quais figuras excedentes viram
+  Suplementar: pendente de Douglas.
+
+### 23.1 Ajuste fino de Fig 2/6/7 (2026-09-06)
+
+- **Fig 2:** duas legendas independentes, uma por painel (WaterRiskBand 5
+  níveis sob o painel a, HeatRiskBand 4 níveis sob o painel b) — não mais
+  uma legenda global "Water: X / Heat: X". Eixo X agrupado por país: 3
+  barras (opt/bau/pes, nessa ordem, não alfabética) por bloco de país, com
+  vão entre blocos e o nome do país como rótulo em negrito centrado sob o
+  bloco (`ax.get_xaxis_transform()`). O painel de calor relabela
+  `heat_scenario` (ssp126/370/585) para opt/bau/pes via
+  `AQUEDUCT_SCENARIO_FOR_CMIP6` para os dois painéis compartilharem um eixo.
+  Helpers `_draw_grouped_band_exposure_panel` / `_band_swatch_handles`
+  substituem `_draw_band_exposure_panel` / `_band_and_heat_legend_handles`
+  (removidos); `_stacked_bar` (compartilhado com categorias 5/8) **não**
+  foi tocado.
+- **Fig 6 painel A:** violin KDE trocado por **box+strip** — mesmo idioma de
+  `plot_hazard_term_contribution_distribution` (`_draw_box_and_strip`:
+  quantis da amostra completa, strip subamostrada acima de
+  `STRIP_MAX_POINTS`, `n` real e `n` mostrado por bucket no rótulo do eixo).
+  `_draw_violin` e `FIGURE6_VIOLIN_MIN_ROWS` removidos.
+  `_draw_technology_violin_panel` → `_draw_technology_exposure_panel`.
+- **Fig 6 painel B:** continua scatter (não virou barra agregada). Área do
+  marcador ∝ `capacity_mw` (escala √, convenção de bolha do projeto),
+  alpha 0.22 para sobreposição, e caixa de texto com a idade operacional
+  média ponderada por capacidade por país (Brasil 47 / Portugal 45 / Índia
+  42 anos, dado real). **Sem filtro de cenário, por design** — `age_factor`
+  é invariante a `water_scenario`; não é correção pendente. `age_factors`
+  agora precisa de `capacity_mw` (produção já carrega; fixture sintética
+  atualizada).
+- **Fig 7:** fundida de 2 painéis em **1 painel único** — curvas de
+  densidade CCRS por país sob PES, com a estabilidade de ranking como
+  anotação de texto embutida ("India > Brazil > Portugal: 100%", via
+  `mc.full_ranking_distribution`), não mais um painel de barras separado
+  (alinha com a decisão já tomada para `plot_ccrs_rank_stability`). Eixo X:
+  **escala log** (`xscale="log"`, padrão) — Brasil (~0,33) e Portugal
+  (~0,30) ficam espremidos contra a borda esquerda numa escala linear
+  auto-zoom; o log dá proporção ao low-end e separa os dois. `xscale=
+  "linear"` (auto-zoom ao range real, sem 0,2–1,0 fixo) fica disponível
+  para comparação. Forma da densidade preservada nas duas — não é a forma
+  ponto+IC (já rejeitada). `FIGURE7_CAPTION` reescrito para painel único
+  (sem "a,"/"b,").
+- **Testes:** `tests/test_visualization.py` — Fig 2 (inalterado, 2 axes),
+  Fig 6 (box+strip em vez de violin, tamanho de marcador ∝ capacidade,
+  helper renomeado), Fig 7 (`test_figure7_is_a_single_panel`, anotação de
+  ranking, ambos os `xscale`). Suíte completa verde (pandas 2.3.3).
+- **Status:** Ativa (commitada, "Fine-tune Figures 2, 6
+  and 7 after the manuscript review").

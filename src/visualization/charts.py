@@ -92,18 +92,18 @@ exists. Its panels are split across the article's real figure numbering:
   (``plot_figure2_capacity_exposure_by_band``), unchanged data/design
   except no "historical baseline" column (never implemented -- no such
   dataset exists in this pipeline, confirmed again this round).
-- Panels B (violin) + C (scatter) -> Figure 6
-  (``plot_figure6_technology_age_vulnerability_pes``), both explicitly
-  PES-only now. Panel B already was PES-only in the prior round (reported,
-  not "fixed" -- there was no bug); Panel C has no scenario dimension to
-  restrict in the first place (age_factor does not vary by water_scenario).
+- Panels B + C -> Figure 6
+  (``plot_figure6_technology_age_vulnerability_pes``). Panel A is box+strip
+  per technology bucket (2026-09-06; was a KDE violin); Panel B is the
+  age vs age_factor scatter with marker area proportional to capacity.
+  Panel B has no scenario dimension to restrict in the first place
+  (age_factor does not vary by water_scenario) -- by design.
 
 ``plot_ccrs_rank_stability`` (the fused, all-3-scenarios Monte Carlo
 figure) moves to ``combined/secondary/`` -- the article's headline Monte
-Carlo figure is now ``plot_figure7_montecarlo_stability_pes``, PES only,
-with density and ranking-stability as two GENUINELY separate panels
-(resolving the caption/figure mismatch flagged in the prior round -- see
-``FIGURE7_CAPTION``'s comment).
+Carlo figure is now ``plot_figure7_montecarlo_stability_pes``, PES only, a
+single density panel with the ranking stability as an inset annotation
+(2026-09-06 fuse; was two panels).
 
 ``plot_hazard_term_contribution_distribution`` moves to
 ``combined/secondary/`` -- not cited in the current Results draft, kept as
@@ -133,7 +133,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from src.config import COUNTRIES, OUTPUT_MAPS
+from src.config import AQUEDUCT_SCENARIO_FOR_CMIP6, COUNTRIES, OUTPUT_MAPS
 from src.index import monte_carlo as mc
 from src.index.ccrs_calculator import BUCKETS, PLANT_UID
 from src.index.risk_bands import HEAT_RISK_BANDS, PRIMARY_GCM, WATER_RISK_BANDS
@@ -447,47 +447,8 @@ def plot_top_n_ccrs_breakdown_by_bucket(
 # the prior round (``plot_figure3_capacity_vulnerability_profiles``) was
 # purely intermediate and no longer exists as such. Its three panels are
 # split into the article's actual Figure 2 (band exposure) and Figure 6
-# (technology violin + age scatter, both restricted to PES) below; the
-# shared drawing helpers are kept (renamed away from "figure3", which no
-# longer means anything) rather than duplicated.
+# (technology exposure + age scatter, both restricted to PES) below.
 # --------------------------------------------------------------------------
-
-
-def _draw_violin(ax, x: float, values: np.ndarray, color: str, width: float = 0.7) -> None:
-    """Unweighted KDE violin at position ``x``. Note this is UNRELATED to
-    C4's per-country violin (dropped entirely, see ``STRIP_MAX_POINTS``
-    above) -- this is a simpler helper for a different cut (per-technology,
-    pooled across countries) used by Figure 6's Panel A below."""
-    from scipy import stats as sp_stats
-
-    if len(values) < 2 or np.ptp(values) == 0:
-        return
-    kde = sp_stats.gaussian_kde(values)
-    grid = np.linspace(values.min(), values.max(), 200)
-    density = kde(grid)
-    density = density / density.max() * (width / 2)
-    ax.fill_betweenx(grid, x - density, x + density, color=color, alpha=0.6, linewidth=0.6, edgecolor="black")
-
-
-def _draw_band_exposure_panel(ax, shares: pd.DataFrame, group_cols: list[str], band_order: tuple,
-                               band_colors: dict, title: str) -> None:
-    _stacked_bar(ax, shares, group_cols, "band", band_order, band_colors)
-    ax.set_title(title, fontweight="bold", fontsize=fs(11))
-    ax.set_ylabel("Share of national computable capacity", fontsize=fs(9.5))
-
-
-def _band_and_heat_legend_handles() -> list[mlines.Line2D]:
-    water_handles = [
-        mlines.Line2D([0], [0], marker="s", color="w", markerfacecolor=color, markeredgecolor="none",
-                      markersize=10, label=f"Water: {label}")
-        for label, color in WATER_BAND_COLORS.items()
-    ]
-    heat_handles = [
-        mlines.Line2D([0], [0], marker="s", color="w", markerfacecolor=color, markeredgecolor="none",
-                      markersize=10, label=f"Heat: {label}")
-        for label, color in HEAT_BAND_COLORS.items()
-    ]
-    return water_handles + heat_handles
 
 
 def _bucket_identity_legend_handles() -> list[mlines.Line2D]:
@@ -519,7 +480,75 @@ def _bucket_identity_legend_handles() -> list[mlines.Line2D]:
 # name a separate current/present-day raster) -- confirmed again this
 # round, per Douglas's explicit instruction to drop that column from scope
 # rather than fabricate it.
+#
 # --------------------------------------------------------------------------
+# 2026-09-06 fine-tuning round -- legend and x-axis
+# --------------------------------------------------------------------------
+# - TWO independent legends, one per panel: the water panel's 5 native
+#   WaterRiskBand levels and the heat panel's 4 native HeatRiskBand levels
+#   are different colour schemes on the same ordinal-severity ramp; a single
+#   merged legend forced the reader to disambiguate "Water: High" from
+#   "Heat: HIGH" by prefix. Each panel now carries only its own scheme,
+#   placed directly under that panel.
+# - X-axis grouped by country: three bars (opt/bau/pes, in that
+#   optimistic->pessimistic order, NOT alphabetical) per country, with a gap
+#   between country blocks and the country name as a bold label centred
+#   under its block -- instead of nine flat "Brazil / opt", "Brazil / bau"
+#   ... ticks with no visual hierarchy. The heat panel's ``heat_scenario``
+#   (ssp126/370/585) is relabelled to the same opt/bau/pes axis via
+#   ``AQUEDUCT_SCENARIO_FOR_CMIP6`` so both panels share one scenario axis.
+# --------------------------------------------------------------------------
+FIGURE2_SCENARIO_ORDER = ("opt", "bau", "pes")
+
+
+def _band_swatch_handles(band_colors: dict) -> list[mlines.Line2D]:
+    return [
+        mlines.Line2D([0], [0], marker="s", color="w", markerfacecolor=color,
+                      markeredgecolor="#888888", markeredgewidth=0.5, markersize=10, label=str(label))
+        for label, color in band_colors.items()
+    ]
+
+
+def _draw_grouped_band_exposure_panel(ax, shares: pd.DataFrame, countries: list[str],
+                                       band_order: tuple, band_colors: dict, title: str) -> None:
+    """One stacked bar per (country, scenario). Bars are laid out in
+    per-country blocks (opt/bau/pes, with a one-slot gap between blocks);
+    the scenario is the per-bar x-tick, the country a bold label centred
+    under the block. ``shares`` must carry a normalised ``scenario`` column
+    (opt/bau/pes) plus ``country``/``band``/``capacity_share``."""
+    block = len(FIGURE2_SCENARIO_ORDER) + 1
+    positions, bar_labels, block_centers = [], [], []
+    for ci, _country in enumerate(countries):
+        start = ci * block
+        for si, scenario in enumerate(FIGURE2_SCENARIO_ORDER):
+            positions.append(start + si)
+            bar_labels.append(scenario)
+        block_centers.append(start + (len(FIGURE2_SCENARIO_ORDER) - 1) / 2)
+
+    bottom = np.zeros(len(positions))
+    for band in band_order:
+        heights = []
+        for country in countries:
+            for scenario in FIGURE2_SCENARIO_ORDER:
+                cell = shares[(shares["country"] == country) & (shares["scenario"] == scenario)
+                              & (shares["band"] == band)]
+                heights.append(float(cell["capacity_share"].iloc[0]) if len(cell) else 0.0)
+        heights = np.asarray(heights)
+        ax.bar(positions, heights, bottom=bottom, width=0.8,
+               color=band_colors.get(band, "#cccccc"), label=str(band))
+        bottom += heights
+
+    ax.set_xticks(positions)
+    ax.set_xticklabels(bar_labels, fontsize=fs(8))
+    ax.set_xlim(-0.8, positions[-1] + 0.8)
+    ax.set_ylim(0, 1.05)
+    for center, country in zip(block_centers, countries):
+        ax.text(center, -0.11, country, transform=ax.get_xaxis_transform(),
+                ha="center", va="top", fontweight="bold", fontsize=fs(10))
+    ax.set_title(title, fontweight="bold", fontsize=fs(11))
+    ax.set_ylabel("Share of national computable capacity", fontsize=fs(9.5))
+
+
 def plot_figure2_capacity_exposure_by_band(
     countries: list[str] | None = None,
     water_shares: pd.DataFrame | None = None, heat_shares: pd.DataFrame | None = None,
@@ -528,20 +557,29 @@ def plot_figure2_capacity_exposure_by_band(
     countries = countries or COUNTRIES
     water_shares = water_shares if water_shares is not None else vdata.load_water_band_shares()
     heat_shares = heat_shares if heat_shares is not None else vdata.load_heat_band_shares()
-    heat_primary = heat_shares[heat_shares["gcm"] == gcm]
-    water_shares = water_shares[water_shares["country"].isin(countries)]
-    heat_primary = heat_primary[heat_primary["country"].isin(countries)]
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6.5))
-    _draw_band_exposure_panel(axes[0], water_shares, ["country", "water_scenario"],
-                               WATER_RISK_BANDS + ("NO_BAND",), {**WATER_BAND_COLORS, "NO_BAND": "#e0e0e0"},
-                               "a -- WaterRiskBand, by country x scenario")
-    _draw_band_exposure_panel(axes[1], heat_primary, ["country", "heat_scenario"],
-                               HEAT_RISK_BANDS + ("NO_BAND",), {**HEAT_BAND_COLORS, "NO_BAND": "#e0e0e0"},
-                               f"b -- HeatRiskBand ({gcm}), by country x scenario")
-    handles = _band_and_heat_legend_handles()
-    axes[1].legend(handles=handles, fontsize=fs(7), loc="upper left", bbox_to_anchor=(1.02, 1.0),
-                    ncol=1, borderaxespad=0, title="Risk band", title_fontsize=fs(7.5))
+    heat_to_scenario = {h: w for h, w in AQUEDUCT_SCENARIO_FOR_CMIP6.items()}
+    water = water_shares[water_shares["country"].isin(countries)].copy()
+    water["scenario"] = water["water_scenario"]
+    heat = heat_shares[(heat_shares["gcm"] == gcm) & heat_shares["country"].isin(countries)].copy()
+    heat["scenario"] = heat["heat_scenario"].map(heat_to_scenario)
+    present = [c for c in countries if c in set(water["country"]) | set(heat["country"])]
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    _draw_grouped_band_exposure_panel(
+        axes[0], water, present, WATER_RISK_BANDS + ("NO_BAND",),
+        {**WATER_BAND_COLORS, "NO_BAND": "#e0e0e0"}, "a -- WaterRiskBand (fixed WRI Aqueduct 4.0 cuts)",
+    )
+    _draw_grouped_band_exposure_panel(
+        axes[1], heat, present, HEAT_RISK_BANDS + ("NO_BAND",),
+        {**HEAT_BAND_COLORS, "NO_BAND": "#e0e0e0"}, f"b -- HeatRiskBand ({gcm}, sample-relative cuts)",
+    )
+    axes[0].legend(handles=_band_swatch_handles({**WATER_BAND_COLORS, "NO_BAND": "#e0e0e0"}),
+                    loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3, fontsize=fs(7.5),
+                    frameon=False, title="WaterRiskBand", title_fontsize=fs(8.5))
+    axes[1].legend(handles=_band_swatch_handles({**HEAT_BAND_COLORS, "NO_BAND": "#e0e0e0"}),
+                    loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3, fontsize=fs(7.5),
+                    frameon=False, title="HeatRiskBand", title_fontsize=fs(8.5))
 
     fig.tight_layout()
     out_path = save_figure(fig, OUT_DIR / "combined" / "figure2_capacity_exposure_by_band.png")
@@ -550,57 +588,86 @@ def plot_figure2_capacity_exposure_by_band(
 
 
 # --------------------------------------------------------------------------
-# FIGURE 6 -- CCRS-by-technology violin + age-vs-age_factor scatter, PES
-# only (article figure numbering round, 2026-09-05)
+# FIGURE 6 -- CCRS by technology (box+strip) + age vs age_factor scatter,
+# PES only (article figure numbering round, 2026-09-05; panels reworked
+# 2026-09-06)
 #
 # Extracted from the prior composite's Panels B/C, both restricted to PES.
-# Panel A (violin) WAS ALREADY correctly restricted to PES only in the
-# prior round (``scenario: str = "pes"`` was already the default, and the
-# real-data sample's panel title already read "Technology-specific exposure
-# (pes)") -- reported here rather than silently "fixed": there was no bug
-# to fix, the instruction's premise did not match the actual prior code.
-# Panel B (scatter) has NO scenario dependence to restrict in the first
-# place: ``age_factor`` is a per-plant, scenario-invariant quantity (it
-# does not vary by water_scenario -- only Hazard and EventMultiplier do),
-# so "under PES" does not change what Panel B plots. Flagged rather than
-# silently accepted, since the brief's framing implies both panels have a
-# scenario dimension to restrict, and only one of them actually does.
+#
+# Panel A: box + strip per technology bucket, pooled across countries -- the
+# SAME idiom as ``plot_hazard_term_contribution_distribution`` (box
+# quantiles from the full per-plant sample; the strip a fixed reproducible
+# subsample above ``STRIP_MAX_POINTS`` so it stays legible at any volume;
+# the true n and, when subsampled, the shown count reported per bucket).
+# The 2026-09-06 round replaced the KDE violin used here before -- Douglas
+# prefers box+strip, and it removes the "implies a smooth continuous
+# distribution the sample may not support" concern the violin carried.
+#
+# Panel B: kept as a scatter (NOT collapsed to an aggregate bar). Marker
+# AREA is proportional to plant ``capacity_mw`` (sqrt scale, the project's
+# bubble convention) so the installed capacity riding the ageing curve is
+# visible, not just the plant count; alpha is low for the dense
+# common-age/common-bucket overplotting. A small text box reports each
+# country's capacity-weighted mean operational age. Panel B has NO scenario
+# dependence to restrict in the first place: ``age_factor`` is a per-plant,
+# scenario-invariant quantity (it does not vary by water_scenario -- only
+# Hazard and EventMultiplier do), so "under PES" does not change what
+# Panel B plots. This is correct-by-design, not a pending fix.
 # --------------------------------------------------------------------------
-FIGURE6_VIOLIN_MIN_ROWS = 200
-
-
-def _draw_technology_violin_panel(ax, final: pd.DataFrame, gcm: str, scenario: str = "pes") -> None:
+def _draw_technology_exposure_panel(ax, final: pd.DataFrame, gcm: str, scenario: str = "pes") -> None:
     col = f"ccrs_{gcm}"
     sub = final[(final["water_scenario"] == scenario) & final["computable"]]
     rng = np.random.default_rng(0)
+    labels = []
     for i, bucket in enumerate(BUCKETS):
         values = sub.loc[sub["bucket"] == bucket, col].dropna().to_numpy()
         if len(values) == 0:
+            labels.append(f"{bucket.capitalize()}\n(n=0)")
             continue
-        color = BUCKET_COLORS[bucket]
-        if len(values) >= FIGURE6_VIOLIN_MIN_ROWS and np.ptp(values) > 0:
-            _draw_violin(ax, i, values, color)
-        else:
-            _draw_box_and_strip(ax, i, values, None, color, rng)
+        n_shown = _draw_box_and_strip(ax, i, values, None, BUCKET_COLORS[bucket], rng)
+        note = f"n={len(values):,}"
+        if n_shown < len(values):
+            note += f"\n({n_shown:,} shown)"
+        labels.append(f"{bucket.capitalize()}\n{note}")
     ax.set_xticks(range(len(BUCKETS)))
-    ax.set_xticklabels([b.capitalize() for b in BUCKETS], fontsize=fs(9))
+    ax.set_xticklabels(labels, fontsize=fs(8))
     ax.set_ylabel(f"CCRS ({gcm}, {scenario.upper()})", fontsize=fs(9.5))
-    ax.set_title(f"a -- Technology-specific exposure ({scenario.upper()})", fontweight="bold", fontsize=fs(11))
+    ax.set_title(f"a -- Technology exposure ({scenario.upper()})", fontweight="bold", fontsize=fs(11))
 
 
 def _draw_age_amplification_scatter(ax, age_factors: pd.DataFrame) -> None:
-    """No scenario filter -- ``age_factor`` does not vary by water_scenario
-    (see the module comment above)."""
+    """Per-plant operational age vs age_factor, coloured by bucket, marker
+    area proportional to ``capacity_mw`` (sqrt scale). No scenario filter --
+    ``age_factor`` does not vary by water_scenario (see the module comment
+    above); this is by design, not an omission."""
+    known = age_factors[age_factors["age"].notna() & age_factors["capacity_mw"].notna()]
+    cap_max = float(known["capacity_mw"].clip(lower=0).max()) if len(known) else 0.0
     for bucket in BUCKETS:
-        sub = age_factors[(age_factors["bucket"] == bucket) & age_factors["age"].notna()]
-        if len(sub) == 0:
+        s = known[known["bucket"] == bucket]
+        if len(s) == 0:
             continue
-        ax.scatter(sub["age"], sub["age_factor"], s=10, alpha=0.35, color=BUCKET_COLORS[bucket],
-                   edgecolors="none")
-    ax.set_xlabel("Operational age (years)", fontsize=fs(9.5))
-    ax.set_ylabel("age_factor ( >= 1 )", fontsize=fs(9.5))
+        if cap_max > 0:
+            sizes = 5 + 55 * np.sqrt(s["capacity_mw"].clip(lower=0) / cap_max)
+        else:
+            sizes = 12
+        ax.scatter(s["age"], s["age_factor"], s=sizes, alpha=0.22,
+                   color=BUCKET_COLORS[bucket], edgecolors="none")
     ax.axhline(1.0, color="black", linewidth=0.6, linestyle=":")
+    ax.set_xlabel("Operational age (years) -- marker area proportional to plant capacity", fontsize=fs(9))
+    ax.set_ylabel("age_factor ( >= 1 )", fontsize=fs(9.5))
     ax.set_title("b -- Age-driven risk amplification", fontweight="bold", fontsize=fs(11))
+
+    wm = []
+    for country in COUNTRIES:
+        c = known[known["country"] == country]
+        w = c["capacity_mw"].clip(lower=0)
+        if len(c) and w.sum() > 0:
+            wm.append(f"{country} {float(np.average(c['age'], weights=w)):.0f} yr")
+    if wm:
+        ax.text(0.03, 0.97, "Capacity-weighted mean age\n" + "\n".join(wm),
+                transform=ax.transAxes, ha="left", va="top", fontsize=fs(7.5),
+                bbox=dict(facecolor="white", alpha=0.8, edgecolor="#999999", linewidth=0.5,
+                          boxstyle="round,pad=0.3"))
 
 
 def plot_figure6_technology_age_vulnerability_pes(
@@ -614,8 +681,8 @@ def plot_figure6_technology_age_vulnerability_pes(
     final = final[final["country"].isin(countries)]
     age_factors = age_factors[age_factors["country"].isin(countries)]
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 6))
-    _draw_technology_violin_panel(axes[0], final, gcm, scenario="pes")
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6.5))
+    _draw_technology_exposure_panel(axes[0], final, gcm, scenario="pes")
     _draw_age_amplification_scatter(axes[1], age_factors)
     handles = _bucket_identity_legend_handles()
     axes[1].legend(handles=handles, fontsize=fs(8), loc="upper left", bbox_to_anchor=(1.02, 1.0),
@@ -676,14 +743,9 @@ def plot_figure6_technology_age_vulnerability_pes(
 # NOT reopened here -- ``FIGURE7_CAPTION`` below is text only. It lives in
 # the manuscript's own figure-caption text, not printed on the figure
 # itself: this project's convention is no figure prints its own
-# multi-sentence caption. This caption was written when this constant was
-# still ``FIGURE4_CAPTION`` and described ``plot_ccrs_rank_stability``'s
-# single fused panel (a factual mismatch was flagged then: the caption
-# names "a"/"b" as if two separate panels existed, but the fused figure had
-# only one). The 2026-09-05 article-figure-numbering round resolves that
-# mismatch: ``plot_figure7_montecarlo_stability_pes`` (below) is a genuine
-# 2-panel figure (a = density, b = rank-probability bars), PES only -- this
-# caption now describes THAT figure, renamed to match. The fused
+# multi-sentence caption. An earlier version of this caption named "a"/"b"
+# panels; the 2026-09-06 fuse removed that split, and the caption below now
+# describes the single density panel with its ranking inset. The fused
 # 3-scenario ``plot_ccrs_rank_stability`` is unrelated to this caption and
 # has none of its own (it moved to secondary/, a Supplementary candidate).
 #
@@ -699,21 +761,23 @@ def plot_figure6_technology_age_vulnerability_pes(
 # in the now-deleted ``plot_national_ccrs_with_ci``'s secondary-GCM marker,
 # not here. Douglas's decision: drop the GCM-comparison claim, state the
 # figure for what it is -- parametric uncertainty under GFDL-ESM4 (the
-# primary model) on SSP5-8.5. The caption below reflects that; no code/
-# simulation change (MIROC6 pooling stays out of scope).
+# primary model) on SSP5-8.5.
+#
+# 2026-09-06: Figure 7 fused to ONE panel (see the comment above the
+# function) -- the caption no longer has an "a"/"b" split; the ranking
+# evidence is now an inset annotation on the single density panel.
 # --------------------------------------------------------------------------
 FIGURE7_CAPTION = (
-    "a, Probability density functions of the aggregate Climate Change Risk Score (CCRS) for "
+    "Probability density functions of the aggregate Climate Change Risk Score (CCRS) for "
     "Brazil, Portugal, and India generated through 1,000 Monte Carlo iterations. The "
     "distributions capture parametric uncertainty in the framework's bounding assumptions "
     "(the thermal water/heat/drought weighting ratio, the age-factor retention rates, and the "
     "EventMultiplier constant) under GFDL-ESM4, the framework's primary climate model, on the "
-    "high-emission SSP5-8.5 trajectory. b, Ordinal risk ranking stability across the 95% "
-    "confidence interval. The "
-    "analysis confirms that despite stochastic parameter variation and the expected widening "
-    "of probability density under extreme warming scenarios, the relative infrastructural risk "
-    "divergence -- wherein India's compounded multi-hazard exposure systematically outpaces "
-    "Portugal's localized thermal risk -- remains structurally robust."
+    "high-emission SSP5-8.5 trajectory. The inset reports the ordinal risk ranking held across "
+    "the Monte Carlo draws. Despite stochastic parameter variation and the expected widening of "
+    "probability density under extreme warming, the relative infrastructural risk divergence -- "
+    "wherein India's compounded multi-hazard exposure systematically outpaces Portugal's "
+    "localized thermal risk -- remains structurally robust."
 )
 
 
@@ -803,28 +867,38 @@ def plot_ccrs_rank_stability(
 
 # --------------------------------------------------------------------------
 # FIGURE 7 -- Monte Carlo CCRS density + ordinal ranking stability, PES only
-# (article figure numbering round, 2026-09-05)
+# (article figure numbering round, 2026-09-05; fused to one panel 2026-09-06)
 #
-# Two SEPARATE panels, unlike the fused single-panel design above: (a) pure
-# CCRS density curves for PES, no on-panel annotation text; (b) the ranking-
-# stability evidence as its OWN visual (rank-probability bars: % of Monte
-# Carlo draws each country places 1st/2nd/3rd by CCRS), not text overlaid
-# on (a). This reintroduces, for PES only, the rank-probability chart type
-# discarded in the earlier FIG 4 redesign round -- that discard was because
-# a full 3-scenario sweep of near-identical bar panels added a second
-# figure that repeated what the density overlay already showed; restricted
-# to ONE scenario as its own dedicated panel (matching the manuscript's own
-# "a densidade / b estabilidade de ranking" two-panel framing), the bars
-# are not repeating three redundant copies of themselves, so the earlier
-# objection does not apply the same way here. N=1,000 Monte Carlo
-# iterations is unchanged (ARCHITECTURE.md Sec. 8, not reopened) -- this is
-# a different SLICE/presentation of the exact same
-# ``run_country_scenario_draws`` output already used above, not a new
-# simulation.
+# ONE panel: overlaid CCRS density curves for the three countries under PES,
+# with the ranking-stability evidence as a small inset text box ("India >
+# Brazil > Portugal in 100% of draws"), not a second bar panel. This matches
+# the decision already taken for ``plot_ccrs_rank_stability`` (the fused
+# 3-scenario Supplementary figure above): the rank-probability bar chart
+# repeats, on a 0-100% axis, what the density separation and one line of
+# text already say. N=1,000 Monte Carlo iterations is unchanged
+# (ARCHITECTURE.md Sec. 8, not reopened) -- same ``run_country_scenario_
+# draws`` output, sliced to PES.
+#
+# X-axis (2026-09-06): Brazil (~0.33) and Portugal (~0.30) sit close
+# together far below India (~0.85); on a plain linear axis autoscaled to
+# [min, max] they overlap in the leftmost sliver. ``xscale="log"`` gives the
+# low end proportionally more width and separates the two -- kept as the
+# default. ``xscale="linear"`` (autozoomed to the real data range, no fixed
+# 0.2-1.0) is available for comparison; the density SHAPE is preserved
+# either way (this is not the point+CI form, which was already rejected).
 # --------------------------------------------------------------------------
+def _figure7_ranking_lines(ranked: pd.DataFrame, scenario: str = "pes") -> list[str]:
+    """Full best-to-worst orderings and their share of Monte Carlo draws
+    (``monte_carlo.full_ranking_distribution``), most frequent first, for
+    one scenario -- e.g. ``["India > Brazil > Portugal: 100%"]``."""
+    dist = mc.full_ranking_distribution(ranked)
+    dist = dist[dist["water_scenario"] == scenario].sort_values("probability", ascending=False)
+    return [f"{row.ordering}: {row.probability:.0%}" for row in dist.itertuples(index=False)]
+
+
 def plot_figure7_montecarlo_stability_pes(
     countries: list[str] | None = None, draws: pd.DataFrame | None = None,
-    pre: "mc._Precomputed | None" = None,
+    pre: "mc._Precomputed | None" = None, xscale: str = "log",
 ) -> pathlib.Path:
     from scipy import stats as sp_stats
 
@@ -834,48 +908,50 @@ def plot_figure7_montecarlo_stability_pes(
         draws = mc.run_country_scenario_draws(pre=pre)
     pes_draws = draws[draws["water_scenario"] == "pes"]
     ranked = mc.rank_per_draw(pes_draws)
-    table = mc.rank_probability_table(ranked)
-    ranks = sorted(ranked["rank"].unique())
 
-    fig, axes = plt.subplots(1, 2, figsize=(11.5, 5.8))
-
-    ax_density = axes[0]
-    lo, hi = pes_draws["ccrs"].min(), pes_draws["ccrs"].max()
-    grid = np.linspace(lo, hi, 400) if hi > lo else np.array([lo])
+    fig, ax = plt.subplots(figsize=(9.5, 5.8))
+    values_by_country = {}
     for country in countries:
-        values = pes_draws.loc[pes_draws["country"] == country, "ccrs"].dropna().to_numpy()
-        if len(values) < 2 or np.ptp(values) == 0:
-            continue
-        density = sp_stats.gaussian_kde(values)(grid)
-        ax_density.plot(grid, density, color=COUNTRY_COLORS[country], linewidth=1.8)
-        ax_density.fill_between(grid, density, color=COUNTRY_COLORS[country], alpha=0.25)
-        ax_density.axvline(np.median(values), color=COUNTRY_COLORS[country], linestyle="--", linewidth=1.0)
-    ax_density.set_title("a -- CCRS density (SSP5-8.5/PES)", fontweight="bold", fontsize=fs(11))
-    ax_density.set_xlabel(f"CCRS ({PRIMARY_GCM}, capacity-weighted mean per draw)", fontsize=fs(9))
-    ax_density.set_ylabel("Density (Monte Carlo draws)", fontsize=fs(10))
+        v = pes_draws.loc[pes_draws["country"] == country, "ccrs"].dropna().to_numpy()
+        if len(v) >= 2 and np.ptp(v) > 0:
+            values_by_country[country] = v
 
-    ax_rank = axes[1]
-    x = np.arange(len(ranks))
-    width = 0.8 / len(countries)
-    for i, country in enumerate(countries):
-        heights = [
-            float(table.loc[(table["country"] == country) & (table["rank"] == r), "probability"].iloc[0])
-            if len(table.loc[(table["country"] == country) & (table["rank"] == r)]) else 0.0
-            for r in ranks
-        ]
-        ax_rank.bar(x + (i - (len(countries) - 1) / 2) * width, heights, width=width,
-                    color=COUNTRY_COLORS[country])
-    ax_rank.set_xticks(x)
-    ax_rank.set_xticklabels([f"rank {r}\n(1=highest risk)" if r == ranks[0] else f"rank {r}" for r in ranks],
-                             fontsize=fs(8))
-    ax_rank.set_ylim(0, 1.05)
-    ax_rank.set_ylabel("Share of Monte Carlo draws", fontsize=fs(10))
-    ax_rank.set_title("b -- Ordinal ranking stability (SSP5-8.5/PES)", fontweight="bold", fontsize=fs(11))
+    lo = min((v.min() for v in values_by_country.values()), default=0.0)
+    hi = max((v.max() for v in values_by_country.values()), default=1.0)
+    if xscale == "log" and lo > 0 and hi > lo:
+        grid = np.geomspace(lo, hi, 500)
+        ax.set_xscale("log")
+    else:
+        margin = 0.02 * (hi - lo) if hi > lo else 0.05
+        grid = np.linspace(lo, hi, 500)
+        ax.set_xlim(lo - margin, hi + margin)
 
-    handles = [mlines.Line2D([0], [0], color=COUNTRY_COLORS[c], linewidth=2.5, label=c) for c in countries]
-    fig.legend(handles=handles, fontsize=fs(9), loc="lower center", ncol=len(countries), frameon=False,
-               bbox_to_anchor=(0.5, -0.03))
-    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    for country, v in values_by_country.items():
+        density = sp_stats.gaussian_kde(v)(grid)
+        ax.plot(grid, density, color=COUNTRY_COLORS[country], linewidth=1.8)
+        ax.fill_between(grid, density, color=COUNTRY_COLORS[country], alpha=0.25)
+        ax.axvline(float(np.median(v)), color=COUNTRY_COLORS[country], linestyle="--", linewidth=1.0)
+
+    lines = _figure7_ranking_lines(ranked, "pes")
+    if lines:
+        ax.text(0.97, 0.97, "Ordinal ranking (share of draws)\n" + "\n".join(lines),
+                transform=ax.transAxes, ha="right", va="top", fontsize=fs(8),
+                bbox=dict(facecolor="white", alpha=0.9, edgecolor="#999999", linewidth=0.5,
+                          boxstyle="round,pad=0.35"))
+
+    ax.set_title("CCRS density and ranking stability (SSP5-8.5/PES)", fontweight="bold", fontsize=fs(11))
+    ax.set_xlabel(f"CCRS ({PRIMARY_GCM}, capacity-weighted mean per draw)", fontsize=fs(9.5))
+    ax.set_ylabel("Density (Monte Carlo draws)", fontsize=fs(10))
+    # Legend below the panel, not inside it -- on a log x-axis the Brazil/
+    # Portugal peaks sit hard against the left edge, exactly where an
+    # in-axes upper-left legend would land (same convention as
+    # ``plot_ccrs_rank_stability``).
+    handles = [mlines.Line2D([0], [0], color=COUNTRY_COLORS[c], linewidth=2.5, label=c)
+               for c in values_by_country]
+    fig.legend(handles=handles, fontsize=fs(9), loc="lower center", ncol=len(handles),
+               frameon=False, bbox_to_anchor=(0.5, -0.02))
+
+    fig.tight_layout(rect=(0, 0.05, 1, 1))
     out_path = save_figure(fig, OUT_DIR / "combined" / f"figure7_montecarlo_stability_pes_{PRIMARY_GCM}.png")
     logger.info("Figure 7 saved to %s", out_path)
     return out_path
