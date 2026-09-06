@@ -1216,7 +1216,6 @@ def plot_hazard_term_contribution(
     contribution = contribution if contribution is not None else vtables.hazard_term_contribution_table(
         gcm=gcm, countries=countries,
     )
-    scenarios = sorted(contribution["water_scenario"].unique())
     groups = contribution[["country", "water_scenario"]].drop_duplicates().sort_values(
         ["country", "water_scenario"]
     )

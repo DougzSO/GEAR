@@ -1,7 +1,6 @@
-# GEAR framework — acquisition/processing layer.
-# Restricted to what this layer actually imports (see docs/INVENTORY.md,
-# "Dependências"). Libraries used only by the not-yet-rebuilt index/weighting
-# layer are added when that layer is written.
+# GEAR framework dependencies.
+# Restricted to what the codebase actually imports (see docs/INVENTORY.md,
+# "Dependências"). Grouped by the layer that introduced each dependency.
 
 numpy>=1.24.0
 # Ceiling at <3: the codebase was built and tested entirely against the

@@ -17,10 +17,9 @@ other hazards; state this in the manuscript methods.
 
 Multiple GCMs: ``config.CMIP6_SOURCE_ID_CDS`` is a list. ARCHITECTURE.md
 Section 4 makes a second GCM a mandatory sensitivity check, so every function
-here iterates over the configured models and writes model-tagged outputs. The
-second model is pending verification item V4; with one model configured the
-behaviour is identical to the single-model pipeline, only the file names
-carry the model id.
+here iterates over the configured models and writes model-tagged outputs.
+Two GCMs are configured (GFDL-ESM4 primary, MIROC6 sensitivity -- V4 closed,
+``docs/DECISIONS.md``); every function iterates over both.
 
 CDS request contract: the parameter names below (variable, model, experiment)
 were taken from the public ``projections-cmip6`` process schema. If the API

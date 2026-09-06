@@ -39,7 +39,7 @@ hazard layer aligns pixel for pixel. Requires the heat layer processed first.
 Pixels outside every basin polygon stay NaN, never 0.
 
 This module produces the raster layers only. It does not extract per-plant
-values or combine hazards — that belongs to the not-yet-built index layer.
+values or combine hazards — that is the index layer (src/index/).
 """
 
 from __future__ import annotations
@@ -62,12 +62,11 @@ from src.config import (
     AQUEDUCT_SCENARIOS,
     AQUEDUCT_TO_SSP_LABEL,
     CLIMATE_PROCESSED,
-    CLIMATE_RAW,
     COUNTRIES,
     CRS_TARGET,
     YEAR_TARGET,
 )
-from src.downloaders.cds_tasmax_downloader import configured_models, resampled_raster_path
+from src.processors._common import _find_aqueduct_csv, _load_reference_grid
 
 logger = logging.getLogger(__name__)
 
@@ -117,19 +116,6 @@ def raw_raster_path(country: str, scenario: str, indicator: str) -> Path:
 
 def _scenario_raw_column(scenario: str, indicator: str) -> str:
     return f"{scenario}{AQUEDUCT_YEAR_SUFFIX}_{indicator}_{RAW_COLUMN_SUFFIX}"
-
-
-def _find_aqueduct_csv(country: str) -> Path:
-    """Locate the consolidated Aqueduct CSV (``aqueduct_{year}.csv``, one file
-    holding every scenario/indicator column). Raises ``FileNotFoundError`` if
-    absent."""
-    csv_path = CLIMATE_RAW / "aqueduct" / country / f"aqueduct_{YEAR_TARGET}.csv"
-    if not csv_path.exists():
-        raise FileNotFoundError(
-            f"No Aqueduct CSV for {country} at {csv_path}. Run the Aqueduct "
-            f"downloader first."
-        )
-    return csv_path
 
 
 def load_aqueduct_basins(country: str) -> gpd.GeoDataFrame:
@@ -212,23 +198,6 @@ def compute_country_minmax(
         country, indicator, scenarios, country_min, country_max, len(combined),
     )
     return country_min, country_max
-
-
-def _load_reference_grid(country: str, model: str | None = None) -> xr.DataArray:
-    """Load the grid (transform/shape/CRS) of an already processed heat
-    raster; variability is rasterised onto exactly this grid, identical to the
-    water-stress and heat layers. The 1 km grid depends only on the country
-    bounds and target resolution, so it is model/scenario independent — the
-    first configured model / ssp126 is used arbitrarily."""
-    model = model or configured_models()[0]
-    ref_path = resampled_raster_path(country, model, "ssp126")
-    if not ref_path.exists():
-        raise FileNotFoundError(
-            f"Reference grid not found: {ref_path}. Process the extreme-heat "
-            f"layer first (its grid is reused here)."
-        )
-    da = rioxarray.open_rasterio(ref_path)
-    return da.isel(band=0) if "band" in da.dims else da
 
 
 def rasterize_scenario(

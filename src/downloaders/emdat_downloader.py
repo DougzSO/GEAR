@@ -4,8 +4,9 @@ EM-DAT disaster events — acquisition of the open EM-DAT Archive snapshot.
 ACQUISITION ONLY. This module downloads the Archive, filters it to the study
 countries and the climate-relevant disaster types, and produces descriptive
 counts and geocoding-coverage tables. It does NOT geocode events, and it does
-NOT cross-check them against risk hotspots — that belongs to the not-yet-built
-index/validation layer.
+NOT cross-check them against risk hotspots — that is
+``src/index/emdat_validation.py`` (event geocoding + admin-1 x Hazard
+Mann-Whitney overlay).
 
 Source: EM-DAT Archive on the UCLouvain Dataverse (DOI 10.14428/DVN/I0LTPH,
 Delforge et al.). Chosen over the aggregated HDX "Country Profiles" (no

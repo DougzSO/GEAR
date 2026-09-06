@@ -509,7 +509,7 @@ def test_category_9_event_multiplier_removed_replaced_by_table():
     """B5: the 3-bar EventMultiplier chart is removed, not relocated --
     replaced by ``tables.event_multiplier_table``."""
     assert not hasattr(charts, "plot_event_multiplier_by_country")
-    table = vtables.event_multiplier_table(synth_em := _synthetic_event_multipliers())
+    table = vtables.event_multiplier_table(_synthetic_event_multipliers())
     assert list(table["country"]) == sorted(COUNTRIES)
     assert set(table.columns) == {"country", "n_events", "rate", "event_multiplier"}
 
@@ -1265,9 +1265,6 @@ def _synthetic_per_plant_shares(seed: int = 0) -> pd.DataFrame:
 
 
 def test_hazard_term_contribution_per_plant_shares_sum_to_one(synth):
-    from src.index import ccrs_calculator as ccrs
-    from src.visualization import tables as vtables
-
     # real production code path, exercised against synth["final"]-shaped
     # inputs is not directly wired (per_plant reads from ccrs.compute_hazard
     # live) -- so this test uses the synthetic per-plant frame directly, the
@@ -1322,8 +1319,6 @@ def test_fig_c4_weighted_view_is_not_a_copy_of_unweighted(tmp_path, monkeypatch)
     """The capacity-weighted row must actually weight -- construct a case
     where a tiny-capacity majority and a huge-capacity minority disagree, and
     confirm the weighted median moves toward the huge-capacity plants."""
-    n = 200
-    rng = np.random.default_rng(1)
     capacity = np.concatenate([np.full(190, 1.0), np.full(10, 10_000.0)])
     water_share = np.concatenate([np.full(190, 0.1), np.full(10, 0.9)])
     values = water_share
@@ -1515,7 +1510,7 @@ def test_emdat_spatial_validation_figure_reports_caveats_in_caption(tmp_path, mo
     lines -- the full coverage/proxy caveats (GADM Admin Units coverage,
     Storm being untested, etc.) moved to the module docstring instead, so
     this test only checks what the figure itself still carries."""
-    from src.visualization import _common, emdat_validation as vev
+    from src.visualization import emdat_validation as vev
 
     monkeypatch.setattr(vev, "SECONDARY_DIR", tmp_path)
     captured = _capture_figures(monkeypatch, vev)

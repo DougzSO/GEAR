@@ -14,6 +14,7 @@ from pandas.errors import MergeError
 
 from src.index import event_multiplier as em
 from src.downloaders import emdat_downloader
+from tests.diagnostics.hazard_step_probes import event_multiplier_apply_to_hazard
 
 
 # --------------------------------------------------------------------------
@@ -98,7 +99,7 @@ def test_apply_to_hazard_multiplies_by_country_never_sums(tmp_path):
     hz_csv = tmp_path / "ccrs_hazard.csv"
     hazard.to_csv(hz_csv, index=False)
 
-    out = em.apply_to_hazard(hz_csv, multipliers=_synthetic_multipliers())
+    out = event_multiplier_apply_to_hazard(hz_csv, multipliers=_synthetic_multipliers())
 
     br = out[out["country"] == "Brazil"]
     np.testing.assert_allclose(br["hazard_gfdl_esm4_x_event"], br["hazard_gfdl_esm4"] * 1.192122)
@@ -114,7 +115,7 @@ def test_apply_to_hazard_country_join_does_not_duplicate_or_drop_plant_uid_rows(
     hz_csv = tmp_path / "ccrs_hazard.csv"
     hazard.to_csv(hz_csv, index=False)
 
-    out = em.apply_to_hazard(hz_csv, multipliers=_synthetic_multipliers())
+    out = event_multiplier_apply_to_hazard(hz_csv, multipliers=_synthetic_multipliers())
 
     assert len(out) == len(hazard)
     # every plant_uid row (including the repeated BRA-1 scenario rows) survives
@@ -135,7 +136,7 @@ def test_apply_to_hazard_rejects_a_country_missing_from_the_multiplier_table(tmp
     multipliers = _synthetic_multipliers()
     multipliers = multipliers[multipliers["country"] != "India"]   # drop India on purpose
     with pytest.raises(ValueError, match="India"):
-        em.apply_to_hazard(hz_csv, multipliers=multipliers)
+        event_multiplier_apply_to_hazard(hz_csv, multipliers=multipliers)
 
 
 def test_apply_to_hazard_rejects_a_duplicated_country_in_the_multiplier_table(tmp_path):
@@ -148,7 +149,7 @@ def test_apply_to_hazard_rejects_a_duplicated_country_in_the_multiplier_table(tm
     # merge(..., validate="many_to_one") refuses a non-unique right side before
     # any row could silently fan out -- this is the cross-join guard.
     with pytest.raises(MergeError):
-        em.apply_to_hazard(hz_csv, multipliers=multipliers)
+        event_multiplier_apply_to_hazard(hz_csv, multipliers=multipliers)
 
 
 # --------------------------------------------------------------------------
@@ -180,7 +181,7 @@ def _hazard_csv_present() -> bool:
 @pytest.mark.skipif(not _hazard_csv_present(), reason="ccrs_hazard.csv absent")
 def test_real_data_apply_to_hazard_preserves_row_count_and_plant_uid_multiset():
     hz = pd.read_csv(em.HAZARD_CSV)
-    out = em.apply_to_hazard()
+    out = event_multiplier_apply_to_hazard()
     assert len(out) == len(hz)
     pd.testing.assert_series_equal(
         out["plant_uid"].value_counts().sort_index(),

@@ -8,11 +8,10 @@ Reused directly from ``energy_risk_assessment/src/visualization/maps.py``
 (old repo): the boundary/disputed-territory helpers
 (``_load_admin1_boundaries``, ``_country_has_disputed_admin1``,
 ``_draw_country_boundary``, ``_footer_with_gadm_disclaimer``), the dynamic
-figsize helpers (``_aspect_ratio_width``, ``_multi_panel_figsize``,
-``_single_panel_figsize``), the marker-size convention (``_marker_sizes``,
-sqrt-of-capacity), the style constants (``dpi=200``, ``bbox_inches="tight"``,
-PNG+PDF saved together), and the footer-positioning helpers
-(``_tight_bottom_fraction``, ``_footer_below_artist``,
+per-country panel-width helper (``_aspect_ratio_width``), the marker-size
+convention (``_marker_sizes``, sqrt-of-capacity), the style constants
+(``dpi=200``, ``bbox_inches="tight"``, PNG+PDF saved together), and the
+footer-positioning helpers (``_tight_bottom_fraction``,
 ``_footer_below_panels``, ``_legend_below_artists``). Only the plumbing that
 depends on the old schema (``ADM_ADM_1`` boundary layer itself, GADM GID
 convention, ``COUNTRIES``/``COUNTRY_ISO3``/``MAINLAND_ONLY_COUNTRIES``) was
@@ -54,7 +53,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from src.config import BOUNDARIES_RAW, COUNTRIES, COUNTRY_ISO3, MAINLAND_ONLY_COUNTRIES
+from src.config import BOUNDARIES_RAW, COUNTRY_ISO3, MAINLAND_ONLY_COUNTRIES
 from src.downloaders.boundaries_downloader import get_country_bounds, get_country_geometry
 from src.index.ccrs_calculator import BUCKETS
 
@@ -181,16 +180,6 @@ def figure_caption_footer(fig, artists, caption: str, countries: list[str] | Non
         if disclaimer:
             text = f"{text} — {disclaimer}" if text else disclaimer
     footer_below_panels(fig, artists, text)
-
-
-def figure_caption_footer_single(fig, ax, caption: str, countries: list[str] | None = None) -> None:
-    """Single-panel equivalent of ``figure_caption_footer``."""
-    text = caption
-    if countries:
-        disclaimer = footer_with_gadm_disclaimer("", countries)
-        if disclaimer:
-            text = f"{text} — {disclaimer}" if text else disclaimer
-    footer_below_artist(fig, ax, text)
 
 
 def not_computable_legend_handle():
@@ -383,34 +372,6 @@ def aspect_ratio_width(country: str, base_height: float,
     return max(min_width, min(base_height * aspect, max_width))
 
 
-SINGLE_PANEL_LEFT = 0.10
-SINGLE_PANEL_RIGHT = 0.97
-
-
-def single_panel_figsize(country: str, base_height: float = 7.0,
-                          top: float = 0.90, bottom: float = 0.16,
-                          left: float = SINGLE_PANEL_LEFT, right: float = SINGLE_PANEL_RIGHT) -> tuple[float, float]:
-    """Figsize for a 1-panel (per-country) figure. Accounts for the axes
-    box occupying only ``(right-left)`` x ``(top-bottom)`` of the figure
-    (title/labels/colorbar margins) -- ``top``/``bottom``/``left``/``right``
-    must match what the caller passes to ``fig.subplots_adjust``, or the
-    rendered axes box ends up a different aspect than intended and
-    ``ax.set_aspect("equal")`` fills the gap with blank space."""
-    aspect = country_bbox_aspect(country)
-    axes_frac_ratio = (right - left) / (top - bottom)
-    width = base_height * aspect / axes_frac_ratio
-    width = max(5.5, min(width, 14.0))
-    return (width, base_height)
-
-
-def multi_panel_figsize(countries: list[str], base_height: float = 9.0) -> tuple[tuple[float, float], list[float]]:
-    """Figsize + ``width_ratios`` for a combined (side-by-side) figure --
-    each panel gets its own country's aspect-ratio width, not an equal
-    fraction of one fixed total width."""
-    widths = [aspect_ratio_width(c, base_height) for c in countries]
-    return (sum(widths), base_height), widths
-
-
 # --------------------------------------------------------------------------
 # Footer / legend positioning (reused pattern)
 # --------------------------------------------------------------------------
@@ -439,11 +400,6 @@ def tight_bottom_fraction(fig, artist) -> float:
     get_bbox = getattr(artist, "get_tightbbox", None) or artist.get_window_extent
     bbox_px = get_bbox(renderer)
     return bbox_px.transformed(fig.transFigure.inverted()).y0
-
-
-def footer_below_artist(fig, artist, text: str) -> None:
-    y = tight_bottom_fraction(fig, artist) - 0.015
-    _footer_at(fig, y, text)
 
 
 def footer_below_panels(fig, artists, text: str) -> None:

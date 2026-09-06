@@ -16,8 +16,8 @@ Formula
     EventMultiplier_c = 1 + EVENT_MULTIPLIER_K * (rate_c / rate_max)
 
 ``EVENT_MULTIPLIER_K = 0.5`` (spec Section 7 / ARCHITECTURE Section 7.2, a
-judgment-call amplitude, flagged for the not-yet-implemented Monte Carlo
-sensitivity of item J -- not re-derived here). ``EMDAT_ARCHIVE_SPAN_YEARS =
+judgment-call amplitude; perturbed by the item-J Monte Carlo sensitivity in
+``src/index/monte_carlo.py``, not re-derived here). ``EMDAT_ARCHIVE_SPAN_YEARS =
 124`` (1900-2024, the EM-DAT Archive's covered span) cancels exactly out of
 ``rate_c / rate_max``, so the ratio reduces to ``N_events(c) /
 N_events(India)``; it is kept in the formula because both source documents
@@ -50,22 +50,19 @@ Application: country join, multiplicative, never additive
 -- ``docs/DECISIONS.md`` "Event factor: country-level EM-DAT frequency"):
 every ``plant_uid`` in country ``c`` gets the same ``EventMultiplier_c``,
 joined on the ``country`` column, never on ``plant_uid`` or any finer key.
-``apply_to_hazard`` performs this join against a Hazard-shaped CSV (default
-``ccrs_hazard.csv``) and **multiplies** every Hazard column by
-``event_multiplier`` -- the same multiplicative pattern
-``src/index/age_factor.py`` uses for ``age_factor`` (``{col}_x_event``,
-mirroring ``{col}_aged``), never summed. The join is validated
-many-to-one on ``country`` (one ``event_multiplier`` row per country) with an
-explicit row-count guard, so a duplicated or missing country in the
-multiplier table cannot silently fan out or drop ``plant_uid`` rows -- the
-same discipline ``ccrs_calculator.compute_hazard_by_gcm`` and
-``age_factor.apply_to_hazard`` already apply on their own join keys.
+The join into the Hazard frame is validated many-to-one on ``country`` (one
+``event_multiplier`` row per country) with an explicit row-count guard, so a
+duplicated or missing country in the multiplier table cannot silently fan
+out or drop ``plant_uid`` rows -- the same discipline
+``ccrs_calculator.compute_hazard_by_gcm`` applies on its own join keys.
 
 The full ``CCRS_i,s = Hazard_i,s * age_factor_i * EventMultiplier_c``
-assembly (combining all three factors into one column) is **not** done here
--- that is the separate, not-yet-written assembly module. This module proves
-and tests the EventMultiplier join/multiply step in isolation, the same way
-``age_factor.apply_to_hazard`` proves the age-factor step in isolation.
+assembly (combining all three factors into one column) is
+``src/index/ccrs_report.py``'s ``assemble_ccrs`` -- the single source of
+truth, multiplicative and never summed. This module only produces the
+``compute_event_multipliers`` table. The isolated "apply just this one
+factor to a Hazard frame" probe used by the test suite lives in
+``tests/diagnostics/hazard_step_probes.py`` (not production code).
 
 --------------------------------------------------------------------------
 Regression fixture
@@ -96,8 +93,8 @@ from src.index import ccrs_calculator as ccrs
 logger = logging.getLogger(__name__)
 
 # Judgment-call amplitude (spec Section 7 / ARCHITECTURE Section 7.2). Not
-# re-derived here -- flagged for the not-yet-implemented Monte Carlo
-# sensitivity check (spec item J).
+# re-derived here -- perturbed by the item-J Monte Carlo sensitivity check
+# (src/index/monte_carlo.py, EVENT_MULTIPLIER_K drawn per magnitude).
 EVENT_MULTIPLIER_K = 0.5
 
 # EM-DAT Archive covered span, 1900-2024 (emdat_downloader module docstring).
@@ -131,51 +128,6 @@ def compute_event_multipliers(countries: list[str] = COUNTRIES) -> pd.DataFrame:
     rate_max = df["rate"].max()
     df["event_multiplier"] = 1.0 + EVENT_MULTIPLIER_K * (df["rate"] / rate_max)
     return df
-
-
-# --------------------------------------------------------------------------
-# Application to the Hazard term
-# --------------------------------------------------------------------------
-def apply_to_hazard(
-    hazard_csv: Path = HAZARD_CSV,
-    multipliers: pd.DataFrame | None = None,
-) -> pd.DataFrame:
-    """Join ``event_multiplier`` onto every row of ``hazard_csv`` by
-    ``country`` and multiply every Hazard column by it. Adds
-    ``n_events``, ``rate``, ``event_multiplier``, and one ``{col}_x_event``
-    column per Hazard column. Never sums.
-
-    Country-level join only -- every ``plant_uid`` in a country gets the same
-    multiplier. Fails loud (not a silent drop or fan-out) if the join would
-    change the row count, or if any country in ``hazard_csv`` has no
-    multiplier.
-    """
-    hz = pd.read_csv(hazard_csv)
-    em = multipliers if multipliers is not None else compute_event_multipliers()
-    em_small = em[["country", "n_events", "rate", "event_multiplier"]]
-
-    missing = set(hz["country"]) - set(em_small["country"])
-    if missing:
-        raise ValueError(
-            f"{len(missing)} countries in {hazard_csv.name} have no "
-            f"EventMultiplier: {sorted(missing)}. Extend `countries` passed "
-            f"to compute_event_multipliers()."
-        )
-
-    before = len(hz)
-    out = hz.merge(em_small, on="country", how="left", validate="many_to_one")
-    if len(out) != before:
-        raise RuntimeError(
-            f"apply_to_hazard: row count changed {before} -> {len(out)} after "
-            f"the country join -- the multiplier table must have exactly one "
-            f"row per country (duplicate country rows would cross-join and "
-            f"inflate plant_uid rows)."
-        )
-
-    for col in HAZARD_COLUMNS:
-        if col in out.columns:
-            out[f"{col}_x_event"] = out[col] * out["event_multiplier"]
-    return out
 
 
 # --------------------------------------------------------------------------

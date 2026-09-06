@@ -82,8 +82,9 @@ form using only ``sin``::
 
     Gamma(1+1/beta)*Gamma(1-1/beta) = (1/beta) * pi / sin(pi/beta)
 
-This avoids adding ``scipy`` to this layer's ``requirements.txt`` (currently
-scipy-free) for one arithmetic identity.
+This keeps the processor layer free of a ``scipy`` import for one arithmetic
+identity (``scipy`` is a project dependency, used by the index/visualization
+layers, but nothing in ``src/processors/`` needs it).
 
 --------------------------------------------------------------------------
 Grid
@@ -120,6 +121,8 @@ from src.downloaders.cds_tasmax_downloader import (
     _resample_to_1km,
     configured_models,
 )
+from src.processors._common import load_country_rasters
+from src.processors._common import GridMismatchError  # noqa: F401 - re-exported for callers/tests
 
 logger = logging.getLogger(__name__)
 
@@ -157,15 +160,9 @@ _MIN_FIT_YEARS = 3
 _AS_C0, _AS_C1, _AS_C2 = 2.515517, 0.802853, 0.010328
 _AS_D1, _AS_D2, _AS_D3 = 1.432788, 0.189269, 0.001308
 
-# Absolute tolerance on the six affine-transform coefficients when comparing
-# grids (mirrors heat_stress_processor's guard).
-_TRANSFORM_ATOL = 1e-9
-
-
-class GridMismatchError(ValueError):
-    """Raised when the model/scenario rasters that would be pooled into one
-    Min-Max domain are not on the same grid (shape, resolution/transform or
-    CRS). Fail loud instead of silently misaligning the stack."""
+# The grid-consistency guard (GridMismatchError + the transform tolerance +
+# the signature comparison) is the shared implementation in
+# src/processors/_common.py -- identical to heat_stress_processor's.
 
 
 # --------------------------------------------------------------------------
@@ -540,47 +537,16 @@ def _load_raw_raster(country: str, model: str, scenario: str) -> xr.DataArray:
     return da.isel(band=0) if "band" in da.dims else da
 
 
-def _grid_signature(da: xr.DataArray) -> tuple:
-    transform = tuple(float(v) for v in tuple(da.rio.transform())[:6])
-    return tuple(da.shape), transform, str(da.rio.crs)
-
-
-def _assert_consistent_grid(country: str, rasters: dict[tuple[str, str], xr.DataArray]) -> None:
-    """Fail loudly if the rasters to be pooled disagree on grid shape,
-    resolution/transform or CRS. No-op for a single raster."""
-    items = list(rasters.items())
-    ref_key, ref_da = items[0]
-    ref_shape, ref_transform, ref_crs = _grid_signature(ref_da)
-
-    problems: list[str] = []
-    for key, da in items[1:]:
-        shape, transform, crs = _grid_signature(da)
-        if shape != ref_shape:
-            problems.append(f"{key} shape {shape} != {ref_shape} {ref_key}")
-        elif not np.allclose(transform, ref_transform, rtol=0.0, atol=_TRANSFORM_ATOL):
-            problems.append(f"{key} transform {transform} != {ref_transform} {ref_key}")
-        if crs != ref_crs:
-            problems.append(f"{key} CRS {crs} != {ref_crs} {ref_key}")
-
-    if problems:
-        raise GridMismatchError(
-            f"{country}: drought-stress rasters to be pooled into one "
-            f"Min-Max domain are on inconsistent grids -- joint pooling is "
-            f"invalid until this is fixed:\n  " + "\n  ".join(problems)
-        )
-
-
 def _load_country_rasters(
     country: str, models: list[str] | None = None, scenarios: list[str] | None = None,
 ) -> dict[tuple[str, str], xr.DataArray]:
-    models = models or configured_models()
-    scenarios = scenarios or CMIP6_SCENARIOS
-    rasters = {
-        (model, scenario): _load_raw_raster(country, model, scenario)
-        for model in models for scenario in scenarios
-    }
-    _assert_consistent_grid(country, rasters)
-    return rasters
+    """Open every ``(model, scenario)`` SPEI raw raster for ``country`` and
+    assert they share one grid (``_common``'s shared guard, identical to
+    ``heat_stress_processor``'s)."""
+    return load_country_rasters(
+        country, _load_raw_raster,
+        models or configured_models(), scenarios or CMIP6_SCENARIOS,
+    )
 
 
 def compute_country_minmax(

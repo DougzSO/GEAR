@@ -231,14 +231,14 @@ EXTREME_HEAT_THRESHOLD_C = 40  # a "day of extreme heat" has tasmax above this
 # (needs neither tasmin nor tasmax), decided because daily tasmin is absent
 # from the CDS catalogue for gfdl_esm4/ssp3_7_0 -- see
 # analysis/spei_catalog_check.md and analysis/climate_risk_score_spec.md
-# Section 3. The SPEI computation itself (needs the daily series, not a
-# period mean) is a separate later task.
+# Section 3. The SPEI computation itself runs off the daily series (not the
+# QA period mean) in src/processors/spei_processor.py.
 CMIP6_SPEI_VARIABLES = {
     "pr": "precipitation",
     "tas": "near_surface_air_temperature",
 }
 
-RANDOM_SEED = 42  # stochastic sampling — used only by the not-yet-rebuilt layer
+RANDOM_SEED = 42  # stochastic sampling — used by src/index/monte_carlo.py
 
 # --------------------------------------------------------------------------
 # Data sources

@@ -239,8 +239,9 @@ def compute_bands(heat_gcm: str = PRIMARY_GCM) -> BandTable:
 #
 # There is no formal precedent in this module (or the spec) for comparing
 # WaterRiskBand (5 levels) against HeatRiskBand (4 levels) on a common
-# ordinal scale -- proposed here, pending approval, rather than picked
-# silently:
+# ordinal scale. The scheme below was proposed explicitly rather than picked
+# silently, and approved by Douglas on 2026-09-05 (rank mapping + water-wins
+# tie-break -- see the review note right after the constants):
 #
 #   Each band's severity is its own position index, normalised to [0, 1]
 #   by (n_levels - 1):

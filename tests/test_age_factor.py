@@ -20,6 +20,7 @@ from src.index import age_factor as af
 from src.index import ccrs_calculator as ccrs
 from src.index.ccrs_calculator import PLANT_UID
 from src import config
+from tests.diagnostics.hazard_step_probes import age_factor_apply_to_hazard
 
 
 # --------------------------------------------------------------------------
@@ -216,7 +217,7 @@ def test_apply_to_hazard_multiplies_per_plant_uid_never_sums(tmp_path):
         "age_factor_neutralized_missing_year": [False, False],
     })
 
-    out = af.apply_to_hazard(hz_csv, age_factors=age_factors)
+    out = age_factor_apply_to_hazard(hz_csv, age_factors=age_factors)
 
     # A-1 rows both multiplied by 1.25, B-2 by 2.0 -- multiplication, not addition
     a1 = out[out[PLANT_UID] == "A-1"]
@@ -240,7 +241,7 @@ def test_apply_to_hazard_rejects_a_stale_hazard_csv(tmp_path):
         "age_factor_neutralized_missing_year": [False],
     })
     with pytest.raises(ValueError, match="stale"):
-        af.apply_to_hazard(hz_csv, age_factors=age_factors)
+        age_factor_apply_to_hazard(hz_csv, age_factors=age_factors)
 
 
 # --------------------------------------------------------------------------

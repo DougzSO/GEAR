@@ -1,7 +1,7 @@
 """
 CCRS ``age_factor`` -- the ``>= 1`` asset-condition multiplier on the Hazard
 term (``analysis/climate_risk_score_spec.md`` Section 6, ``docs/ARCHITECTURE.md``
-Section 7.1; closes spec open item D -- see ``docs/DECISIONS.md``
+Section 7.1; closes spec item D -- see ``docs/DECISIONS.md``
 "[2026-09-04] age_factor: >=1 multiplier via ``2 - retention(age)``, with
 corrected coal/hydro/wind retention curves (final)").
 
@@ -23,13 +23,10 @@ returns ``age_factor`` exactly 1.0. ``clip(retention, 0, 1)`` bounds
 ``age_factor`` to ``[1, 2]`` and guards an implausible ``commissioning_year``;
 it does not bind on the current data.
 
-A prior session briefly flipped this module to ``age_factor = retention`` in
-``[0, 1]`` (older plant -> lower factor). That was based on a mistaken reading
-of which document was authoritative and is reverted:
-``climate_risk_score_spec.md`` Section 6 / Section 10 item D and
-``ARCHITECTURE.md`` Section 5 / Section 7.1 all specify ``age_factor >= 1``,
-and that is what this module implements. See ``docs/DECISIONS.md`` for the
-full history (three dated entries; only the last is active).
+``climate_risk_score_spec.md`` Section 6 / item D and ``ARCHITECTURE.md``
+Section 5 / Section 7.1 all specify ``age_factor >= 1`` (item D closed,
+confirmed final 2026-09-04). ``docs/DECISIONS.md`` carries the decision
+history.
 
 --------------------------------------------------------------------------
 Per-technology ``retention(age)``  (age = ``REFERENCE_YEAR - commissioning_year``)
@@ -70,9 +67,8 @@ if a real initial-capacity-factor source is added (e.g. Global Wind Atlas or
 manufacturer power curves).
 
 Hydro -- 0.55 %/yr, the midpoint of ARCHITECTURE Section 7.1's "~0.5-0.6 %/yr"
-range (Turner et al. 2024, *Nature Communications*). A prior revision scaled
-this by 0.79 ("non-water-attributable share"); that factor had no documented
-origin and is removed.
+range (Turner et al. 2024, *Nature Communications*), applied directly with no
+scaling factor.
 
 --------------------------------------------------------------------------
 Missing ``commissioning_year``  (~5.6% of plants)
@@ -88,12 +84,15 @@ Identity and application
 --------------------------------------------------------------------------
 ``plant_uid`` (``ccrs_calculator``'s content hash) is the sole plant key.
 ``age_factor`` is one value per ``plant_uid`` (age does not depend on scenario
-or GCM); it **multiplies** every Hazard column and every scenario row of
-``data/outputs/tables/ccrs_hazard.csv``. Multiplicative, never summed.
+or GCM). The full CCRS assembly -- Hazard * age_factor * EventMultiplier,
+multiplicative and never summed -- is ``src/index/ccrs_report.py``'s
+``assemble_ccrs``; this module only produces the per-plant ``age_factor``
+column. The isolated "apply just this one factor to a Hazard frame" probe
+used by the test suite lives in
+``tests/diagnostics/hazard_step_probes.py`` (not production code).
 
 Standalone: ``python -m src.index.age_factor`` from the project root. Writes
-``data/outputs/tables/ccrs_age_factors.csv``,
-``data/outputs/tables/ccrs_hazard_aged.csv`` and
+``data/outputs/tables/ccrs_age_factors.csv`` and
 ``data/outputs/tables/age_factor_report.md``.
 """
 
@@ -122,7 +121,7 @@ NEUTRAL_AGE_FACTOR = 1.0
 
 # retention(age) <= 1 rates. age_factor = 2 - clip(retention, 0, 1) -> [1, 2].
 WIND_RELATIVE_RATE = 0.004     # /yr, relative, linear -- applied to every wind plant
-HYDRO_RETENTION_RATE = 0.0055  # /yr, linear (0.55%/yr; the 0.79 scaling is removed)
+HYDRO_RETENTION_RATE = 0.0055  # /yr, linear (0.55%/yr, applied directly)
 SOLAR_RETENTION_RATE = 0.007    # /yr, compound
 
 # Coal: literature decay rate + an ASSUMED overhaul schedule (see module
@@ -305,37 +304,6 @@ def compute_age_factors(attributes: pd.DataFrame | None = None) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------
-# Application to the Hazard term
-# --------------------------------------------------------------------------
-def apply_to_hazard(
-    hazard_csv: Path = HAZARD_CSV,
-    age_factors: pd.DataFrame | None = None,
-) -> pd.DataFrame:
-    """Multiply every Hazard column of ``hazard_csv`` by ``age_factor`` per
-    ``plant_uid``. Adds ``age``, ``age_factor``, the neutralised flag, and one
-    ``{col}_aged`` column per Hazard column. Never sums."""
-    hz = pd.read_csv(hazard_csv)
-    af = age_factors if age_factors is not None else compute_age_factors()
-    af_small = af[[
-        PLANT_UID, "age", "age_factor", "age_factor_neutralized_missing_year",
-    ]]
-
-    missing = set(hz[PLANT_UID]) - set(af_small[PLANT_UID])
-    if missing:
-        raise ValueError(
-            f"{len(missing)} plant_uid in {hazard_csv.name} have no age_factor "
-            f"-- the CSV is stale relative to load_plants. Regenerate it with "
-            f"`python -m src.index.ccrs_calculator`."
-        )
-
-    out = hz.merge(af_small, on=PLANT_UID, how="left", validate="many_to_one")
-    for col in HAZARD_COLUMNS:
-        if col in out.columns:
-            out[f"{col}_aged"] = out[col] * out["age_factor"]
-    return out
-
-
-# --------------------------------------------------------------------------
 # Report
 # --------------------------------------------------------------------------
 def _curve_label(row) -> str:
@@ -408,24 +376,20 @@ def build_summary(age_factors: pd.DataFrame) -> str:
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--hazard-csv", type=Path, default=HAZARD_CSV)
     parser.add_argument("--out-dir", type=Path, default=ccrs.OUTPUT_TABLES)
     args = parser.parse_args()
 
     af = compute_age_factors()
-    aged = apply_to_hazard(args.hazard_csv, age_factors=af)
     report = build_summary(af)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "ccrs_age_factors.csv").write_text(af.to_csv(index=False), encoding="utf-8")
-    aged.to_csv(args.out_dir / "ccrs_hazard_aged.csv", index=False)
     (args.out_dir / "age_factor_report.md").write_text(report, encoding="utf-8")
 
     logger.info("age_factor: %d plants, range %.4f..%.4f, %d neutralised (missing year)",
                 len(af), af["age_factor"].min(), af["age_factor"].max(),
                 int(af["age_factor_neutralized_missing_year"].sum()))
-    logger.info("wrote ccrs_age_factors.csv, ccrs_hazard_aged.csv, age_factor_report.md to %s",
-                args.out_dir)
+    logger.info("wrote ccrs_age_factors.csv, age_factor_report.md to %s", args.out_dir)
     return 0
 
 

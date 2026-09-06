@@ -59,12 +59,13 @@ box-by-box content spec -- flagged rather than silently added
   equation -- so both arrows are drawn in a lighter, dashed style to
   visually distinguish "administrative context" from the numeric data flow
   (CMIP6/Aqueduct/EM-DAT -> formulas).
-> Point to validate: confirm both choices read as intended, or say what to
-> change before this is committed.
+
+Both choices were reviewed and approved by Douglas; Figure 1 is committed.
 """
 
 from __future__ import annotations
 
+import pathlib
 import textwrap
 
 import matplotlib.pyplot as plt

@@ -28,9 +28,10 @@ Leia os quatro, não um no lugar do outro.
 ## Estado quando isto foi escrito
 
 2026-09-04. Camadas de aquisição e de processamento de clima reconstruídas:
-`src/config.py`, 9 downloaders (inclui `cds_precipitation_downloader` para
-um termo de SPEI futuro), 3 processors de clima (calor, água, variabilidade
-sv/iv). Camada de índice: `src/index/ccrs_calculator.py` calcula o termo
+`src/config.py`, 9 downloaders (inclui `cds_precipitation_downloader` para o
+termo de SPEI), 4 processors de clima (calor, água, variabilidade sv/iv,
+seca SPEI), com infraestrutura compartilhada em `src/processors/_common.py`
+(entrada Aqueduct + grade de referência; guard de consistência de grade). Camada de índice: `src/index/ccrs_calculator.py` calcula o termo
 `Hazard_{i,s}` (transformação global por termo com bounds congelados + trava
 de regressão, pesos água/calor por bucket, GFDL-ESM4 e MIROC6 separados);
 `src/index/risk_bands.py` calcula WaterRiskBand (cortes absolutos WRI fixos)
@@ -82,6 +83,8 @@ Monte Carlo por magnitude — ver item 21. Validação espacial EM-DAT contra
 hazard (C6) foi investigada, aprovada e implementada
 (`src/index/emdat_validation.py` + `src/visualization/emdat_validation.py`,
 polígono admin-1 × termo de Hazard via Mann-Whitney U, diagnóstico, não
-realimenta Hazard/CCRS) — ver item 22. 300 testes. As verificações pós-dados V1–V6 (`ARCHITECTURE.md`
-Seção 9) estão **todas fechadas**; o CCRS substitui SCI/NAES. A camada de
-índice está completa exceto relatórios per-country adicionais.
+realimenta Hazard/CCRS) — ver item 22. 385 testes (2026-09-06; inclui SPEI,
+Monte Carlo e as figuras 1–7). As verificações pós-dados V1–V6
+(`ARCHITECTURE.md` Seção 9) estão **todas fechadas**; o CCRS substitui
+SCI/NAES. A camada de índice está completa exceto relatórios per-country
+adicionais.

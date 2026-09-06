@@ -18,10 +18,10 @@ absent from the CDS catalogue for ``gfdl_esm4`` / ``ssp3_7_0``
 (``analysis/spei_catalog_check.md``).
 
 What this step does and does NOT do: it downloads the raw daily series (the
-NetCDF the future SPEI processor will read) and validates it, and it writes a
-**period-mean climatology raster per variable as a QA/transparency artifact
-only**. SPEI needs the full daily series, not the period mean, and is a
-separate later task -- there is no ``spei_processor`` here.
+NetCDF ``src/processors/spei_processor.py`` reads) and validates it, and it
+writes a **period-mean climatology raster per variable as a QA/transparency
+artifact only**. SPEI itself is computed from the full daily series by
+``spei_processor``, not here; the period mean is never an SPEI input.
 
 CDS request contract: the ``variable`` tokens (``precipitation``,
 ``near_surface_air_temperature``) are from the public ``projections-cmip6``

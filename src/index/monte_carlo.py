@@ -20,7 +20,8 @@ A. Thermal bucket water/heat ratio -- uniform relative perturbation
    explicitly, not silently assumed -- is: perturb the water:heat ratio
    only, renormalising water+heat to fill ``1 - w_drought`` while holding
    ``w_drought`` at its production value (0.30, unperturbed, since it is
-   not named in the approved scope). *Point to validate with Douglas.*
+   not named in the approved scope). Reviewed and approved by Douglas
+   earlier in the pre-publication pass -- a closed decision, not pending.
 B. ``age_factor`` retention rates -- coal decay rate drawn **uniformly over
    the literature range** 0.19-0.44 %/yr (Sagaf 2020), not a percentage
    perturbation around the central value; wind rate uniformly over
@@ -52,7 +53,7 @@ country's coal-decay-rate uncertainty, thermal water/heat ratio and
 ``EventMultiplier`` amplitude do not depend on which emissions scenario is
 being scored, and the production pipeline applies one ``EventMultiplier_c``
 identically across a country's three scenario rows
-(``event_multiplier.apply_to_hazard``). Keying an independent stream by
+(``ccrs_report.assemble_ccrs``). Keying an independent stream by
 scenario as well would inject non-physical scenario-dependent noise into a
 scenario-invariant judgment call, and would silently break that production
 invariant inside the simulation.
@@ -64,7 +65,8 @@ still satisfies the mechanical requirement and its test (perturbing one
 country's stream never moves another country's draws) and the
 reproducibility requirement (same seed -> same sequence), while keeping the
 scenario-invariant parameters scenario-invariant inside the simulation too.
-*Point to validate with Douglas*, same status as the item-A scope note above.
+Reviewed and approved by Douglas in the pre-publication pass, same as the
+item-A scope note above -- a closed decision, not pending.
 
 --------------------------------------------------------------------------
 What "recomputing the full CCRS + band report per draw" means here

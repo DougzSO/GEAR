@@ -134,17 +134,23 @@
 
 ## TODOs que bloqueiam fases seguintes
 
-- **Camada de índice (CCRS) — completa, exceto Monte Carlo.**
-  `ccrs_calculator.py` (Hazard), `risk_bands.py` (Water/HeatRiskBand),
-  `age_factor.py` (multiplicador `≥ 1`), `event_multiplier.py` (multiplicador
-  `≥ 1` por país), `ccrs_report.py` (monta `CCRS_i,s` = Hazard × age_factor ×
-  EventMultiplier numa coluna por GCM + relatório de % capacidade por banda +
-  contingência). V1–V6 todos fechados. O que ainda falta:
-  - código de produção: só o wrapper de Monte Carlo (spec item J, split
-    térmico e `k` do `EventMultiplier`) e relatórios per-country adicionais
-    além dos já escritos em `ccrs_report.py`;
-  - itens ainda em aberto na spec: termo de SPEI (F), clip de outlier em sv/iv
-    (I), Monte Carlo J. Fechados na implementação: G (bounds congelados,
+- **Camada de índice (CCRS) — completa.**
+  `ccrs_calculator.py` (Hazard, incl. o 3º termo aditivo de seca SPEI),
+  `risk_bands.py` (Water/HeatRiskBand), `age_factor.py` (multiplicador `≥ 1`),
+  `event_multiplier.py` (multiplicador `≥ 1` por país), `ccrs_report.py`
+  (monta `CCRS_i,s` = Hazard × age_factor × EventMultiplier numa coluna por
+  GCM + relatório de % capacidade por banda + contingência),
+  `monte_carlo.py` (sensibilidade item J: N=1000 × 3 magnitudes, split
+  térmico + taxas de `age_factor` + `k` do `EventMultiplier`),
+  `emdat_validation.py` (validação espacial diagnóstica). V1–V6 todos
+  fechados. O que ainda falta:
+  - código de produção: apenas relatórios per-country adicionais além dos já
+    escritos em `ccrs_report.py`;
+  - itens ainda nominalmente em aberto na spec: clip de outlier em sv/iv (I) e
+    a liberdade residual do J. Fechados na implementação: F (termo de SPEI,
+    `spei_processor.py` + `w_drought[bucket]·Tlog(spei_freq)` no Hazard,
+    2026-09-04), J (Monte Carlo implementado, `monte_carlo.py`), G (bounds
+    congelados,
     `FROZEN_BOUNDS` + trava, item 12), **D** (`age_factor ≥ 1`,
     `2 - retention(age)`, convenção confirmada como definitiva pelo autor —
     `docs/DECISIONS.md` 2026-09-04, entrada final; ver item 14 de
@@ -183,10 +189,13 @@
   plantas indianas no CCRS carrega idade neutra por falta de dado. Declarar
   no manuscrito. As linhas são **mantidas** e sinalizadas
   (`age_factor_neutralized_missing_year`), nunca excluídas.
-- **`age_factor` depende de `ccrs_hazard.csv` estar atualizado.**
-  `apply_to_hazard` levanta `ValueError` se algum `plant_uid` do CSV não tiver
-  `age_factor` (CSV gerado com esquema de `plant_uid` antigo). Regerar com
-  `python -m src.index.ccrs_calculator`.
+- **Montagem do CCRS depende de `ccrs_hazard.csv` estar atualizado.**
+  `ccrs_report.assemble_ccrs` (fonte única de verdade) levanta se algum
+  `plant_uid` do CSV não tiver `age_factor` (CSV gerado com esquema de
+  `plant_uid` antigo). Regerar com `python -m src.index.ccrs_calculator`. Os
+  probes isolados de um passo só (`age_factor_apply_to_hazard`,
+  `event_multiplier_apply_to_hazard`) vivem em
+  `tests/diagnostics/hazard_step_probes.py` — não são código de produção.
 - **Trava de regressão de bounds depende dos rasters em disco.**
   `test_ccrs_calculator::test_frozen_bounds_match_recomputed_from_data` lê os
   rasters processados; é **pulado com motivo** (não passa em silêncio) se
@@ -203,15 +212,17 @@
   domina a escala normalizada conjunta; o CCRS contorna isso consumindo o
   raster **bruto** de calor. Manter o pool conjunto ou voltar a por-modelo
   no raster normalizado standalone segue como questão de desenho em aberto
-  (`docs/DECISIONS.md`, entrada de normalização de calor). `_assert_consistent_grid`
-  já falha alto (`GridMismatchError`) se rasters a agrupar divergirem em
-  grade.
+  (`docs/DECISIONS.md`, entrada de normalização de calor). O guard de grade
+  compartilhado em `src/processors/_common.py` (`assert_consistent_grid`)
+  falha alto (`GridMismatchError`) se rasters a agrupar divergirem em grade —
+  `heat_stress_processor` e `spei_processor` usam a mesma implementação.
 - **SPEI:** os 36 downloads de pr/tas (2 GCMs × 3 cenários × 3 países) estão
   **concluídos** — 36/36 `.nc` validados, série diária 2041–2070 completa
   (GFDL-ESM4 `n=10950` noleap, MIROC6 `n=10957`), 72 rasters QA de média do
   período gravados (`logs/spei_download_report.json`). `spei_processor`
-  **não** implementado — SPEI é cálculo de série temporal completa, não
-  média de período, e é meta separada a definir.
+  **implementado** (2026-09-04): SPEI-12 via PET de Thornthwaite, ajuste
+  log-logístico PWM, métrica de meses/ano com SPEI-12 ≤ −1,0; entra no Hazard
+  como 3º termo aditivo independente (item F fechado).
 
 ## Limitações metodológicas herdadas (declarar no manuscrito — ver `ARCHITECTURE.md`)
 

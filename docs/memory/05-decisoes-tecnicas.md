@@ -1157,3 +1157,59 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   X sem sufixo de GCM). Vários testes de Fig 7 trocaram
   `monkeypatch OUT_DIR` ↔ `SECONDARY_DIR` por causa da troca de pasta.
 - **Status:** Ativa. Nenhum commit nesta sub-rodada — aguardando autorização.
+
+## 24. Limpeza de qualidade de código pré-publicação (2026-09-06)
+
+- **Contexto:** rodada de auditoria de qualidade de código antes da
+  publicação/acompanhamento do artigo. Só limpeza — nenhuma decisão de
+  fórmula/metodologia reaberta.
+- **Decisão / mudanças:**
+  1. **Código morto removido.** `data.top_n_by_ccrs()` (sem chamadores; a
+     lógica real está em `charts.plot_top_n_ccrs_breakdown_by_bucket`);
+     `_common.figure_caption_footer_single/footer_below_artist/
+     multi_panel_figsize/single_panel_figsize` (+ constantes
+     `SINGLE_PANEL_LEFT/RIGHT`) — herdados do repo antigo, sem chamadores.
+  2. **`apply_to_hazard` movido para fora de `src/index/`.** `age_factor` e
+     `event_multiplier` só provam o passo de um fator isolado — nunca são
+     chamados pelo pipeline real (`ccrs_report.assemble_ccrs` é a fonte
+     única). Movidos para `tests/diagnostics/hazard_step_probes.py`
+     (`age_factor_apply_to_hazard`, `event_multiplier_apply_to_hazard`), não
+     coletado pelo pytest, importado por `test_age_factor.py` /
+     `test_event_multiplier.py`. `age_factor.main()` deixa de escrever
+     `ccrs_hazard_aged.csv` (artefato diagnóstico que nada consumia); ainda
+     escreve `ccrs_age_factors.csv` e `age_factor_report.md`.
+  3. **`src/processors/_common.py` criado.** Consolida `_find_aqueduct_csv`
+     e `_load_reference_grid` (duplicados quase byte-a-byte entre
+     `water_stress_processor` e `water_variability_processor`) e o guard de
+     grade `GridMismatchError` + `grid_signature` + `assert_consistent_grid`
+     + `load_country_rasters` (duplicados entre `heat_stress_processor` e
+     `spei_processor`). Cada processor importa/reexporta do módulo comum;
+     `load_country_rasters` recebe o loader por-raster como argumento
+     (heat abre o raster do downloader, SPEI o raw que ele mesmo calcula).
+     `monte_carlo._retention_vector` / `_coal_retention_vec` /
+     `compute_draw_ccrs` **não** tocados — duplicação documentada, com teste
+     cross-check, motivada por performance.
+  4. **Marcadores "Point to validate" resolvidos.** `monte_carlo.py` (×2:
+     perturbação térmica pós-SPEI, RNG por país) e `diagrams.py` (Figure 1
+     já aprovada/commitada) — substituídos por nota de decisão fechada.
+     `risk_bands.py:242` ("pending approval") corrigido para refletir a
+     aprovação de Douglas de 2026-09-05 já registrada logo abaixo (linha
+     274) — elimina a contradição interna.
+  5. **Comentários/docstrings desatualizados.** ~12 referências a "ainda não
+     implementado/escrito" (Monte Carlo, `assemble_ccrs`, `spei_processor`,
+     `emdat_validation`, MIROC6/V4) repontadas para os módulos reais;
+     narração de reversões de desenvolvimento (convenção de sinal do
+     `age_factor`, fator 0.79 do hydro) removida de `age_factor.py` /
+     `ccrs_calculator.py` (o histórico fica em `docs/DECISIONS.md`); itens
+     de spec marcados "open" (D, G) corrigidos para "closed".
+- **Pendente de decisão de Douglas (reportado, não tocado):** `maps.py:37`
+  — remoção permanente (ou não) do disclaimer GADM de território disputado
+  no rodapé dos mapas.
+- **Arquivos:** `src/visualization/{data,_common,diagrams,charts}.py`,
+  `src/index/{age_factor,event_multiplier,monte_carlo,ccrs_calculator}.py`,
+  `src/processors/{_common (novo),water_stress_processor,
+  water_variability_processor,heat_stress_processor,spei_processor}.py`,
+  `tests/diagnostics/{__init__,hazard_step_probes}.py` (novos),
+  `tests/test_{age_factor,event_multiplier}.py`, `docs/memory/{04,06,README}`.
+- **Status:** Ativa. Suíte completa: ver resultado da rodada. Nenhum commit
+  — aguardando autorização.

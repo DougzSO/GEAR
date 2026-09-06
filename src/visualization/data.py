@@ -34,15 +34,13 @@ from src.index import age_factor
 from src.index import ccrs_calculator as ccrs
 from src.index import event_multiplier
 from src.index import risk_bands
-from src.index.ccrs_calculator import PLANT_UID
 from src.index.ccrs_report import (
-    CCRS_COLUMNS,
     assemble_ccrs,
     attach_risk_bands,
     compute_heat_band_shares,
     compute_water_band_shares,
 )
-from src.index.risk_bands import PRIMARY_GCM, BandTable
+from src.index.risk_bands import BandTable
 
 
 def load_band_tables() -> dict[str, BandTable]:
@@ -88,11 +86,3 @@ def load_water_band_shares(bands: dict[str, BandTable] | None = None) -> pd.Data
 def load_heat_band_shares(bands: dict[str, BandTable] | None = None) -> pd.DataFrame:
     bands = bands if bands is not None else load_band_tables()
     return compute_heat_band_shares(bands)
-
-
-def top_n_by_ccrs(final: pd.DataFrame, gcm: str = PRIMARY_GCM, n: int = 10) -> pd.DataFrame:
-    """Top-``n`` plants by ``ccrs_{gcm}`` (one row per plant -- the highest
-    of its scenario rows), for the Top-N breakdown heatmap (category 11)."""
-    col = CCRS_COLUMNS[f"hazard_{gcm}"]
-    ranked = final.sort_values(col, ascending=False).drop_duplicates(subset=[PLANT_UID], keep="first")
-    return ranked.head(n)

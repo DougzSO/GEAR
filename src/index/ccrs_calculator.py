@@ -12,12 +12,12 @@ Section 2):
     water_sub_{i,s} = 0.4164 * Tlog(ws) + 0.2505 * Tlin(sv) + 0.3331 * Tlin(iv)
 
 The full score ``CCRS_{i,s} = Hazard_{i,s} * age_factor_i * EventMultiplier_c``
-is **not** assembled here: the ``age_factor`` multiplier mapping and its sign
-convention are the spec's open item D (``ARCHITECTURE.md`` Section 10) -- see
-``src/index/age_factor.py`` and ``docs/DECISIONS.md`` (2026-09-04).
-``EventMultiplier_c`` has a closed form
-(Section 7.2) but is also applied in the assembly step, outside this module.
-The risk bands (WaterRiskBand / HeatRiskBand) are yet another step.
+is **not** assembled here: the ``age_factor`` multiplier (spec item D, closed
+-- the ``>= 1`` ``2 - retention(age)`` convention) is ``src/index/age_factor.py``
+(see also ``docs/DECISIONS.md`` 2026-09-04); ``EventMultiplier_c`` has a
+closed form (Section 7.2); both are applied in the assembly step
+(``ccrs_report.assemble_ccrs``), outside this module. The risk bands
+(WaterRiskBand / HeatRiskBand) are yet another step.
 
 --------------------------------------------------------------------------
 Drought (SPEI) term -- spec item F, CLOSED
@@ -61,11 +61,9 @@ indicators**, not precipitation and not SPEI:
   the same supply (Aqueduct column ``{scenario}50_iv_x_r``), same processor
   (``interannual_variability_raw_*`` raster).
 
-There is no precipitation/SPEI term in the current CCRS: a drought (SPEI) term
-is the spec's open item F -- the ``pr``/``tas`` downloads already exist
-(``cds_precipitation_downloader``) but no ``spei_processor`` has been written,
-and ``sv``/``iv`` do **not** stand in for it (they measure variability of
-supply, not a climatic water deficit).
+``sv``/``iv`` are NOT the drought term: they measure variability of water
+supply, not a climatic water deficit. The drought term is ``spei`` (below),
+its own independent additive term -- ``sv``/``iv`` do not stand in for it.
 
 * ``heat`` -- mean days/year with tasmax > 40 C (``extreme_heat_days_*``, a
   passthrough of ``cds_tasmax_downloader``), per GCM.
@@ -100,8 +98,8 @@ Transforms and bounds
     later, authorised *extension* of the same frozen constant, not a
     perturbation of the pre-existing ``ws``/``sv``/``iv``/``heat`` values,
     which are untouched).
-* The bounds are **frozen** in ``FROZEN_BOUNDS`` (spec open item G: "a fixed,
-  documented constant, not recomputed per run"). ``main`` and the default
+* The bounds are **frozen** in ``FROZEN_BOUNDS`` (spec item G, closed: "a
+  fixed, documented constant, not recomputed per run"). ``main`` and the default
   calculation use the frozen values; ``compute_global_bounds`` recomputes them
   from the data on disk. ``tests/test_ccrs_calculator.py`` compares the two
   and **fails** on drift -- updating ``FROZEN_BOUNDS`` requires explicit
@@ -285,7 +283,7 @@ assert all(
 ), "w_water + w_heat + w_drought must sum to 1 per bucket"
 
 # --------------------------------------------------------------------------
-# Frozen global bounds (spec open item G).
+# Frozen global bounds (spec item G, closed).
 #
 # Derived from compute_global_bounds() over the data on disk at the snapshot
 # below. Do NOT edit by hand without explicit manual review: the regression
