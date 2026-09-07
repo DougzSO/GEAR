@@ -198,6 +198,12 @@ def assemble_ccrs(
     explicit row-count guard: a stale/duplicate multiplier table or a country
     with no ``EventMultiplier`` fails loud instead of silently corrupting the
     row count.
+
+    Callers that reach this via ``compute_ccrs`` (the CLI) feed a Hazard
+    frame round-tripped through ``ccrs_hazard.csv``; callers with an
+    in-memory frame do not. The resulting ~1 ULP difference in the
+    ``ccrs_{gcm}`` columns is a float-representation residual, not a logic
+    difference -- see ``compute_ccrs``'s docstring.
     """
     af = age_factors if age_factors is not None else age_factor.compute_age_factors()
     em = event_multipliers if event_multipliers is not None else event_multiplier.compute_event_multipliers()
@@ -246,7 +252,19 @@ def compute_ccrs(
     """Disk-facing wrapper around ``assemble_ccrs`` -- reads ``hazard_csv``
     and delegates every bit of join/multiply logic to it. Contains no
     assembly logic of its own; kept as the public T5 entry point (CLI,
-    ``main()`` below, and any existing caller) for backward compatibility."""
+    ``main()`` below, and any existing caller) for backward compatibility.
+
+    **Float-precision note for anyone diffing ``ccrs_final.csv``:** this path
+    round-trips the Hazard values through ``ccrs_hazard.csv`` (write, then
+    ``read_csv`` here) before the ``Hazard * age_factor * EventMultiplier``
+    product. A caller that passes an in-memory Hazard frame straight to
+    ``assemble_ccrs`` (``src/main.py``'s orchestrator, ``src/visualization/
+    data.py``) never does that round-trip, so its ``ccrs_{gcm}`` columns can
+    differ from this CLI's by ~1 ULP (~1e-16). That is a floating-point
+    representation residual, **not** a logic divergence -- the two paths run
+    the identical arithmetic on inputs that agree to full float64 precision.
+    A ``pandas.testing.assert_frame_equal(..., rtol=1e-9)`` treats them as
+    equal; a raw byte/`diff` comparison of the CSV will not."""
     hz = pd.read_csv(hazard_csv)
     return assemble_ccrs(hz, age_factors, event_multipliers)
 

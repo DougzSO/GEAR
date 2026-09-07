@@ -229,6 +229,7 @@ def hazard_weight_provenance_table() -> pd.DataFrame:
 # --------------------------------------------------------------------------
 def hazard_term_contribution_per_plant(
     gcm: str = PRIMARY_GCM, countries: list[str] | None = None,
+    hazard: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """One row per plant x water_scenario (V6 computable base): each of
     water/heat/drought's weighted, transformed contribution to
@@ -240,9 +241,13 @@ def hazard_term_contribution_per_plant(
     This is the per-plant frame ``hazard_term_contribution_table`` (C4's
     original bar-chart numbers) aggregates away -- kept as its own function
     for the FIG redesign (Douglas's 2026-09-05 request) needing the
-    per-plant distribution, not just its capacity-weighted mean."""
+    per-plant distribution, not just its capacity-weighted mean.
+
+    ``hazard`` -- optional ``ccrs_calculator.compute_hazard(gcm)`` frame
+    already in memory (the orchestrator passes its T1 result so this is not
+    recomputed); with it omitted, ``compute_hazard(gcm)`` is called here."""
     countries = countries or COUNTRIES
-    hz = ccrs.compute_hazard(gcm)
+    hz = hazard if hazard is not None else ccrs.compute_hazard(gcm)
     hz = hz[hz["country"].isin(countries)]
     base = ccrs.computable_base(hz)
 
@@ -267,6 +272,7 @@ def hazard_term_contribution_per_plant(
 
 def hazard_term_contribution_table(
     gcm: str = PRIMARY_GCM, countries: list[str] | None = None,
+    per_plant: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Capacity-weighted mean contribution of water/heat/drought to
     ``Hazard_{i,s}``, per country (and water_scenario) -- the numbers behind
@@ -281,8 +287,12 @@ def hazard_term_contribution_table(
     divergence (Brazil's water/drought shares move substantially once
     weighted by capacity -- invisible in this table's one number per
     group). Still correct, still useful as a quick reference; not the
-    number to cite for the water/heat/drought-dominance claim itself."""
-    frame = hazard_term_contribution_per_plant(gcm, countries)
+    number to cite for the water/heat/drought-dominance claim itself.
+
+    ``per_plant`` -- optional ``hazard_term_contribution_per_plant`` output
+    already in memory (the orchestrator computes it once and passes it to
+    both this table and ``charts.plot_hazard_term_contribution_distribution``)."""
+    frame = per_plant if per_plant is not None else hazard_term_contribution_per_plant(gcm, countries)
 
     def _wmean(g: pd.DataFrame) -> pd.Series:
         w = g["capacity_mw"]

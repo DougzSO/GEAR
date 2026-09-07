@@ -1213,3 +1213,63 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   `tests/test_{age_factor,event_multiplier}.py`, `docs/memory/{04,06,README}`.
 - **Status:** Ativa. Suíte completa: ver resultado da rodada. Nenhum commit
   — aguardando autorização.
+
+## 25. Orquestrador central `src/main.py` (2026-09-06)
+
+- **Contexto:** rodar o pipeline inteiro exigia ~9 chamadas `python -m`
+  separadas, e cada `main()` de módulo recomputa seus próprios insumos:
+  `age_factor`/`event_multiplier`/`risk_bands` acabavam rodando ~4× e o
+  `monte_carlo._Precomputed` (a reconstrução cara de Hazard + bandas a partir
+  dos rasters) 3× — uma em `monte_carlo.main()`, uma em `tables.main()`, uma
+  dentro da figura de rank-stability.
+- **Decisão:** `src/main.py`, rodado como `python -m src.main` — consistente
+  com a convenção `python -m` de todo o resto (o `main.py` de raiz do repo
+  antigo era "Orquestração antiga", fora de escopo, `INVENTORY.md`). Orquestra
+  na ordem de dependência (processors condicionais → T1 → T2/T3 → T4 → T5 →
+  Monte Carlo → tabelas → figuras → validação espacial EM-DAT), computando
+  cada dependência **uma vez** e passando os objetos em memória adiante pelos
+  parâmetros `*=None` que as funções já expõem, mais **três ganchos de
+  injeção** novos, todos opcionais e backward-compatible:
+  - `ccrs_calculator.compute_hazard_by_gcm(frames_by_model=)` — empilha
+    frames `compute_hazard(m)` já em memória em vez de recomputá-los;
+  - `monte_carlo._Precomputed(hazard_by_model=, band_tables=)` — reusa o T1
+    e o T4 já computados;
+  - `tables.hazard_term_contribution_per_plant(hazard=)` /
+    `hazard_term_contribution_table(per_plant=)` — evita recomputar o Hazard
+    para as duas figuras C4.
+  O CI nacional (C1/C2) é derivado de `run_country_scenario_draws` via
+  `main.ci_from_draws` (reproduz `run_country_scenario_simulation` grupo a
+  grupo) em vez de uma segunda simulação. Cada `main()` de módulo fica
+  intacto para uso isolado; o orquestrador chama as funções internas, nunca
+  os CLIs.
+- **Escopo dos flags `--countries` / `--scenarios`:** afetam **só** os loops
+  de figura/tabela. O índice (T1–T5) e o Monte Carlo sempre rodam full-scope
+  — os cortes percentil do HeatRiskBand, os bounds globais e o `rate_max` do
+  `EventMultiplier` só estão corretos sobre os 3 países e os 3 cenários.
+- **Consequências:** rodar `python -m src.main --skip-processors` do zero
+  reproduz `data/outputs/tables/` — 16/18 CSVs byte-idênticos (incl. os do
+  Monte Carlo, prova de que a injeção do `_Precomputed` é bit-exata);
+  `ccrs_final.csv` difere em 6,66e-16 (1 ulp — o `ccrs_report.main()` relê
+  `ccrs_hazard.csv` do disco antes de multiplicar, o orquestrador multiplica
+  o frame em memória; mesmo resíduo in-memory-vs-disco de `data.py`);
+  `ccrs_age_factors.csv` bit-idêntico nos valores, difere só na quebra de
+  linha (`age_factor.main()` grava via `Path.write_text(df.to_csv())`, que
+  duplica `\n`→`\r\r\n` no Windows — quirk latente daquele CLI; o
+  orquestrador grava `\r\n` limpo via `df.to_csv(path)`).
+- **Figuras 3 e 4:** o orquestrador faz as cópias byte-idênticas
+  (`water_risk_band_pes`→`figure3_water_risk_band_pes`,
+  `heat_risk_band_ssp585`→`figure4_heat_risk_band_pes`, png+pdf) no fim da
+  fase de figuras. O mapa HeatRiskBand é **só GFDL-ESM4** (a comparação com
+  MIROC6 é a tabela `heat_band_gcm_comparison`, nunca um 2º mapa — o stem do
+  arquivo não carrega GCM, então um loop por GCM sobrescreveria silenciosamente).
+- **Testes:** `tests/test_main.py` — spies nas funções internas (nunca nos
+  CLIs) confirmam: cada etapa de dependência roda 1× (T1/T4 1× por GCM), o
+  `_Precomputed` é construído 1×, o mesmo objeto `pre` e o mesmo frame
+  `draws` chegam por referência aos 3 consumidores do Monte Carlo (figuras
+  de rank-stability, tabela C5, resumo nacional C1/C2), os flags `--skip-*`
+  gateiam suas fases, e a cardinalidade dos loops de figura está certa
+  (mapa por cenário, não por cenário×GCM).
+- **Arquivos:** `src/main.py` (novo), `tests/test_main.py` (novo),
+  `src/index/{ccrs_calculator,monte_carlo}.py`,
+  `src/visualization/tables.py`, `docs/memory/04`.
+- **Status:** Ativa. Nenhum commit — aguardando autorização.

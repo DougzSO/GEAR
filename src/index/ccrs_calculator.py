@@ -631,7 +631,9 @@ def compute_hazard(model: str, bounds: dict[str, object] | None = None) -> pd.Da
 
 
 def compute_hazard_by_gcm(
-    models: list[str] | None = None, bounds: dict[str, object] | None = None
+    models: list[str] | None = None,
+    bounds: dict[str, object] | None = None,
+    frames_by_model: dict[str, pd.DataFrame] | None = None,
 ) -> pd.DataFrame:
     """Each GCM's ``Hazard`` side by side -- one ``hazard_{model}`` column per
     GCM, **never** combined. GFDL-ESM4 is the primary column; MIROC6 is a
@@ -642,11 +644,17 @@ def compute_hazard_by_gcm(
     cross-join (see the module docstring, "Plant identity"). Every model
     yields the same key set, so the descriptive columns are taken once from
     the first model's frame.
+
+    ``frames_by_model`` -- optional ``{model: compute_hazard(model) output}``
+    already in memory. A caller that has just computed the per-model Hazard
+    frames for another purpose (e.g. ``src/main.py``'s orchestrator, which
+    also feeds them to ``monte_carlo._Precomputed``) passes them here so this
+    function only stacks them, never recomputing ``compute_hazard``.
     """
     models = models or configured_models()
     merged: pd.DataFrame | None = None
     for m in models:
-        h = compute_hazard(m, bounds=bounds)
+        h = frames_by_model[m] if frames_by_model is not None else compute_hazard(m, bounds=bounds)
         col = f"hazard_{m}"
         h = h.rename(columns={"hazard": col})
         if merged is None:

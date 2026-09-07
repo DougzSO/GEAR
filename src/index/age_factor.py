@@ -383,7 +383,10 @@ def main() -> int:
     report = build_summary(af)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    (args.out_dir / "ccrs_age_factors.csv").write_text(af.to_csv(index=False), encoding="utf-8")
+    # to_csv(path) (not write_text(to_csv())): the string form already carries
+    # "\r\n", and write_text re-translates "\n" on Windows, producing "\r\r\n".
+    # Same write pattern as the other four index CLIs.
+    af.to_csv(args.out_dir / "ccrs_age_factors.csv", index=False)
     (args.out_dir / "age_factor_report.md").write_text(report, encoding="utf-8")
 
     logger.info("age_factor: %d plants, range %.4f..%.4f, %d neutralised (missing year)",

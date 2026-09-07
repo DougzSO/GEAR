@@ -292,15 +292,32 @@ class _Precomputed:
     """Everything a Monte Carlo draw needs that does NOT depend on the
     perturbed parameters: the frozen-bounds-transformed Hazard inputs (one
     per GCM), plant attributes for age_factor, event counts, fixed risk-band
-    labels, and country-index arrays for fast per-draw gathers."""
+    labels, and country-index arrays for fast per-draw gathers.
 
-    def __init__(self) -> None:
+    ``hazard_by_model`` / ``band_tables`` -- optional already-computed
+    ``{model: ccrs.compute_hazard(model)}`` and ``{model:
+    risk_bands.compute_bands(model)}``. The orchestrator (``src/main.py``)
+    computes both once for the T1/T4 pipeline steps and passes them here so
+    the Monte Carlo precompute reuses them instead of re-reading every raster
+    and re-transforming every term a second time. With both omitted (the
+    default, and every existing caller / ``main()``) the behaviour is
+    unchanged -- each is computed here.
+    """
+
+    def __init__(
+        self,
+        hazard_by_model: "dict[str, pd.DataFrame] | None" = None,
+        band_tables: "dict[str, risk_bands.BandTable] | None" = None,
+    ) -> None:
         country_to_idx = {c: i for i, c in enumerate(COUNTRIES)}
 
         self.haz: dict[str, dict[str, np.ndarray]] = {}
         self.band: dict[str, dict[str, np.ndarray]] = {}
         for model in ccrs.configured_models():
-            hz = ccrs.compute_hazard(model)  # FROZEN_BOUNDS, unperturbed
+            hz = (
+                hazard_by_model[model] if hazard_by_model is not None
+                else ccrs.compute_hazard(model)  # FROZEN_BOUNDS, unperturbed
+            )
             attrs_aligned = hz[[PLANT_UID]].merge(
                 _plant_attributes(), on=PLANT_UID, how="left", validate="many_to_one"
             )
@@ -310,7 +327,7 @@ class _Precomputed:
                     "compute_hazard() and age_factor.load_plant_attributes() "
                     "disagree on which plant_uid have a commissioning_year."
                 )
-            bt = risk_bands.compute_bands(model)
+            bt = band_tables[model] if band_tables is not None else risk_bands.compute_bands(model)
             banded = hz[[PLANT_UID, "water_scenario"]].merge(
                 bt.frame[[PLANT_UID, "water_scenario", "water_risk_band", "heat_risk_band"]],
                 on=[PLANT_UID, "water_scenario"], how="left", validate="one_to_one",
