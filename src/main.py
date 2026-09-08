@@ -400,12 +400,14 @@ def _generate_figures(final, band_tables, age_factors, water_shares, heat_shares
     # only (the GFDL/MIROC6 heat comparison is a table, not a second map --
     # see plot_heat_risk_band_map's docstring).
     for scen in scenarios:
-        maps.plot_ccrs_overview_map(countries, water_scenario=scen, final=final)
+        maps.plot_figure5_ccrs_overview(countries, water_scenario=scen, final=final)
         maps.plot_water_risk_band_map(countries, water_scenario=scen, final=final)
         maps.plot_computable_base_map(countries, water_scenario=scen, final=final)
         maps.plot_heat_risk_band_map(countries, water_scenario=scen, final=final)
         maps.plot_worst_case_risk_band_map(countries, water_scenario=scen, final=final)
-    maps.plot_figure5_ccrs_asset_level_pes(countries, final=final)
+    # Asset-level continuous-color PES map -- Supplementary candidate, writes
+    # to combined/secondary/ itself (2026-09-07: overview took the Figure 5 slot).
+    maps.plot_ccrs_asset_level_pes_map(countries, final=final)
     maps.plot_ccrs_scenario_delta_map(countries, final=final, combined=False)
     maps.plot_ccrs_scenario_delta_map(countries, final=final, combined=True)
 

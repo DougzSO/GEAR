@@ -128,9 +128,9 @@ def spies(monkeypatch, tmp_path):
     for mod, names in {
         main.diagrams: ["plot_pipeline_overview"],
         main.maps: [
-            "plot_ccrs_overview_map", "plot_water_risk_band_map", "plot_computable_base_map",
+            "plot_figure5_ccrs_overview", "plot_water_risk_band_map", "plot_computable_base_map",
             "plot_heat_risk_band_map", "plot_worst_case_risk_band_map",
-            "plot_figure5_ccrs_asset_level_pes", "plot_ccrs_scenario_delta_map",
+            "plot_ccrs_asset_level_pes_map", "plot_ccrs_scenario_delta_map",
         ],
         main.charts: [
             "plot_figure2_capacity_exposure_by_band", "plot_capacity_by_risk_band",

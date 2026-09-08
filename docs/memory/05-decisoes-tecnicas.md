@@ -980,13 +980,22 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   `combined/heat_risk_band_ssp585.png`, copiado para
   `combined/figure4_heat_risk_band_pes.png` (+pdf). A cópia/rename é passo de
   geração ad-hoc (ver abaixo), não há lógica no código que grave esses nomes.
-- **Fig 5** — `maps.plot_figure5_ccrs_asset_level_pes` →
-  `combined/figure5_ccrs_asset_level_pes_{gcm}.png`. **Nova variante** de
-  `plot_ccrs_overview_map`: mesma estrutura de mapa (fronteira, território
-  disputado, marcador ∝ √capacidade, rosa dos ventos), mas **cor do marcador
-  = CCRS contínuo** (`SEQUENTIAL_CMAP`/viridis, nunca diverging para
-  quantidade sem zero natural), não identidade de bucket. PES apenas (é
-  figura-manchete, não categoria varrida por cenário). Thresholds de inclusão
+- **Fig 5 (2026-09-07)** — `maps.plot_figure5_ccrs_overview` →
+  `combined/figure5_ccrs_overview_{scenario}_{gcm}.png` (3 cenários, GFDL-ESM4).
+  É o mapa da categoria 1 (bolhas coloridas por bucket, anel no top-decil de
+  CCRS), varrido pelos 3 cenários de água, promovido a Figura 5 do manuscrito.
+  Douglas prefere esse layout ao painel PES único de cor contínua. **Sem
+  mudança visual** — só renome do arquivo (`figure5_` prefix, cenário antes do
+  GCM) e do papel no artigo. Função renomeada de `plot_ccrs_overview_map`.
+- **Mapa asset-level (ex-Fig 5, 2026-09-07)** —
+  `maps.plot_ccrs_asset_level_pes_map` (ex-`plot_figure5_ccrs_asset_level_pes`)
+  → `combined/secondary/ccrs_asset_level_pes_{gcm}.png`. Mesma estrutura de mapa
+  (fronteira, território disputado, marcador ∝ √capacidade, rosa dos ventos),
+  mas **cor do marcador = CCRS contínuo** (`SEQUENTIAL_CMAP`/viridis, nunca
+  diverging para quantidade sem zero natural), não identidade de bucket. PES
+  apenas. **Rebaixado a candidato a Suplementar** — responde a pergunta
+  diferente da Fig 5 ("quão severo é o score de cada planta" vs. "qual
+  tecnologia está mais exposta"), mantido, não deletado. Thresholds de inclusão
   do GEM (hydro ≥45 MW, wind ≥10 MW, etc.) **já satisfeitos por construção** —
   o GEM Global Integrated Power Tracker só rastreia plantas acima do próprio
   limiar; nenhuma linha em `vdata.load_ccrs_final()` está abaixo. Não há

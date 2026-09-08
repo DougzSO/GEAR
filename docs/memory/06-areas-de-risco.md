@@ -129,8 +129,11 @@
   que está em `combined/secondary/` é candidato a Suplementar (decisão final
   de Douglas pendente). `worst_case_risk_band`,
   `hazard_term_contribution_distribution`, `ccrs_scenario_delta` (combined),
-  `emdat_spatial_validation`, `ccrs_rank_stability` (3 cenários) estão em
-  `secondary/` — não citados no rascunho de Results atual.
+  `emdat_spatial_validation`, `ccrs_rank_stability` (3 cenários),
+  `ccrs_asset_level_pes` (ex-Fig 5, rebaixado 2026-09-07 — a Fig 5 do
+  manuscrito agora é `figure5_ccrs_overview`, o mapa da categoria 1 varrido
+  pelos 3 cenários) estão em `secondary/` — não citados no rascunho de Results
+  atual.
 
 ## TODOs que bloqueiam fases seguintes
 

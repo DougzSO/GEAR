@@ -150,7 +150,7 @@ def _capture_figures(monkeypatch, module):
 @boundaries_needed
 def test_category_1_ccrs_overview_map(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
-    paths = maps.plot_ccrs_overview_map(countries=["Portugal"], final=synth["final"])
+    paths = maps.plot_figure5_ccrs_overview(countries=["Portugal"], final=synth["final"])
     assert paths["combined"].exists()
 
 
@@ -171,25 +171,35 @@ def test_scenario_mapping_opt_bau_pes_matches_ssp_labels():
 
 
 # --------------------------------------------------------------------------
-# FIGURE 5 (2026-09-05 article-figure-numbering round): asset-level CCRS
-# map, PES only, continuous viridis color instead of category 1's bucket
-# coloring.
+# Asset-level CCRS map (2026-09-05 article-figure-numbering round):
+# PES only, continuous viridis color instead of category 1's bucket
+# coloring. Demoted to combined/secondary/ 2026-09-07 -- the CCRS overview
+# map (plot_figure5_ccrs_overview) is the manuscript Figure 5.
 # --------------------------------------------------------------------------
 @boundaries_needed
-def test_figure5_runs_without_error_on_synthetic_data(synth, tmp_path, monkeypatch):
+def test_asset_level_pes_map_runs_without_error_on_synthetic_data(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
-    paths = maps.plot_figure5_ccrs_asset_level_pes(countries=["Portugal"], final=synth["final"])
+    paths = maps.plot_ccrs_asset_level_pes_map(countries=["Portugal"], final=synth["final"])
     assert paths["combined"].exists()
 
 
 @boundaries_needed
-def test_figure5_color_is_continuous_ccrs_not_bucket(synth, tmp_path, monkeypatch):
-    """Distinguishes Figure 5 from category 1 -- the marker color array
-    must be the actual CCRS values (varying continuously), not a small set
-    of bucket hex colors."""
+def test_asset_level_pes_map_saves_to_secondary(synth, tmp_path, monkeypatch):
+    """Supplementary candidate since 2026-09-07 -- writes to
+    combined/secondary/, not combined/ (like worst_case / scenario-delta)."""
+    monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
+    path = maps.plot_ccrs_asset_level_pes_map(countries=["Portugal"], final=synth["final"])["combined"]
+    assert path.parent == tmp_path / "combined" / "secondary"
+
+
+@boundaries_needed
+def test_asset_level_color_is_continuous_ccrs_not_bucket(synth, tmp_path, monkeypatch):
+    """Distinguishes the asset-level map from category 1 -- the marker color
+    array must be the actual CCRS values (varying continuously), not a small
+    set of bucket hex colors."""
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     captured = _capture_figures(monkeypatch, maps)
-    maps.plot_figure5_ccrs_asset_level_pes(countries=["Brazil", "Portugal", "India"], final=synth["final"])
+    maps.plot_ccrs_asset_level_pes_map(countries=["Brazil", "Portugal", "India"], final=synth["final"])
     fig = captured[0]
     scatter_collections = [c for ax in fig.axes for c in ax.collections if hasattr(c, "get_array")
                             and c.get_array() is not None]
@@ -546,7 +556,7 @@ def test_india_map_renders_with_disputed_admin1(synth, tmp_path, monkeypatch):
     """End-to-end: a map over India (new CCRS schema) must not raise while
     drawing the disputed admin-1 polygons."""
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
-    paths = maps.plot_ccrs_overview_map(countries=["India"], final=synth["final"])
+    paths = maps.plot_figure5_ccrs_overview(countries=["India"], final=synth["final"])
     assert paths["combined"].exists()
 
 
@@ -586,7 +596,7 @@ def test_computable_base_map_includes_excluded_plants(synth, tmp_path, monkeypat
 @boundaries_needed
 def test_overview_map_produces_one_combined_file_with_pdf(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
-    paths = maps.plot_ccrs_overview_map(final=synth["final"])
+    paths = maps.plot_figure5_ccrs_overview(final=synth["final"])
     assert len(paths) == 1
     assert "combined" in paths
     assert paths["combined"].exists() and _common.pdf_path_for(paths["combined"]).exists()
@@ -656,7 +666,7 @@ def test_save_figure_isolates_pdf_in_a_subfolder(tmp_path):
 def test_no_figure_prints_a_title(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     captured = _capture_figures(monkeypatch, maps)
-    maps.plot_ccrs_overview_map(countries=["Portugal"], final=synth["final"])
+    maps.plot_figure5_ccrs_overview(countries=["Portugal"], final=synth["final"])
     assert len(captured) == 1
     assert captured[0]._suptitle is None
 
@@ -685,7 +695,7 @@ def test_panel_title_uses_power_plants_wording_and_is_bold():
 def test_overview_map_is_one_file_per_scenario_countries_side_by_side(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
     captured = _capture_figures(monkeypatch, maps)
-    maps.plot_ccrs_overview_map(countries=["Brazil", "Portugal"], final=synth["final"], water_scenario="bau")
+    maps.plot_figure5_ccrs_overview(countries=["Brazil", "Portugal"], final=synth["final"], water_scenario="bau")
     assert len(captured) == 1
     assert len(captured[0].axes) == 2  # one panel per country, no scenario dimension in this figure
 
@@ -693,7 +703,7 @@ def test_overview_map_is_one_file_per_scenario_countries_side_by_side(synth, tmp
 @boundaries_needed
 def test_overview_map_generates_a_distinct_file_per_scenario(synth, tmp_path, monkeypatch):
     monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)
-    paths = {ws: maps.plot_ccrs_overview_map(countries=["Portugal"], final=synth["final"], water_scenario=ws)["combined"]
+    paths = {ws: maps.plot_figure5_ccrs_overview(countries=["Portugal"], final=synth["final"], water_scenario=ws)["combined"]
              for ws in WATER_SCENARIOS}
     assert len(set(paths.values())) == 3  # 3 distinct files, one per scenario
     for p in paths.values():
@@ -866,7 +876,7 @@ def test_ccrs_scenario_delta_combined_saves_to_secondary(synth, tmp_path, monkey
 # --------------------------------------------------------------------------
 @boundaries_needed
 @pytest.mark.parametrize("plot_fn, kwargs", [
-    (maps.plot_ccrs_overview_map, {}),
+    (maps.plot_figure5_ccrs_overview, {}),
     (maps.plot_water_risk_band_map, {}),
     (maps.plot_computable_base_map, {}),
     (maps.plot_heat_risk_band_map, {}),
@@ -887,7 +897,7 @@ def test_map_figures_have_no_descriptive_caption_footer(synth, tmp_path, monkeyp
 # --------------------------------------------------------------------------
 @boundaries_needed
 @pytest.mark.parametrize("plot_fn, kwargs", [
-    (maps.plot_ccrs_overview_map, {}),
+    (maps.plot_figure5_ccrs_overview, {}),
     (maps.plot_water_risk_band_map, {}),
     (maps.plot_computable_base_map, {}),
     (maps.plot_heat_risk_band_map, {}),

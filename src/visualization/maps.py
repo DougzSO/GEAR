@@ -34,12 +34,14 @@ Douglas's 2026-09-05 review round -- corrections
   (``_common.figure_caption_footer``) is removed from every map category --
   below each map there is now only the legend, nothing else. This
   includes the GADM boundary disclaimer that used to ride on the same
-  footer line. *Point to validate*: the disclaimer was a deliberate
-  data-provenance/compliance note for India's disputed admin-1 territory,
-  not "descriptive context" in the sense Douglas's instruction targeted
-  (scenario/GCM/category text) -- it is removed here because the
-  instruction said "apenas a legenda" (only the legend) with no stated
-  exception, but this should be confirmed rather than assumed permanent.
+  footer line, covering India's disputed admin-1 territory (the
+  Z-prefixed GADM GIDs -- Kashmir and related). Douglas confirmed on
+  2026-09-06 that this removal is a definitive decision, not a pending
+  point: the final article figures carry no textual boundary disclaimer
+  in the footer. The cartographic treatment of the contested regions
+  themselves is unchanged -- equal fill plus dashed outline
+  (``_common``'s disputed-territory drawing) -- only the footer text is
+  gone.
 - **Correction 3**: every geographic map panel gets its own small compass
   rose (``_common.add_compass_rose``), upper right, not a single shared
   one for the whole figure. Category 2 (scenario delta) is included (a
@@ -58,6 +60,18 @@ Douglas's 2026-09-05 visual-review round
 - Category 2's ``combined`` layout now matches category 1's space usage
   (bigger maps, a thin/elongated colorbar instead of a short/thick one) --
   see the comment inline at ``plot_ccrs_scenario_delta_map``.
+
+--------------------------------------------------------------------------
+Douglas's 2026-09-07 review round
+--------------------------------------------------------------------------
+- The manuscript's asset-level CCRS map is now category 1's bucket-colored
+  bubble layout, swept across all three water scenarios
+  (``plot_figure5_ccrs_overview`` -> ``combined/figure5_ccrs_overview_{scenario}_{gcm}``).
+  The former continuous-color PES-only panel
+  (``plot_ccrs_asset_level_pes_map``, previously ``figure5_ccrs_asset_level_pes``)
+  is demoted to ``combined/secondary/`` as a Supplementary candidate --
+  kept, not deleted. No visual change to either figure; only filenames and
+  manuscript roles moved.
 """
 
 from __future__ import annotations
@@ -100,8 +114,9 @@ logger = logging.getLogger(__name__)
 
 # 2026-09-05 article-figure-numbering round: figures not cited in the
 # current Results draft (worst_case_risk_band, ccrs_scenario_delta's
-# combined view) move here -- kept as Supplementary candidates, not
-# deleted, pending Douglas's final call on what becomes Supplementary. A
+# combined view, and -- 2026-09-07 -- the continuous-color asset-level PES
+# map) move here -- kept as Supplementary candidates, not deleted, pending
+# Douglas's final call on what becomes Supplementary. A
 # FUNCTION, not a precomputed module constant -- every test in this file
 # redirects output by monkeypatching the module-level ``OUTPUT_MAPS`` name
 # (e.g. ``monkeypatch.setattr(maps, "OUTPUT_MAPS", tmp_path)``), which only
@@ -193,15 +208,24 @@ def _ring_legend_handle(ring_quantile: float, label: str) -> mlines.Line2D:
 
 
 # --------------------------------------------------------------------------
-# Category 1 -- CCRS overview map
+# Category 1 / FIGURE 5 -- CCRS overview map
+#
+# 2026-09-07 review: this is the manuscript's asset-level CCRS map (Figure
+# 5), replacing the former continuous-color ``figure5_ccrs_asset_level_pes``
+# (now demoted to ``combined/secondary/`` -- see ``plot_ccrs_asset_level_pes_map``
+# below). Douglas prefers the bucket-colored bubble layout, swept across all
+# three water scenarios, over the single PES continuous-color panel. Same
+# category-1 layout as before -- only the output filename (``figure5_``
+# prefix, scenario before GCM) and the manuscript role changed.
 # --------------------------------------------------------------------------
-def plot_ccrs_overview_map(
+def plot_figure5_ccrs_overview(
     countries: list[str] | None = None, gcm: str = PRIMARY_GCM, water_scenario: str = "bau",
     final: pd.DataFrame | None = None,
 ) -> dict[str, pathlib.Path]:
-    """One figure per ``water_scenario`` (call once per scenario to cover
-    all three), three country panels side by side -- same layout as
-    category 4 (HeatRiskBand)."""
+    """Figure 5 -- one figure per ``water_scenario`` (call once per scenario
+    to cover all three), three country panels side by side, bucket-colored
+    bubbles with a top-decile CCRS ring -- same layout as category 4
+    (HeatRiskBand)."""
     countries = countries or COUNTRIES
     final = final if final is not None else vdata.load_ccrs_final()
     ring_col = f"ccrs_{gcm}"
@@ -212,7 +236,7 @@ def plot_ccrs_overview_map(
         stats = _draw_bubble_panel(ax, country, frame, ring_col, ring_quantile=0.8)
         panel_title(ax, country, stats["n_computable"], stats["n_excluded"])
 
-    stem = f"ccrs_overview_{gcm}_{water_scenario}"
+    stem = f"figure5_ccrs_overview_{water_scenario}_{gcm}"
     out_path = _render_country_row_figure(
         countries, draw_and_title, handles, OUTPUT_MAPS / "combined" / f"{stem}.png",
     )
@@ -221,8 +245,11 @@ def plot_ccrs_overview_map(
 
 
 # --------------------------------------------------------------------------
-# FIGURE 5 -- asset-level CCRS map, PES only, continuous color (article
-# figure numbering round, 2026-09-05)
+# Asset-level CCRS map, PES only, continuous color
+# (article figure-numbering round, 2026-09-05; demoted to a Supplementary
+# candidate 2026-09-07 -- ``plot_figure5_ccrs_overview`` above took the
+# Figure 5 slot. Kept, not deleted: it answers a different question and may
+# still be cited in the Supplement.)
 #
 # Same map structure as category 1 (country boundary, disputed-territory
 # handling, sqrt-of-capacity marker size, compass rose) but the marker
@@ -266,13 +293,14 @@ def _draw_ccrs_continuous_panel(ax, country: str, frame_country: pd.DataFrame, c
     return sc, len(computable), len(not_computable)
 
 
-def plot_figure5_ccrs_asset_level_pes(
+def plot_ccrs_asset_level_pes_map(
     countries: list[str] | None = None, gcm: str = PRIMARY_GCM, final: pd.DataFrame | None = None,
     base_height: float = 10.0,
 ) -> dict[str, pathlib.Path]:
-    """Figure 5 -- SSP5-8.5/PES only (this is a headline manuscript figure,
-    not a scenario-swept category like categories 1/3/4/10), continuous
-    CCRS color. See the module comment above for the full design."""
+    """Asset-level CCRS map, SSP5-8.5/PES only, continuous CCRS color.
+    Supplementary candidate (``combined/secondary/``) since 2026-09-07 --
+    ``plot_figure5_ccrs_overview`` is the manuscript Figure 5. See the
+    module comment above for the full design."""
     countries = countries or COUNTRIES
     final = final if final is not None else vdata.load_ccrs_final()
     ccrs_col = f"ccrs_{gcm}"
@@ -301,9 +329,9 @@ def plot_figure5_ccrs_asset_level_pes(
     for ax in axes:
         add_compass_rose(ax)
 
-    stem = f"figure5_ccrs_asset_level_pes_{gcm}"
-    out_path = save_figure(fig, OUTPUT_MAPS / "combined" / f"{stem}.png")
-    logger.info("%s saved to %s", stem, out_path)
+    stem = f"ccrs_asset_level_pes_{gcm}"
+    out_path = save_figure(fig, _secondary_dir() / f"{stem}.png")
+    logger.info("%s (secondary) saved to %s", stem, out_path)
     return {"combined": out_path}
 
 
@@ -346,7 +374,7 @@ def plot_ccrs_scenario_delta_map(
     stem = f"ccrs_scenario_delta_{gcm}_{scenario_a}_vs_{scenario_b}"
 
     if combined:
-        # 2026-09-05 review: match ccrs_overview's space usage -- bigger,
+        # 2026-09-05 review: match the CCRS overview map's space usage -- bigger,
         # closer-together map panels. The colorbar previously ate a large
         # vertical band below the maps (shrink=0.5, aspect=30, a short/thick
         # bar) for no reason tied to content; made thin and elongated
