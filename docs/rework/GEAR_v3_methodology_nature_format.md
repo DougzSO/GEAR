@@ -120,6 +120,18 @@ conditional on the correlation gate (Section 5). Extreme Wind is not
 part of a single shared hazard core; it is assigned per bucket per the
 mechanistic rationale in Section 3.
 
+**Declared limitation, not merely "data unavailable":** Extreme Wind is
+the one hazard in this checklist sourced from historical reanalysis
+(ERA5, 1991-2020) rather than a CMIP6 SSP-scenario projection under the
+shared mid-century framing every other row uses. A CMIP6 substitution
+was investigated and rejected on two independent grounds (Section 3.1):
+CMIP6's only daily-resolution wind variable (`sfcWind`, daily-mean
+sustained wind -- no daily-maximum variant exists on the catalogue) is
+not the same physical quantity as the ERA5 instantaneous gust this
+hazard's threshold design already uses, and no CMIP6 gust product exists
+under any name. See Section 3.1 for the full finding and Section 9 for
+the resulting cross-hazard comparability consequence.
+
 ## 3. Technology-specific applicable hazard subsets
 
 Each bucket is evaluated only against hazards with a declared physical
@@ -162,6 +174,35 @@ expected to converge on one: Wind keeps the IEC cut-out speed as Tier 1;
 Solar's Extreme Wind is Tier 3, ERA5 gust percentile-based, final (see
 Section 4).
 
+**ERA5 source retained, CMIP6 substitution investigated and rejected
+(declared limitation, resolved).** A CMIP6-based Extreme Wind (aligning
+this hazard to the same 2041-2070/3-SSP projection framing as every other
+row in Section 2) was investigated on the author's request and rejected
+on two independent grounds, either sufficient alone: (1) the CDS
+`projections-cmip6` catalogue's only daily-resolution wind variable is
+`sfcWind` (daily-MEAN near-surface wind speed) -- confirmed available for
+both configured GCMs across all three SSPs, full 2041-2070 coverage, but
+no daily-maximum variant exists under any model/scenario, and no gust
+variable exists on this catalogue at all; (2) `sfcWind` and ERA5's
+`instantaneous_10m_wind_gust` are not the same physical quantity -- a
+daily mean vs. an instantaneous short-duration peak -- and converting one
+to the other requires an explicit gust-factor parameterization
+(~1.4-1.7 in open terrain per wind-engineering codes, but conditional on
+atmospheric stability, terrain roughness, and gust-generation mechanism,
+not a universal constant) that the Wind/Solar threshold design above does
+not implement. Peer-reviewed literature on GCM-resolution wind-extreme
+underestimation (Shen et al. 2022; a direct comparison at ~0.75 deg
+resolution finding an observed-maximum gust deficit of ~7 m/s; IPCC AR6
+WGI Chapter 11's "low confidence" attribution for severe wind to
+model-resolution limits) corroborates that a converted proxy would likely
+bias risk downward in a known direction, but is supporting evidence, not
+the primary rejection ground. ERA5 (1991-2020 historical baseline) is
+therefore retained as Extreme Wind's sole source; the resulting
+scenario-invariance of this one hazard is a declared limitation, carried
+into Section 9's comparability discussion. Full finding:
+`docs/DECISIONS.md`, "GEAR v3 Phase 2.3 follow-up: ERA5 temporal
+asymmetry retained (CMIP6 substitution investigated and rejected)".
+
 ### 3.2 Cooling technology heterogeneity within Thermal (resolved)
 
 Applicability decides which hazards apply to a bucket, not the
@@ -195,6 +236,13 @@ differing native resolution or reference period.
 | Extreme Precipitation | Thermal, Solar, Hydro | none defensible: HAZUS-MH uses continuous depth-damage curves, not categorical depth cutoffs, and is structurally incompatible with this pipeline's CMIP6 `pr` input (no precipitation-to-inundation-depth conversion step exists); verified against the primary FEMA Hazus Flood Model Technical Manual, rejected as Tier 1 | Percentiles P50/P75/P90/P95 of daily pr extremes (same method as Extreme Heat) |
 | Extreme Wind | Wind | Turbine cut-out speed (~25 m/s / 90 km/h, IEC design standard) | Percentiles P75/P90/P95/P99 of ERA5 gust |
 | Extreme Wind | Solar | none defensible: ASCE 7 design wind speed is inherently site-specific (location, Risk Category, Exposure Category), not a universal constant; manufacturer survival ratings vary by product generation (observed range ~51-60+ m/s across two data points from one manufacturer); verified not comparable in rigor to the Wind-bucket turbine cut-out speed | Percentiles P75/P90/P95/P99 of ERA5 gust, final method, not a contingency pending a Tier 1 value |
+
+Declared limitation, both Wind and Solar rows above: Extreme Wind's ERA5
+gust source is historical reanalysis (1991-2020), not a CMIP6 SSP
+projection like every other hazard in this table -- a CMIP6 substitution
+was investigated and rejected (Section 3.1) because CMIP6's only
+daily-resolution wind variable is a daily-mean sustained-wind quantity,
+not a gust product, and no daily-maximum variant exists either.
 
 Wildfire's Tier 1 EFFIS 6-class table and its FIRMS-as-validator argument
 are deferred, not deleted -- see Section 10.1.
@@ -422,6 +470,15 @@ following are the only valid comparisons.
   pooled FROZEN_BOUNDS normalization (Section 4.2); a country-specific
   normalization would invalidate the cross-national comparability claim
   above and is not used anywhere in this framework.
+- **Scenario comparability, Extreme Wind excepted, declared not silent**:
+  every hazard's `Risk_i,h`/RiskBand is computed per SSP scenario except
+  Extreme Wind, whose ERA5 source (Section 2, Section 3.1) has no SSP
+  axis -- a CMIP6 substitution was investigated and rejected on physical-
+  quantity-incompatibility grounds, not merely deferred. Extreme Wind's
+  RiskBand is therefore the same value across the ssp126/ssp370/ssp585
+  columns of any comparison table or figure; this must be stated wherever
+  such a table appears, not left to be discovered by a reader comparing
+  columns that happen not to move.
 
 ## 10. Declared scope boundaries (closed, not reopened)
 

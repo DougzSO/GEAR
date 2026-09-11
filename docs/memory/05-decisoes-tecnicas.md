@@ -1677,3 +1677,63 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   aplicar a recomendação (explicitamente, incluindo o caso Extreme Heat,
   sem tratamento especial). Inclusão de `sv`/`iv`/`precip`/`wind` no
   conjunto de hazard aplicável por bucket continua em aberto, Fase 3.1.
+
+## 32. GEAR v3 Fase 2.3 (follow-up) — assimetria temporal do ERA5 mantida, substituição por CMIP6 investigada e rejeitada (2026-09-11)
+
+- **Contexto:** o fechamento da Fase 2.3 (item 30) deixou em aberto, sem
+  decidir, a assimetria entre o ERA5 histórico (1991-2020, sem eixo SSP)
+  usado por Extreme Wind e a projeção CMIP6 2041-2070/3 SSPs usada por
+  todo o resto do framework v3. Pedido do autor: investigar se dá para
+  substituir por CMIP6 e fechar a assimetria — não implementar nada, só
+  documentar a decisão. Tarefa documentação-only, nenhum código tocado.
+- **Decisão:** ERA5 é mantido como fonte. Assimetria documentada como
+  limitação declarada (Seções 2, 3.1, 4, 9 de
+  `docs/rework/GEAR_v3_methodology_nature_format.md`), não escondida.
+  `extreme_wind_processor.WIND_TEMPORAL_WINDOW_IS_PROJECTED` continua
+  `False`.
+- **Dois motivos independentes, qualquer um bastaria sozinho:**
+  1. Catálogo (`analysis/wind_catalog_check.py`/`.md`, reverificação
+     dedicada): `near_surface_wind_speed` (sfcWind, **média diária**)
+     confirmado disponível para gfdl_esm4/miroc6, 3 SSPs, 2041-2070
+     completo — mas **não existe variante de máximo diário** (sfcWindmax)
+     no catálogo, ao contrário de tasmax (que já usa a variante de
+     máximo); e `instantaneous_10m_wind_gust` (a grandeza ERA5 já usada)
+     **não existe no catálogo CMIP6** sob nenhum nome.
+  2. Incompatibilidade de grandeza física (achado estrutural, não
+     questão de tier de dado): sfcWind é média diária de vento
+     sustentado; gust ERA5 é pico instantâneo de curtíssima duração —
+     grandezas diferentes, sem conversão trivial. Precisaria de um
+     "gust factor" explícito (~1.4-1.7 em terreno aberto por normas de
+     engenharia de vento, mas condicional a estabilidade atmosférica,
+     rugosidade do terreno e mecanismo de geração da rajada — não
+     constante universal), que o desenho já fechado da Fase 2.3
+     (`classify_extreme_wind`, corte IEC ~25 m/s para Wind, percentis
+     ERA5 para Solar) não implementa nem foi desenhado para receber.
+  3. Literatura Tier 2 (revisada por pares, não fonte primária de
+     limiar — corrobora o motivo 2, não é motivo independente por si só):
+     Shen et al. 2022 e Morim et al. 2020 documentam viés de vento médio
+     de GCMs CMIP6/CMIP5 contra reanálise; um estudo de comparação direta
+     (~0.75° de resolução) encontrou déficit de ~7 m/s no gust máximo
+     observado; IPCC AR6 WGI Capítulo 11 atribui "confiança baixa" à
+     representação de vento severo por limitação de resolução/
+     parametrização. Sinaliza que uma conversão via CMIP6 provavelmente
+     enviesaria o risco de vento extremo **para baixo**, numa direção
+     conhecida, não só ruído — mas é corroboração, não o motivo decisivo.
+- **Consequência prática, sinalizada:** RiskBand de Extreme Wind não
+  varia por cenário SSP como todo o resto do framework — declarado
+  explicitamente na discussão de comparabilidade (Seção 9 da
+  metodologia), não descoberto silenciosamente por quem comparar colunas
+  de cenário numa tabela/figura.
+- **ARCHITECTURE.md:** verificado — não tem nenhuma seção sobre Extreme
+  Wind (documento é da era pré-v3-rework, Seção 3 cobre só estresse
+  hídrico/calor). Regra "não fabricar seção que não existe" aplicada —
+  nenhuma edição feita ali.
+- **Arquivos:** `docs/DECISIONS.md`,
+  `docs/rework/GEAR_v3_methodology_nature_format.md` (Seções 2, 3.1, 4,
+  9), `analysis/wind_catalog_check.py`/`.md` (investigação, não
+  versionados). Nenhum arquivo em `src/`/`tests/` tocado.
+- **Status:** Ativa. Fecha o item aberto do período-base ERA5 da Fase
+  2.3 como "mantido, limitação declarada" — não como pendência. Só
+  reabre se o catálogo CDS um dia oferecer gust ou máximo diário de
+  vento no CMIP6 (motivo 1); o motivo 2 (incompatibilidade de grandeza)
+  não seria resolvido por isso sozinho.

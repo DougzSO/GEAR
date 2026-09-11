@@ -1336,3 +1336,85 @@ stated per entry per the standing rule.
   in rigor to the turbine cut-out speed already used for the Wind bucket.
 - Status: active. Closes v3 methodology Section 3.1/Section 4's Solar
   Extreme Wind entry.
+
+## [2026-09-11] GEAR v3 Phase 2.3 follow-up: ERA5 temporal asymmetry retained (CMIP6 substitution investigated and rejected)
+- Decision: Extreme Wind keeps ERA5 (`instantaneous_10m_wind_gust`,
+  1991-2020 baseline) as its data source. The temporal/scenario asymmetry
+  flagged open at Phase 2.3 closure (ERA5 historical reanalysis, no SSP
+  axis, vs. every other v3 hazard's explicit CMIP6 2041-2070 projection
+  under 3 SSPs) is retained and documented as a declared limitation, not
+  resolved by switching source. No CMIP6 substitution is implemented.
+  `extreme_wind_processor.WIND_TEMPORAL_WINDOW_IS_PROJECTED` stays `False`.
+  No code changed by this entry -- documentation only.
+- Reason: two independent findings, either one alone sufficient to reject
+  a CMIP6 substitution -- investigated, not assumed.
+  1. **Catalogue finding (Tier: primary-source, direct CDS catalogue
+     query, `analysis/wind_catalog_check.py`/`.md`).** `near_surface_wind_speed`
+     (sfcWind, daily MEAN near-surface wind speed) is confirmed available
+     on the CDS `projections-cmip6` daily catalogue for both configured
+     GCMs (gfdl_esm4, miroc6), all three active scenarios
+     (ssp126/ssp370/ssp585), full 2041-2070 coverage -- re-verifying, at
+     daily resolution and against this pipeline's exact tasmax/pr
+     grid/download pattern, the same finding already recorded during the
+     Phase 2.2 FWI investigation (`analysis/fwi_catalog_check.md`).
+     However: no `daily_maximum_near_surface_wind_speed` (sfcWindmax)
+     variant exists on the catalogue under any model/scenario -- unlike
+     tasmax, where this pipeline already uses the daily-MAXIMUM CDS
+     variable (`daily_maximum_near_surface_air_temperature`) specifically
+     because a daily mean would understate the extreme. No such maximum
+     variant exists for wind; only the daily mean is available. Separately,
+     `instantaneous_10m_wind_gust` (the ERA5 quantity Phase 2.3 already
+     uses) does not exist on the CMIP6 `projections-cmip6` catalogue under
+     any name.
+  2. **Physical-quantity incompatibility (structural/definitional finding,
+     not a data-tier question).** CMIP6 `sfcWind` is a daily-mean
+     sustained wind speed; ERA5 `instantaneous_10m_wind_gust` is an
+     instantaneous short-duration peak superimposed on the mean flow --
+     these are not the same physical quantity, and no trivial
+     normalization bridges them. Converting one to the other requires an
+     explicit gust-factor parameterization (wind-engineering codes give
+     ~1.4-1.7 in open terrain, but the ratio is conditional on atmospheric
+     stability, terrain roughness, and gust-generation mechanism --
+     convective vs. synoptic -- not a universal constant), which the
+     already-closed Phase 2.3 dispatcher design (`classify_extreme_wind`,
+     IEC ~25 m/s cut-out for Wind, ERA5 gust percentiles P75/P90/P95/P99
+     for Solar) does not implement and was not designed around. Applying
+     those same thresholds to a daily-mean CMIP6 series without an
+     explicit gust-estimation step would silently compare two different
+     physical quantities under one threshold label.
+  3. **Supporting, not decisive, Tier 2 literature on GCM-resolution
+     underestimation of wind extremes** (peer-reviewed, not a primary
+     threshold source; cited as directional corroboration of finding 2,
+     not as an independent third ground): Shen et al. 2022 (*Ann. NY Acad.
+     Sci.*, 22 CMIP6 models) and Morim et al. 2020 document non-trivial
+     mean-wind bias against reanalysis (-1 to +1 m/s CMIP6 vs. ERA-Interim;
+     -2 to +1.5 m/s CMIP5); a direct, quantified comparison (Copernicus/
+     NHESS 2024, convection-permitting vs. ERA-Interim at ~0.75 deg -- a
+     resolution comparable to or finer than the GCMs used here) found
+     ERA-Interim significantly underestimates gust percentiles above P15,
+     with an observed-maximum deficit of ~7 m/s, because severe convective
+     gusts (downdrafts, mesoscale organized systems) operate at
+     spatial/temporal scales coarse-resolution models parameterize rather
+     than resolve; IPCC AR6 WGI Chapter 11 attributes "low confidence" to
+     severe-wind trend assessment in most regions specifically because
+     models "often do not have sufficient resolution or accurate
+     parametrization." This means a converted CMIP6-based gust proxy would
+     likely bias Extreme Wind risk downward in a known direction, not
+     merely add noise -- but this point is corroborating, not the primary
+     rejection ground; findings 1 and 2 already independently reject the
+     substitution before this literature is invoked.
+- Practical consequence, flagged for the manuscript: Extreme Wind's
+  RiskBand does not vary by SSP scenario the way every other hazard's
+  does (ERA5 has no SSP axis) -- a declared asymmetry in Section 9's
+  cross-hazard comparability discussion, not a silent gap.
+- References: `analysis/wind_catalog_check.py`/`.md`,
+  `docs/rework/GEAR_v3_methodology_nature_format.md` Sections 2, 3.1, 4,
+  9, `docs/memory/05-decisoes-tecnicas.md` item 32,
+  `src/downloaders/era5_wind_downloader.py`,
+  `src/processors/extreme_wind_processor.py` (unchanged by this entry).
+- Status: active. Closes the open ERA5-baseline-period item flagged at
+  Phase 2.3 closure -- resolved as "retained, declared limitation," not
+  reopened pending a future data source. Revisit only if a CMIP6 daily
+  gust or daily-maximum wind product is added to the catalogue in the
+  future (finding 1's absence, not finding 2's physical-quantity mismatch,
+  is the part any future catalogue addition could change).

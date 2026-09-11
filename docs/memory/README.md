@@ -151,3 +151,14 @@ função pura) fora dos arquivos já quebrados pela Fase 1 (inclui
 `test_visualization.py`, quebrado desde a Fase 1 por importar o
 `ccrs_calculator` deletado — não tocado aqui). Ver item 31 de
 [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).
+
+2026-09-11: Follow-up da Fase 2.3 fechado (documentação apenas) —
+investigada e rejeitada uma possível substituição do ERA5 por CMIP6
+`sfcWind` para fechar a assimetria temporal/de cenário de Extreme Wind:
+catálogo confirma `sfcWind` (média diária) disponível para os 2 GCMs × 3
+SSPs × 2041-2070, mas sem variante de máximo diário nem gust; e `sfcWind`
+(média) não é a mesma grandeza física do gust ERA5 já usado pelo desenho
+fechado da Fase 2.3 (conversão exigiria gust-factor não trivial). ERA5
+mantido, assimetria declarada como limitação (não escondida) nas Seções
+2/3.1/4/9 da metodologia. Nenhum código alterado. Ver item 32 de
+[05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).
