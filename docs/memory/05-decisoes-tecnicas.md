@@ -1573,3 +1573,107 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
 - **Status:** Ativa. Camada de raster (bruta + normalizada) e utilitário de
   classificação parametrizado apenas. RiskBand/inclusão em tabela aplicável
   (Fase 3) e o período-base ERA5 (acima) ficam em aberto.
+
+## 31. GEAR v3 Fase 2.4 — módulo de normalização isolado (FROZEN_BOUNDS, checagem de normalidade/assimetria, tabela de origem) (2026-09-11)
+
+- **Contexto:** Fase 2.4 pedia um módulo próprio (regra de modularidade)
+  para a lógica de `FROZEN_BOUNDS`, a checagem de normalidade/assimetria
+  (Seção 4.2 da metodologia) que escolhe entre Min-Max direto, log-transform
+  e o candidato `f(x) = -ln(1-x)`, e a tabela de origem estruturada dos
+  bounds (Seção 4.3) — rodando de forma independente e uniforme para cada
+  hazard, incluindo os candidatos novos das Fases 2.1/2.3 (`precip`,
+  `wind`) e os termos `sv`/`iv` já flagados como independentes na Fase 1
+  (nunca fundidos de volta em Water Stress).
+- **Ponto de parada explícito, não decidido sozinho:** a descrição da tarefa
+  citava `f(x) = -ln(1-x)` como decisão já confirmada substituindo o
+  log-transform antigo, mas nem `docs/rework/GEAR_v3_methodology_nature_
+  format.md` Seção 4.2 nem `docs/DECISIONS.md`/`docs/memory/` tinham
+  qualquer registro dessa terceira opção — a metodologia só documentava a
+  escolha binária (normal → Min-Max direto; assimétrico → log-transform).
+  Perguntado ao autor antes de implementar (regra CLAUDE.md Seção 3: decisão
+  metodológica não registrada é ponto de parada, não algo que o código
+  resolve sozinho). Confirmado pelo autor: seleção em 3 vias por
+  normalidade/assimetria, com `-ln(1-x)` substituindo `log1p` **em todo
+  lugar**, não só para Extreme Heat — o log1p comprime a cauda superior de
+  uma variável assimétrica à direita (justo onde mais precisão é necessária
+  para separar uma planta fisicamente extrema de uma moderada); `-ln(1-x)`
+  faz o oposto, expande essa cauda (`-> infinito` quando `x -> 1`).
+- **Decisão (módulo novo `src/index/normalization.py`):**
+  - **Não modifica `risk_calculator.py`.** Importa dele a infraestrutura já
+    verificada (`load_plants`, `sample_raster`, `raster_path`, o pareamento
+    `WATER_TO_HEAT`, `COUNTRIES`, `BUCKETS`) e o conjunto de 5 termos que já
+    computa (`HAZARD_TERMS`) — não recomputa nem sobrescreve o
+    `FROZEN_BOUNDS`/`transform_term` existentes ali, que continuam
+    log1p-baseados até a Fase 3.3 decidir aplicar a recomendação. Produz uma
+    recomendação separada (transform + bounds + tabela de origem), a ser
+    aplicada pela Fase 3.3, não por este módulo.
+  - **Conjunto de candidatos ampliado, rodado uniformemente:**
+    `NORMALIZATION_CANDIDATE_TERMS = risk_calculator.HAZARD_TERMS + ("precip",
+    "wind")` = `ws, heat, sv, iv, spei, precip, wind`. `precip` reaproveita
+    `extreme_precipitation_processor.raw_raster_path` (dependente de
+    GCM/cenário, como heat/spei); `wind` reaproveita
+    `extreme_wind_processor.raw_raster_path` (só país, sem eixo de
+    modelo/cenário — pooled uma vez, como os termos "flat" da água).
+    Wildfire está ausente por construção — hazard adiado (Fase 2.2), não
+    parte de nenhum conjunto. `sv`/`iv` passam pela mesma checagem que
+    qualquer outro termo (a atribuição de Min-Max linear que carregavam
+    desde o `ccrs_calculator.py` retirado nunca foi resultado de uma
+    checagem de normalidade — este módulo reavalia do zero).
+  - **Checagem de normalidade/assimetria (`normality_check`):** critério
+    decisivo é a assimetria de Fisher-Pearson (`scipy.stats.skew`), corte
+    `|skew| > 0.5` (convenção Bulmer 1979, "aproximadamente simétrico"),
+    engenharia declarada, não valor de literatura específico da variável.
+    Shapiro-Wilk (`scipy.stats.shapiro`, subamostrado deterministicamente
+    acima de 5000 pontos) é computado e reportado na tabela de origem só
+    como diagnóstico — não decide, porque amostras de milhares de pontos de
+    dado geofísico real rejeitam normalidade exata quase sempre, mesmo com
+    assimetria leve, tornando o teste pouco informativo como portão binário.
+  - **Seleção (`select_transform`):** `neg_log_minmax` se assimétrico,
+    `direct_minmax` caso contrário — `log1p_minmax` nunca é retornado (só
+    existe como `transform_log1p_minmax`, mantido apenas para a tabela de
+    origem mostrar o transform pré-redesign de `ws`/`heat`/`spei` como
+    registro histórico).
+  - **Aritmética de `transform_neg_log_minmax`:** escala preliminar
+    `x_scaled = (raw - lo) / (padded_hi - lo)`, com
+    `padded_hi = hi + UPPER_TAIL_PADDING_FRACTION * (hi - lo)`,
+    `UPPER_TAIL_PADDING_FRACTION = 0.05` (parâmetro de engenharia declarado,
+    não citado de fonte alguma — evita que o máximo do pool caia
+    exatamente na singularidade `x=1` de `-ln(1-x)`); depois
+    `transformed = -ln(1 - x_scaled)`, reescalado por
+    `ln(1 + 1/pad)` (fórmula fechada do valor de `transformed` no máximo do
+    pool, independente de `lo`/`hi`) para cair em `[0, 1]`.
+  - **Tabela de origem (`build_origin_table`):** uma linha por termo (por
+    GCM quando o termo depende de GCM), colunas `hazard_term`,
+    `hazard_label`, `gcm`, `origin_source`, `data_tier`, `lower_bound_raw`,
+    `upper_bound_raw`, `pool_n`, `skewness`, `shapiro_stat`, `shapiro_p`,
+    `shapiro_subsampled`, `is_skewed`, `transform_selected`,
+    `transform_note`. `data_tier` é uniforme ("empirical, pooled sample
+    min/max, not a literature constant") — tier do BOUND em si, distinto do
+    tier do limiar de RiskBand (Fase 3.2), que é outra tabela.
+- **CLI:** `python -m src.index.normalization` escreve
+  `data/outputs/tables/normalization_origin_table.csv`.
+- **Testes:** `tests/test_normalization.py` (23 testes, só função pura — sem
+  I/O de raster/CSV): conjunto de candidatos (inclui `precip`/`wind`,
+  exclui Wildfire), `wind` como termo flat, checagem de normalidade
+  (amostra simétrica não flagada, amostra exponencial flagada, Shapiro
+  reportado mas não decide, subamostragem determinística acima do teto),
+  `select_transform` nunca retorna `log1p_minmax`, aritmética de
+  `transform_neg_log_minmax` (extremos 0/1, monotonicidade, nunca sai de
+  `[0,1]` para valor fora do pool, domínio degenerado -> zeros, cauda
+  superior mais expandida que o log1p retirado), `apply_transform`
+  despachando por nome e rejeitando nome desconhecido, schema da tabela de
+  origem e consistência `transform_selected` × `is_skewed`, e uma
+  confirmação de que `risk_calculator.HAZARD_TERMS`/`FROZEN_BOUNDS`
+  permanecem intocados. Suite completa: 236 testes passando fora dos 5
+  arquivos quebrados pela Fase 1 (`risk_bands.py`, `monte_carlo.py`,
+  `emdat_validation.py`, `main.py`, `test_visualization.py` — este último
+  já quebrado antes desta tarefa, importa o `ccrs_calculator` deletado na
+  Fase 1; não tocado aqui, fora de escopo da Fase 2.4).
+- **Arquivos:** `src/index/normalization.py` (novo),
+  `tests/test_normalization.py` (novo), `docs/DECISIONS.md`.
+- **Status:** Ativa. Recomendação (transform + bounds + tabela de origem)
+  produzida, não aplicada — `risk_calculator.py` continua com seu
+  `FROZEN_BOUNDS`/`transform_term` log1p-baseados até a Fase 3.3 decidir
+  aplicar a recomendação (explicitamente, incluindo o caso Extreme Heat,
+  sem tratamento especial). Inclusão de `sv`/`iv`/`precip`/`wind` no
+  conjunto de hazard aplicável por bucket continua em aberto, Fase 3.1.

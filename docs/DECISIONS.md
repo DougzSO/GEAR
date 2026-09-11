@@ -1244,6 +1244,81 @@ stated per entry per the standing rule.
   (Phase 3.1/3.2) are open; the ERA5 baseline-period choice above is open
   pending author confirmation.
 
+## [2026-09-11] GEAR v3 Phase 2.4: Normalization module, neg-log transform confirmed to replace log1p (Methods Section 4.2 closed)
+- Decision: `src/index/normalization.py` (new) is an isolated module
+  (standing modularity rule) implementing the `FROZEN_BOUNDS` origin logic,
+  the per-hazard normality/skewness check, and the structured bounds origin
+  table (Methods Sections 4.2/4.3). It imports `risk_calculator.py`'s
+  plant-loading/raster-sampling infrastructure (`load_plants`,
+  `sample_raster`, `raster_path`, `WATER_TO_HEAT`, `COUNTRIES`, `BUCKETS`)
+  unchanged and does **not** modify `risk_calculator.FROZEN_BOUNDS` or
+  `transform_term` -- it produces an independent recommendation for Phase
+  3.3 to apply later. Runs the identical procedure over
+  `NORMALIZATION_CANDIDATE_TERMS = risk_calculator.HAZARD_TERMS +
+  ("precip", "wind")` = `ws, heat, sv, iv, spei, precip, wind` -- the two
+  Phase 2.1/2.3 additions and the Phase-1-flagged `sv`/`iv` terms get no
+  special-casing, same check as every other term. Wildfire is absent by
+  construction (deferred, Phase 2.2), not carried as a candidate anywhere.
+- **Author-confirmed methodology extension, not assumed**: the task
+  description named a third transform candidate, `f(x) = -ln(1-x)`,
+  replacing the retired log-transform to fix tail compression -- but
+  neither `docs/rework/GEAR_v3_methodology_nature_format.md` Section 4.2
+  nor any prior `docs/DECISIONS.md`/`docs/memory/` entry documented this
+  third option or a replacement decision; the methodology draft only
+  described the binary choice (approximately-normal -> direct Min-Max;
+  long-tailed -> log-transform). Per CLAUDE.md Section 3 (undecided
+  methodology is a stop point, not something code resolves alone), this was
+  put to the author before implementation. Confirmed: selection is a
+  uniform per-hazard normality/skewness check across three candidates, and
+  `-ln(1-x)` replaces `log1p` as the skewed-variable transform everywhere,
+  not only for Extreme Heat -- log1p compresses a right-skewed variable's
+  upper tail (large values pushed together near 1.0, exactly where a
+  physically extreme plant should be most separated from a moderate one);
+  `-ln(1-x)` expands it instead (`-> infinity` as `x -> 1`).
+- Mechanics: `normality_check` uses Fisher-Pearson skewness
+  (`scipy.stats.skew`) as the DECIDING criterion, `|skew| > 0.5` (Bulmer,
+  1979, *Principles of Statistics*, "fairly symmetrical" convention;
+  author-declared engineering threshold, not a hydrometeorology-specific
+  literature value). Shapiro-Wilk (`scipy.stats.shapiro`, deterministically
+  subsampled above 5000 points) is computed and reported in the origin
+  table as a diagnostic only -- it does not override the skewness verdict,
+  because at the sample sizes here (thousands of plant x scenario rows) it
+  rejects exact normality for nearly any real geophysical sample, including
+  mildly skewed ones, making it uninformative as a binary gate.
+  `select_transform` returns `neg_log_minmax` if skewed, else
+  `direct_minmax`; `log1p_minmax` (`transform_log1p_minmax`) is retired --
+  kept only so the origin table can show the pre-redesign transform
+  `ws`/`heat`/`spei` used in `risk_calculator.py`, never returned by
+  selection.
+- `transform_neg_log_minmax` arithmetic: preliminary scale `x_scaled =
+  (raw - lo) / (padded_hi - lo)`, `padded_hi = hi +
+  UPPER_TAIL_PADDING_FRACTION * (hi - lo)`, `UPPER_TAIL_PADDING_FRACTION =
+  0.05` (author-declared engineering parameter, no cited source -- keeps
+  the pooled maximum strictly below the `x=1` singularity of `-ln(1-x)`);
+  then `transformed = -ln(1 - x_scaled)`, rescaled onto `[0,1]` by its
+  closed-form maximum `ln(1 + 1/pad)` (independent of `lo`/`hi`).
+- Origin table (`build_origin_table`): one row per term (per GCM for
+  GCM-dependent terms `heat`/`spei`/`precip`), columns `hazard_term`,
+  `hazard_label`, `gcm`, `origin_source`, `data_tier`, `lower_bound_raw`,
+  `upper_bound_raw`, `pool_n`, `skewness`, `shapiro_stat`, `shapiro_p`,
+  `shapiro_subsampled`, `is_skewed`, `transform_selected`,
+  `transform_note`. `data_tier` is uniform ("empirical, pooled sample
+  min/max, not a literature constant") -- the tier of the bound itself,
+  distinct from the RiskBand threshold tier (Phase 3.2), a separate table.
+- Reason: closes Methods Section 4.2/4.3's normalization-transform-choice
+  methodology, as an isolated module per the standing modularity rule,
+  without pre-empting Phase 3.3's decision to actually apply the
+  recommendation (including to Extreme Heat specifically).
+- References: `src/index/normalization.py`, `tests/test_normalization.py`
+  (23 tests, pure-function only), `docs/memory/05-decisoes-tecnicas.md`
+  item 31, `docs/rework/GEAR_v3_methodology_nature_format.md` Section 4.2/
+  4.3, `docs/rework/GEAR_v3_work_plan.md` Phase 2.4.
+- Status: active. Produces a recommendation only -- `risk_calculator.py`'s
+  own `FROZEN_BOUNDS`/`transform_term` are unchanged and remain log1p-based
+  until Phase 3.3 applies this module's output. Applicable-hazard-set
+  inclusion for `sv`/`iv`/`precip`/`wind` (Phase 3.1) is unaffected, still
+  open.
+
 ## [2026-09-11] Solar Extreme Wind: ERA5 gust percentile is final, not contingency (v3 Phase 0.4)
 - Decision: GEAR v3's Solar bucket Extreme Wind hazard uses the ERA5 gust
   percentile method (P75/P90/P95/P99) as its Tier 3 basis, final -- not a

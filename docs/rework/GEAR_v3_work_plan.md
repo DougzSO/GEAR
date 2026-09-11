@@ -106,11 +106,25 @@ applicable-hazard tables in Phase 3.
      at 10m/100m), same unified grid infrastructure. Built to serve two
      downstream consumers (Wind bucket, Solar bucket) with potentially
      different thresholds per Phase 0 item 4, not hardcoded to one.
-2.4. Normalization module (FROZEN_BOUNDS): implemented as its own
-     isolated module per the standing modularity rule, including the
-     normality/skewness check (Methods Section 4.2) that selects
-     log-transform vs. direct Min-Max per hazard, and the structured
-     origin-table output (Methods Section 4.3).
+2.4. **CLOSED (2026-09-11)**: `src/index/normalization.py` -- isolated
+     module (imports `risk_calculator.py`'s plant/raster infrastructure,
+     does not modify it) running the normality/skewness check (Fisher-
+     Pearson skewness, decisive; Shapiro-Wilk reported as a diagnostic
+     only) uniformly over `ws, heat, sv, iv, spei, precip, wind`
+     (Wildfire absent by construction). Selection is now 3-way, not the
+     draft's binary choice: author-confirmed extension (asked before
+     implementing, not assumed) that `f(x) = -ln(1-x)` REPLACES the
+     log-transform for skewed hazards everywhere, not only Extreme
+     Heat -- log1p compresses a right-skewed variable's upper tail,
+     `-ln(1-x)` expands it instead. Produces a recommendation
+     (bounds + transform + structured origin table, Section 4.3) for
+     Phase 3.3 to apply; `risk_calculator.FROZEN_BOUNDS`/`transform_term`
+     are untouched and stay log1p-based until then. See
+     `docs/DECISIONS.md`, "GEAR v3 Phase 2.4: Normalization module,
+     neg-log transform confirmed to replace log1p (Methods Section 4.2
+     closed)"; engineering detail in
+     `docs/memory/05-decisoes-tecnicas.md` item 31. 23 new tests (pure
+     function only), 236/236 passing outside the Phase-1-broken modules.
 2.5. Correlation gate module, implemented as its own class per the
      standing modularity rule: spatial-harmonization step (upscale to
      coarser native resolution or aggregate to zonal/basin statistics)

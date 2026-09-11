@@ -135,3 +135,19 @@ esperada e documentada, não mascarada. 189 testes passando fora desses 4
 arquivos. `sv`/`iv` (variabilidade da água) sinalizados como hazard em
 aberto para a Fase 3. Ver item 27 de
 [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).
+
+2026-09-11: Fase 2.4 do plano GEAR v3 fechada — novo
+`src/index/normalization.py`, módulo isolado (regra de modularidade) que
+roda a checagem de normalidade/assimetria e a seleção de transform
+(Min-Max direto vs. o novo `f(x) = -ln(1-x)`, que substitui o log-transform
+antigo — confirmado pelo autor após consulta, não estava na metodologia
+nem em nenhum registro anterior) uniformemente para `ws, heat, sv, iv,
+spei, precip, wind` (Wildfire ausente por construção), e produz a tabela
+de origem estruturada dos bounds (Seção 4.3). Não modifica
+`risk_calculator.py` — só importa sua infraestrutura de amostragem;
+`FROZEN_BOUNDS`/`transform_term` de lá continuam log1p-baseados até a Fase
+3.3 decidir aplicar a recomendação. 236 testes passando (23 novos, só
+função pura) fora dos arquivos já quebrados pela Fase 1 (inclui
+`test_visualization.py`, quebrado desde a Fase 1 por importar o
+`ccrs_calculator` deletado — não tocado aqui). Ver item 31 de
+[05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).

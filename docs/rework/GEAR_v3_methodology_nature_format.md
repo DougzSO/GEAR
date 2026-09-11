@@ -210,19 +210,38 @@ comparability entirely.
 
 Not every hazard variable is well suited to the same transform. Before
 FROZEN_BOUNDS is finalized for a given hazard, a normality/skewness
-check (e.g., Shapiro-Wilk or a skewness statistic) is run on that
-hazard's pooled raster distribution. Approximately normal variables
-(e.g., temperature-derived hazards) use direct Min-Max; long-tailed
-variables (e.g., precipitation extremes, drought duration) use a
-log-transform before Min-Max, consistent with standard practice for
-skewed hydrometeorological variables. The check result and the
-resulting transform choice are recorded per hazard in the origin table
-(Section 4.3), not assumed silently.
+check is run on that hazard's pooled raster distribution: the
+Fisher-Pearson skewness statistic (`|skew| > 0.5`, Bulmer 1979's
+"fairly symmetrical" convention) is the deciding criterion; Shapiro-Wilk
+is computed and reported alongside as a diagnostic only, since at the
+sample sizes used here (thousands of plant x scenario rows) it rejects
+exact normality for nearly any real geophysical sample -- including
+mildly skewed ones -- and is not informative as a binary gate.
+Approximately normal variables (e.g., temperature-derived hazards) use
+direct Min-Max.
+
+Long-tailed variables (e.g., precipitation extremes, drought duration)
+use `f(x) = -ln(1-x)` (applied to a preliminary, padded Min-Max scaling
+of the raw value, then Min-Maxed again onto [0,1]), **not** a plain
+log-transform. This replaces an earlier log1p-based design: log1p
+compresses the upper tail of a right-skewed variable (large values are
+pushed together near 1.0, exactly where a physically extreme plant
+should be most separated from a moderate one), which is the opposite of
+what a hazard normalization should do; `-ln(1-x)` expands that tail
+instead (`-> infinity` as `x -> 1`). The check result and the resulting
+transform choice are recorded per hazard in the origin table (Section
+4.3), not assumed silently. Implemented as its own isolated module,
+`src/index/normalization.py` (`docs/DECISIONS.md`, "GEAR v3 Phase 2.4:
+Normalization module, neg-log transform confirmed to replace log1p"),
+which produces this recommendation without yet altering the currently
+deployed `FROZEN_BOUNDS`/transform in `src/index/risk_calculator.py`.
 
 The prior log-transform tail-compression concern for Extreme Heat
 (Section 4, threshold-based scaling vs. log test on a heat-day
 subsample) is retained and evaluated using this same normality-check
-procedure, not as a special case.
+procedure, not as a special case -- this is the concern the `-ln(1-x)`
+replacement above is designed to resolve, applied uniformly rather than
+as a heat-only fix.
 
 ### 4.3 FROZEN_BOUNDS origin table
 
