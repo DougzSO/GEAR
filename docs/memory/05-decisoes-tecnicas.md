@@ -1507,3 +1507,69 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   GEAR_v3_work_plan.md`, `analysis/fwi_catalog_check.py`
   (investigação, mantida — não é código de produção).
 - **Status:** Ativa. Adiado, não reaberto sem uma fonte de dado nova.
+
+## 30. GEAR v3 Fase 2.3 — processor de Extreme Wind (ERA5, dois consumidores) (2026-09-11)
+
+- **Contexto:** Fase 2.3 pedia um processor de vento extremo via ERA5
+  (rajada ou velocidade sustentada 10m/100m), na mesma infraestrutura de
+  grade unificada, servindo dois consumidores (bucket Wind, bucket Solar)
+  com limiares potencialmente diferentes (Fase 0.4 já havia fechado
+  qual limiar cada um usa) — sem duplicar o processor em duas cópias.
+- **Decisão:** `src/downloaders/era5_wind_downloader.py` (novo) baixa a
+  rajada instantânea horária a 10m (`instantaneous_10m_wind_gust`, dataset
+  CDS `reanalysis-era5-single-levels`), um request por país/ano ao longo de
+  `ERA5_WIND_BASELINE_PERIOD` (1991-2020) — sem eixo de modelo/cenário
+  (ERA5 é um produto único de reanálise, diferente do CMIP6). Reaproveita
+  `cds_tasmax_downloader._country_area` para a caixa delimitadora por país
+  (mesma caixa dos demais hazards).
+  `src/processors/extreme_wind_processor.py` (novo) reduz a série horária
+  ao indicador bruto **mean annual maximum gust (m/s)** por pixel — média
+  da rajada máxima de cada ano-calendário no período, métrica padrão de
+  engenharia de vento para caracterizar rajada extrema —, na mesma grade
+  unificada (`cds_tasmax_downloader._resample_to_1km` → Min-Max por país →
+  guarda `GridMismatchError` compartilhada). Ao contrário do calor/chuva
+  (indicador já embute um limiar, "dias acima de X"), o indicador de vento
+  é deliberadamente agnóstico a limiar, porque os dois consumidores aplicam
+  métodos de limiar diferentes e não convergentes sobre a mesma grandeza
+  física (m/s): `WIND_BUCKET_THRESHOLD_SPEC` (Tier 1, corte fixo IEC ~25
+  m/s) e `SOLAR_BUCKET_THRESHOLD_SPEC` (Tier 3, percentis P75/90/95/99 do
+  ERA5, método final por fechamento da Fase 0.4) são specs nomeadas
+  passadas para um único dispatcher, `classify_extreme_wind(values,
+  threshold_spec)` — não duas funções/processors copiados.
+- **Confirmação, não suposição, do escopo do gate de correlação:** verificado
+  contra `docs/rework/GEAR_v3_methodology_nature_format.md` Seção 2/5 (lidas
+  no estado corrente, já com o adiamento de Wildfire do item 29 aplicado) —
+  Extreme Wind nunca aparece como candidato do gate em nenhuma versão do
+  texto; a Seção 5 lista hoje só Extreme Precipitation como candidato
+  (Wildfire saiu do gate junto com seu próprio adiamento, item 29, por razão
+  de disponibilidade de dado não relacionada a vento). Extreme Wind
+  permanece um hazard dedicado por bucket (Wind/Solar), nunca sujeito ao
+  teste \|r\| < 0.80.
+- **Aberto, sinalizado e não decidido — período-base do ERA5:** todo outro
+  hazard v3 é uma projeção CMIP6 explícita 2041-2070; ERA5 é reanálise
+  histórica, sem eixo SSP/GCM e sem horizonte 2050. A metodologia nomeia
+  ERA5 como fonte mas não define nem reconcilia um período-base contra o
+  enquadramento de meio de século dos outros hazards. `ERA5_WIND_BASELINE_
+  PERIOD = (1991-01-01, 2020-12-31)` (normal climatológica OMM de 30 anos
+  corrente) é um default de engenharia aqui, não uma decisão verificada na
+  Fase 0 — `extreme_wind_processor.WIND_TEMPORAL_WINDOW_IS_PROJECTED =
+  False` deixa essa assimetria como flag explícita, não suposição
+  enterrada. Pendente confirmação do autor, mesma classe de status da taxa
+  de gás do `age_factor` e da questão de granularidade do RNG.
+- **Não plugado ao núcleo, deliberadamente:** `risk_calculator.HAZARD_TERMS`
+  e `HAZARD_TEMPORAL_WINDOW` não ganharam entrada `wind` — RiskBand (Fase
+  3.2) e inclusão na tabela de hazard aplicável (Fase 3.1) ficam para depois.
+- **Testes:** `tests/test_extreme_wind_processor.py` (14 testes) — paths,
+  aritmética do mean-annual-max (média das rajadas de pico por ano), o
+  dispatcher `classify_extreme_wind` para os dois specs de limiar (incluindo
+  rejeição de `kind` desconhecido e NaN nunca contado como observação
+  válida), schema de `WIND_TEMPORAL_WINDOW` + flag histórico-vs-projetado,
+  não-mesclagem no núcleo, guarda de grade compartilhada. Suite completa:
+  213 testes passando (14 novos deste item) fora dos 4 arquivos quebrados
+  pela Fase 1, 1 skip esperado (dado ERA5 real ausente).
+- **Arquivos:** `src/downloaders/era5_wind_downloader.py` (novo),
+  `src/processors/extreme_wind_processor.py` (novo),
+  `tests/test_extreme_wind_processor.py` (novo), `docs/DECISIONS.md`.
+- **Status:** Ativa. Camada de raster (bruta + normalizada) e utilitário de
+  classificação parametrizado apenas. RiskBand/inclusão em tabela aplicável
+  (Fase 3) e o período-base ERA5 (acima) ficam em aberto.

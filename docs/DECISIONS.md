@@ -1194,14 +1194,21 @@ stated per entry per the standing rule.
   scattered across the module.
 - **Correlation-gate scope confirmed against the methodology draft, not
   assumed**: verified `docs/rework/GEAR_v3_methodology_nature_format.md`
-  Section 2 ("Extreme Wind is not part of a single shared five-hazard core;
-  it is assigned per bucket per the mechanistic rationale in Section 3") and
-  Section 5, which names only Extreme Precipitation and Wildfire as gated
-  candidates (plus the report-only Water Stress/Drought pair). Extreme Wind
-  is not listed in either place. This processor is therefore correctly NOT
-  added to any Phase 2.5 correlation-gate candidate list -- confirming, not
-  assuming, the work-plan's Phase 2.3 framing ("dedicated 6th hazard...not
-  part of the chronic-hazard correlation set").
+  Section 2 ("Extreme Wind is not part of a single shared hazard core; it is
+  assigned per bucket per the mechanistic rationale in Section 3") and
+  Section 5, which names only Extreme Precipitation as a gated candidate
+  (plus the report-only Water Stress/Drought pair). Extreme Wind is not
+  listed in either place. This processor is therefore correctly NOT added to
+  any Phase 2.5 correlation-gate candidate list -- confirming, not assuming,
+  the work-plan's Phase 2.3 framing ("not part of the chronic-hazard
+  correlation set"). **Numbering note, not a substance change**: the
+  methodology draft was concurrently revised during this task to defer
+  Wildfire for a data-availability reason unrelated to wind (see "GEAR v3
+  Phase 2.2: Wildfire deferred", below) -- the checklist that used to read
+  "six hazards" now reads "five", so Extreme Wind is the framework's 5th
+  hazard, not the "dedicated 6th hazard" language used when this task was
+  scoped. The correlation-gate exemption finding is unaffected either way:
+  Extreme Wind was never a gate candidate under either count.
 - **OPEN, flagged not silently decided -- ERA5 baseline period**: every other
   v3 hazard is a CMIP6 projection for the explicit 2041-2070 window; ERA5 is
   a historical reanalysis with no SSP/GCM axis and no 2050 horizon. The

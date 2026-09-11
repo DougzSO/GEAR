@@ -113,6 +113,19 @@ Não plugado a `risk_calculator.HAZARD_TERMS` ainda (aguarda gate de
 correlação Fase 2.5 e Fase 3). 200 testes passando. Ver item 28 de
 [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).
 
+2026-09-11: Fase 2.3 do plano GEAR v3 fechada — novos
+`src/downloaders/era5_wind_downloader.py` (rajada horária ERA5 10m, sem
+eixo modelo/cenário, período-base 1991-2020 flagado como pendente de
+confirmação do autor) e `src/processors/extreme_wind_processor.py`
+(indicador bruto mean-annual-max-gust, agnóstico a limiar; dispatcher
+`classify_extreme_wind` parametrizado serve os dois consumidores — IEC
+Tier 1 fixo para Wind, percentil ERA5 Tier 3 para Solar — sem duplicar
+processor). Confirmado contra a metodologia corrente: Extreme Wind não é
+candidato do gate de correlação da Fase 2.5 (só Extreme Precipitation é,
+após o adiamento de Wildfire do item 29). Não plugado a
+`risk_calculator.HAZARD_TERMS` ainda. 213 testes passando (14 novos). Ver
+item 30 de [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).
+
 2026-09-11: Fase 1 do plano GEAR v3 fechada — `src/index/ccrs_calculator.py`
 / `ccrs_report.py` deletados (não depreciados), substituídos por
 `src/index/risk_calculator.py` (Equação 1, `Risk_i,h`, por hazard, sem

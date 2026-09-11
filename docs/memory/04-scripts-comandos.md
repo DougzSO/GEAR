@@ -71,6 +71,25 @@ CLI própria — chamados via `climate_downloader` ou importados
 Ordem: `heat_stress_processor` → (`water_stress_processor`,
 `water_variability_processor`).
 
+## Processors de clima -- GEAR v3 novos hazards (Fase 2)
+
+```
+# chuva extrema: reaproveita o pr ja baixado para SPEI, sem download novo
+.venv\Scripts\python -m src.processors.extreme_precipitation_processor [--overwrite]
+
+# vento extremo: baixa ERA5 (rajada horaria 10m) por pais/ano, depois processa
+.venv\Scripts\python -m src.downloaders.era5_wind_downloader --country Brazil [--year 1991] [--overwrite]
+.venv\Scripts\python -m src.processors.extreme_wind_processor [--countries Brazil] [--overwrite]
+```
+
+`era5_wind_downloader` usa as mesmas credenciais `CDS_API_URL`/`CDS_API_KEY`
+do `cds_tasmax_downloader`, mas é um dataset CDS diferente
+(`reanalysis-era5-single-levels`) e baixa ano a ano (sem eixo de
+modelo/cenário) -- rodar sem `--year` baixa o baseline inteiro
+(`ERA5_WIND_BASELINE_PERIOD`, 1991-2020, 30 anos x hora). Nenhum dos dois
+processors novos está plugado em `risk_calculator.HAZARD_TERMS` ainda
+(Fase 2.5/3 pendentes) -- ver `docs/DECISIONS.md`.
+
 ## Camada de índice (CCRS)
 
 ```
