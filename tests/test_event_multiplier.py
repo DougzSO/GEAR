@@ -1,20 +1,23 @@
 """Tests for src/index/event_multiplier -- the country-level EventMultiplier_c.
 
-Covers all three countries against the (recomputed, full-precision) fixture,
-the >=1 / rate_max invariants, and the country-keyed multiplicative
-application: no row duplication or drop introduced by the join (the T1/T2
-plant_uid-stability lesson, applied to a country-level join instead of a
-plant_uid-level one).
+Covers all three countries against the (recomputed, full-precision) fixture
+and the >=1 / rate_max invariants -- the module's own logic, independent of
+any Hazard application.
+
+The former "apply to Hazard" tests (multiplying a Hazard CSV by
+EventMultiplier, country-join safety) are removed: GEAR v3 Phase 1 retires
+EventMultiplier from the Risk/Hazard core entirely (docs/DECISIONS.md,
+"GEAR v3 rework Phase 1"; docs/rework/GEAR_v3_work_plan.md Phase 1.4).
+EventMultiplier is no longer applied to any Hazard/Risk table anywhere in
+the pipeline; this module is kept importable, unused, as a Phase 5
+contextual-validator candidate.
 """
 
-import numpy as np
 import pandas as pd
 import pytest
-from pandas.errors import MergeError
 
 from src.index import event_multiplier as em
 from src.downloaders import emdat_downloader
-from tests.diagnostics.hazard_step_probes import event_multiplier_apply_to_hazard
 
 
 # --------------------------------------------------------------------------
@@ -73,86 +76,6 @@ def test_rate_is_n_events_over_the_archive_span(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# application: country join, multiplicative, plant_uid-safe
-# --------------------------------------------------------------------------
-def _synthetic_hazard():
-    return pd.DataFrame({
-        "plant_uid": ["BRA-1", "BRA-1", "BRA-2", "PRT-1", "IND-1", "IND-2"],
-        "country": ["Brazil", "Brazil", "Brazil", "Portugal", "India", "India"],
-        "water_scenario": ["opt", "pes", "opt", "opt", "opt", "opt"],
-        "hazard_gfdl_esm4": [0.10, 0.20, 0.30, 0.40, 0.50, 0.60],
-        "hazard_miroc6": [0.15, 0.25, 0.35, 0.45, 0.55, 0.65],
-    })
-
-
-def _synthetic_multipliers():
-    return pd.DataFrame({
-        "country": ["Brazil", "Portugal", "India"],
-        "n_events": [239, 38, 622],
-        "rate": [239 / 124, 38 / 124, 622 / 124],
-        "event_multiplier": [1.192122, 1.030547, 1.5],
-    })
-
-
-def test_apply_to_hazard_multiplies_by_country_never_sums(tmp_path):
-    hazard = _synthetic_hazard()
-    hz_csv = tmp_path / "ccrs_hazard.csv"
-    hazard.to_csv(hz_csv, index=False)
-
-    out = event_multiplier_apply_to_hazard(hz_csv, multipliers=_synthetic_multipliers())
-
-    br = out[out["country"] == "Brazil"]
-    np.testing.assert_allclose(br["hazard_gfdl_esm4_x_event"], br["hazard_gfdl_esm4"] * 1.192122)
-    np.testing.assert_allclose(br["hazard_miroc6_x_event"], br["hazard_miroc6"] * 1.192122)
-    ind = out[out["country"] == "India"]
-    np.testing.assert_allclose(ind["hazard_gfdl_esm4_x_event"], ind["hazard_gfdl_esm4"] * 1.5)
-    # original Hazard columns untouched (multiplicative side column, no overwrite)
-    np.testing.assert_allclose(out["hazard_gfdl_esm4"], hazard["hazard_gfdl_esm4"])
-
-
-def test_apply_to_hazard_country_join_does_not_duplicate_or_drop_plant_uid_rows(tmp_path):
-    hazard = _synthetic_hazard()
-    hz_csv = tmp_path / "ccrs_hazard.csv"
-    hazard.to_csv(hz_csv, index=False)
-
-    out = event_multiplier_apply_to_hazard(hz_csv, multipliers=_synthetic_multipliers())
-
-    assert len(out) == len(hazard)
-    # every plant_uid row (including the repeated BRA-1 scenario rows) survives
-    # exactly as many times as it appeared in the input -- country join fans
-    # out on nothing, since the multiplier table is one row per country.
-    pd.testing.assert_series_equal(
-        out["plant_uid"].value_counts().sort_index(),
-        hazard["plant_uid"].value_counts().sort_index(),
-    )
-    assert out["plant_uid"].tolist() == hazard["plant_uid"].tolist()
-
-
-def test_apply_to_hazard_rejects_a_country_missing_from_the_multiplier_table(tmp_path):
-    hazard = _synthetic_hazard()
-    hz_csv = tmp_path / "ccrs_hazard.csv"
-    hazard.to_csv(hz_csv, index=False)
-
-    multipliers = _synthetic_multipliers()
-    multipliers = multipliers[multipliers["country"] != "India"]   # drop India on purpose
-    with pytest.raises(ValueError, match="India"):
-        event_multiplier_apply_to_hazard(hz_csv, multipliers=multipliers)
-
-
-def test_apply_to_hazard_rejects_a_duplicated_country_in_the_multiplier_table(tmp_path):
-    hazard = _synthetic_hazard()
-    hz_csv = tmp_path / "ccrs_hazard.csv"
-    hazard.to_csv(hz_csv, index=False)
-
-    multipliers = pd.concat([_synthetic_multipliers(), _synthetic_multipliers().iloc[[0]]],
-                            ignore_index=True)   # Brazil appears twice
-    # merge(..., validate="many_to_one") refuses a non-unique right side before
-    # any row could silently fan out -- this is the cross-join guard.
-    with pytest.raises(MergeError):
-        event_multiplier_apply_to_hazard(hz_csv, multipliers=multipliers)
-
-
-# --------------------------------------------------------------------------
 # real data sanity (skipped if the EM-DAT country CSVs are absent)
 # --------------------------------------------------------------------------
 def _emdat_present() -> bool:
@@ -174,17 +97,3 @@ def test_real_data_event_multipliers_match_the_regression_fixture():
         assert abs(out.loc[country, "event_multiplier"] - published) <= 0.01
 
 
-def _hazard_csv_present() -> bool:
-    return em.HAZARD_CSV.exists()
-
-
-@pytest.mark.skipif(not _hazard_csv_present(), reason="ccrs_hazard.csv absent")
-def test_real_data_apply_to_hazard_preserves_row_count_and_plant_uid_multiset():
-    hz = pd.read_csv(em.HAZARD_CSV)
-    out = event_multiplier_apply_to_hazard()
-    assert len(out) == len(hz)
-    pd.testing.assert_series_equal(
-        out["plant_uid"].value_counts().sort_index(),
-        hz["plant_uid"].value_counts().sort_index(),
-    )
-    assert (out["event_multiplier"] >= 1.0).all()

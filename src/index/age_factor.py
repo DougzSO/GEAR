@@ -106,8 +106,8 @@ import numpy as np
 import pandas as pd
 
 from src.config import COUNTRIES, YEAR_TARGET
-from src.index import ccrs_calculator as ccrs
-from src.index.ccrs_calculator import PLANT_UID
+from src.index import risk_calculator as ccrs
+from src.index.risk_calculator import PLANT_UID
 
 logger = logging.getLogger(__name__)
 
@@ -138,8 +138,7 @@ _WIND_CF_DECLINE_PP = 0.0015     # pp of capacity factor /yr -- NOT on the activ
 NEUTRAL_THERMAL_FUELS = frozenset({"oil/gas", "nuclear", "bioenergy"})
 _MIXED_SEP = ";"
 
-HAZARD_CSV = ccrs.OUTPUT_TABLES / "ccrs_hazard.csv"
-HAZARD_COLUMNS = ("hazard_gfdl_esm4", "hazard_miroc6")
+HAZARD_CSV = ccrs.OUTPUT_TABLES / "risk_by_hazard.csv"
 
 _ATTR_COLUMNS = [
     PLANT_UID, "country", "plant_name", "capacity_mw", "commissioning_year",

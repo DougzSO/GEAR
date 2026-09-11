@@ -112,6 +112,19 @@ countries); MIROC6's realisation member is confirmed `r1i1p1f1` (grid `gn`).
 the SCI/NAES design. The original architecture is kept as a historical note
 in §5.6.)*
 
+**Superseded as of 2026-09-11 (GEAR v3 Phase 1, `docs/DECISIONS.md` "GEAR v3
+Phase 1: Risk_i,h replaces the CCRS core").** The single combined
+`Hazard_{i,s}` / `CCRS_{i,s}` formula below is retired from the code
+(`src/index/ccrs_calculator.py` and `src/index/ccrs_report.py` deleted) and
+replaced by `src/index/risk_calculator.py`'s `Risk_{i,h} = Hazard_{i,h} \times
+Exposure_i \times Vulnerability_i`, computed and kept per hazard, never
+summed across hazards -- see `docs/rework/GEAR_v3_methodology_nature_
+format.md` Section 1. This section is kept below as the historical record of
+the pre-v3 design (§5.6 already does the same for the SCI/NAES design it
+replaced); it is not the current architecture. A full reconciliation pass
+replacing this section is Phase 8 of `docs/rework/GEAR_v3_work_plan.md`, done
+once the v3 methodology stabilizes, not now.
+
 One score. A single continuous **Climate Change Risk Score (CCRS)** per plant
 per scenario, on one cross-country scale, replaces the two
 non-interchangeable outputs of the original design (within-country SCI,
@@ -437,7 +450,7 @@ revised with additional literature (V1 revision)"):
 | Wind | 0.4 %/yr relative retention rate, applied uniformly to every wind plant (no conditional branch) | Olauson, Edström & Rydén 2017, *Wind Energy* (Swedish fleet); Shin, Ko & Huh 2015; Byrne, Astolfi, Castellani & Hewitt 2020 — midpoint of the 0.3–0.5 %/yr range. The capacity-factor-based form (`retention = 1 - 0.0015·age/CF_initial`) exists in the source as documented dead code, never called: no GEM file carries an initial capacity factor for any of the 1986 wind plants across the three countries |
 | Solar | 0.7 %/yr at plant level (0.5 %/yr module physics + soiling / downtime / inverter), compound decay | Deline et al. (NREL) 2020/2024; Boretti & Castellotto 2024 |
 | Hydro | 0.55 %/yr (midpoint of "~0.5–0.6 %/yr"), linear | Turner et al. 2024, *Nature Communications* — 23 % cumulative over 610 US plants 1980–2022; only 21 % of that attributable to water availability, keeping this distinct from the water-stress hazard captured separately |
-| Coal | 0.25 %/yr heat-rate deterioration, **sawtooth**: decays within an **assumed** 5-year overhaul cycle, recovering 70 % of that cycle's accumulated loss at each cycle boundary (30 % permanent) | IEA/CIAB 2010; Kim & Moon 2012 (500 MW unit); cross-validated by Sagaf 2020 (0.19–0.44 %/yr, two 660 MW units). The 5-year cycle length and the 70 % recovery fraction are a modelling premise, not values from the cited sources — no GEM file carries a per-plant overhaul date; provisional, revisable if one appears |
+| Coal | 0.25 %/yr heat-rate deterioration, **sawtooth**: decays within an **assumed** 5-year overhaul cycle, recovering 70 % of that cycle's accumulated loss at each cycle boundary (30 % permanent) | IEA/CIAB 2010; Kim & Moon 2012 (500 MW unit); cross-validated by Sagaf 2020 (0.19–0.44 %/yr, two 660 MW units). The 5-year cycle length and the 70 % recovery fraction are a modelling premise, not values from the cited sources — no GEM file carries a per-plant overhaul date; provisional, revisable if one appears. Re-checked 2026-09-11 against the August 2026 GEM snapshot as part of the GEAR v3 rework Phase 0 — still absent, unchanged (`docs/DECISIONS.md`) |
 | Gas / oil-gas | 1.0 (neutral), **provisional** | No literature-backed rate or functional form exists in any project document — the original V1 note of an "efficiency gain with age" (US data 2001–2018) has no citable number attached to it. Pinned neutral until a defensible source is found; a genuinely improving-with-age curve could not be represented under the `age_factor ≥ 1` convention regardless |
 | Nuclear | 1.0 (neutral) | licensing- / decommissioning-governed, not gradual physical decay; Blake 1992, Simola 1999 |
 | Bioenergy | 1.0 (neutral) | coal-proxy dropped for want of fleet-level longitudinal evidence (V1 revision) |
@@ -494,6 +507,21 @@ already captured: thermal cooling type governs *how* a plant responds to
 is not public for the three countries); hydro storage would need
 basin-specific hydrological simulation outside this scope; wind and solar
 component differences lack public normalised degradation datasets.
+
+Resolved, not just provisional, for the thermal cooling-type case: the GEAR
+v3 rework Phase 0 investigation (2026-09-11) confirmed no cooling-technology
+field exists under any name in the ingested GEM data itself, for any of the
+three countries — not only that third-party coverage (PLATTS/GlobalData) is
+non-public. Thermal is retained as a homogeneous bucket with this data gap
+declared explicitly as a limitation in the article, rather than left pending
+on a coverage source appearing (`docs/DECISIONS.md`, "GEM cooling-technology
+field: confirmed absent").
+
+Implemented, not just declared, as of GEAR v3 Phase 1 (2026-09-11):
+`src/index/risk_calculator.py` computes `Risk_i,h` uniformly for every
+`thermal`-bucket plant, no water-cooled/dry-cooled code path (`docs/
+DECISIONS.md`, "GEAR v3 Phase 1.3: Thermal bucket implemented as
+homogeneous").
 
 This is a closed decision. If data of the required kind appears later,
 adding a structural-robustness factor would be a **new** decision — not a

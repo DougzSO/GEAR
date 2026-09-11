@@ -88,9 +88,16 @@ import pandas as pd
 
 from src.config import COUNTRIES, OUTPUT_TABLES
 from src.downloaders import emdat_downloader
-from src.index import ccrs_calculator as ccrs
+from src.index import risk_calculator as ccrs
 
 logger = logging.getLogger(__name__)
+
+# NOT called from the Risk/Hazard core (src/index/risk_calculator.py) as of
+# GEAR v3 Phase 1 -- EventMultiplier was removed from that core entirely
+# (docs/DECISIONS.md, GEAR v3 Phase 1.4). This module is kept importable,
+# unused for now, as a candidate for the Phase 5 contextual-validator layer
+# (physical-occurrence / broad-impact corroboration, never re-entering the
+# score) -- not implemented as a validator yet.
 
 # Judgment-call amplitude (spec Section 7 / ARCHITECTURE Section 7.2). Not
 # re-derived here -- perturbed by the item-J Monte Carlo sensitivity check
@@ -102,8 +109,7 @@ EVENT_MULTIPLIER_K = 0.5
 # match the source documents' formula verbatim.
 EMDAT_ARCHIVE_SPAN_YEARS = 124
 
-HAZARD_CSV = ccrs.OUTPUT_TABLES / "ccrs_hazard.csv"
-HAZARD_COLUMNS = ("hazard_gfdl_esm4", "hazard_miroc6")
+HAZARD_CSV = ccrs.OUTPUT_TABLES / "risk_by_hazard.csv"
 
 
 # --------------------------------------------------------------------------

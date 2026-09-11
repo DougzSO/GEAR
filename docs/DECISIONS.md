@@ -903,3 +903,354 @@ Log of every methodological and data-source decision made during this project, i
 - Status: active. Spec item F **closed**. Item J (Monte Carlo) still open --
   the thermal triple and the wind/solar drought allowance are candidates for
   perturbation, not yet implemented.
+
+---
+
+## GEAR v3 rework — Phase 0 blocking verifications (closed 2026-09-11)
+
+The five entries below close Phase 0 of `docs/rework/GEAR_v3_work_plan.md`.
+Scope note: these are findings for the v3 methodology reconstruction
+(`docs/rework/GEAR_v3_methodology_nature_format.md`), not yet implemented in
+`src/index/ccrs_calculator.py` or any active pipeline code -- CCRS above
+remains the current computed output until Phase 1 lands. Tier of evidence
+stated per entry per the standing rule.
+
+## [2026-09-11] GEM cooling-technology field: confirmed absent (v3 Phase 0.1)
+- Decision: Thermal plants are not split by cooling technology (once-through /
+  recirculating / dry / hybrid) in GEAR v3. No such field exists in the
+  ingested GEM data.
+- Reason: Direct inspection of `gem_global_integrated_power_tracker_20260809.xlsx`
+  (Global Integrated Power Tracker, August 2026 release, 52-column `Power
+  facilities` sheet) found no column under any name containing "cooling".
+  The closest field, `Technology`, records boiler/turbine cycle type
+  (subcritical, combined cycle, etc.), not condenser cooling system --
+  confirmed absent for Brazil, Portugal and India alike. Tier: data-
+  availability finding, not a literature threshold; primary source is the
+  raw GEM workbook itself.
+- Status: active. Closes v3 methodology Section 3.2 ("pending") as resolved.
+
+## [2026-09-11] GEM retrofit/repowering field: re-confirmed empty (v3 Phase 0.3)
+- Decision: No overhaul/major-refurbishment date is available from GEM for
+  GEAR v3, same as the pre-rework finding already on record (age_factor
+  coal entry, 2026-09-04).
+- Reason: Re-inspection of the same August 2026 GEM snapshot found no
+  "retrofit"/"repower"/"refurbish" column. The adjacent "Conversion" field
+  family (fuel-conversion events, not overhaul dates) is effectively 0
+  non-null across Brazil, Portugal and India (two isolated non-material
+  exceptions in Brazil's `Conversion to (fuel)`/`Conversion to (GEM unit
+  ID)`). No rename, addition or removal relative to the prior inventory.
+  Tier: data-availability finding, primary source is the raw GEM workbook.
+- Status: active. Confirms unchanged status of the existing `age_factor`
+  coal-curve limitation; no v3-specific action needed beyond noting the
+  re-check.
+
+## [2026-09-11] FWI/EFFIS wildfire danger classes: 6-class system adopted (v3 Phase 0.2)
+- Decision: GEAR v3's Wildfire hazard uses the EFFIS 6-class FWI
+  classification as Tier 1, not a 5-class simplification: Low (<11.2),
+  Moderate (11.2-21.3), High (21.3-38.0), Very High (38.0-50.0), Extreme
+  (50.0-70.0), Very Extreme (>70.0). Very Extreme is kept as a distinct
+  class, not collapsed into Extreme.
+- Reason: Verified against the primary source -- EFFIS (Copernicus
+  Emergency Management Service) technical background, "Fire Danger
+  Forecast" (`forest-fire.emergency.copernicus.eu/about-effis/technical-
+  background/fire-danger-forecast`), built on Van Wagner & Pickett (1985).
+  The "Very Extreme" tier was added by EFFIS in June 2021 specifically to
+  discriminate danger within Mediterranean-summer areas otherwise flattened
+  at "Extreme" -- collapsing it back would lose exactly the discrimination
+  it was introduced to provide. Tier 1, cited primary source.
+- Status: active. Closes v3 methodology Section 4's Wildfire Tier 1 entry.
+
+## [2026-09-11] Extreme Precipitation downgraded Tier 1 -> Tier 3 (v3 Phase 0.2)
+- Decision: GEAR v3's Extreme Precipitation hazard uses a Tier 3 sample-
+  relative percentile cutoff (P50/P75/P90/P95 of CMIP6 `pr` extremes), the
+  same approach already used for Extreme Heat, not a HAZUS-MH-derived
+  absolute threshold.
+- Reason: The drafted HAZUS-MH inundation-depth values (0.2/0.5/1.5 m) do
+  not exist in the primary FEMA Hazus Flood Model Technical Manual. HAZUS-MH
+  uses continuous depth-damage curves per building occupancy type (900+
+  curves, depth in feet from finished floor, -4 to +24 ft), not categorical
+  depth cutoffs -- confirmed against the Hazus 6.1 (July 2024) manual and
+  Scawthorn et al. 2006 (*Natural Hazards Review* 7(2)). Independent of that
+  mismatch, HAZUS-MH thresholds are structurally incompatible with this
+  pipeline's input: Extreme Precipitation reuses CMIP6 precipitation-amount
+  data (`pr`), and there is no hydrological conversion step from
+  precipitation to inundation depth anywhere in the pipeline. No absolute
+  physical threshold is available given current data; declared limitation,
+  same as Extreme Heat's.
+- Status: active. Closes v3 methodology Section 4's Extreme Precipitation
+  entry; HAZUS-MH reference removed from that row.
+
+## [2026-09-11] GEAR v3 Phase 1: Risk_i,h replaces the CCRS core (Equation 1)
+- Decision: `src/index/ccrs_calculator.py` and `src/index/ccrs_report.py` are
+  deleted, not deprecated in place. `src/index/risk_calculator.py` replaces
+  them: `risk_i_h(hazard_i_h, exposure_mw, vulnerability) = hazard_i_h *
+  exposure_mw * vulnerability` (Methods Section 1, Equation 1), computed and
+  kept **per hazard** -- there is no combined "Hazard" value for a plant
+  anywhere in this module, and nothing sums or blends `Risk_i,h` across
+  hazards. `EventMultiplier` is removed from this core entirely (not
+  imported, not called); `event_multiplier.py` itself is kept as a Phase 5
+  contextual-validator candidate, unused for now. Exposure is exposed as two
+  distinct forms: `exposure_capacity_mw` (raw MW, the only form `risk_i_h`
+  accepts) and `exposure_log10_display` (visualization-only, returns a
+  tagged `ExposureLog10Display` array type that `risk_i_h` raises
+  `TypeError` on) -- the guard is enforced at the type level, not just by
+  convention. Every hazard term's temporal-window assumption is an explicit
+  named constant (`HAZARD_TEMPORAL_WINDOW`), not left to a processor's
+  docstring. Tier: engineering/architecture decision implementing a closed
+  methodology equation; no new empirical threshold introduced.
+- Reason: the retired core computed one weighted-sum `Hazard_i,s` per plant
+  (water/heat/drought bucket weights) and then `CCRS_i,s = Hazard_i,s *
+  age_factor_i * EventMultiplier_c` -- exactly the aggregate-index and
+  cross-hazard-summation pattern the v3 methodology treats as a
+  methodological fallacy (Section 9). Equation 1 requires a Risk value per
+  hazard, never combined; `age_factor` (Vulnerability) is unchanged and
+  still applied, `EventMultiplier` has no place in this equation at all.
+- **Flagged, not silently resolved**: the retired core also computed `sv`
+  (seasonal variability) and `iv` (interannual variability) folded into a
+  composite `water_sub` term alongside `ws`. The v3 methodology's Section 2
+  hazard checklist names only "Water Stress" (`ws`) -- it does not list
+  `sv`/`iv` as hazards, and gives no instruction to fold them into Water
+  Stress. Rather than silently keeping the old composite or silently
+  dropping the two indicators, `risk_calculator.py` computes `sv`/`iv` as
+  their own independent, clearly labelled `Risk_i,h` terms (their existing
+  per-term `FROZEN_BOUNDS` are reused unchanged), explicitly marked as not
+  one of the v3 Section 2 hazards, pending Phase 3's applicable-hazard-set
+  decision. This is an open question for the author, not decided here.
+- Downstream breakage, expected and not silently patched: `src/index/
+  risk_bands.py`, `src/index/monte_carlo.py`, `src/index/emdat_validation.py`,
+  `src/main.py`, and the whole `src/visualization/` package still import the
+  now-deleted `ccrs_calculator`/`ccrs_report` symbols (`BUCKET_WEIGHTS`,
+  `compute_hazard`, `compute_hazard_by_gcm`, the `ccrs_{gcm}` columns) and
+  fail at import or call time. These modules compute or display quantities
+  (WaterRiskBand/HeatRiskBand from the retired combined Hazard, Monte Carlo
+  perturbation of `BUCKET_WEIGHTS`, CCRS-labelled figures) that depend on
+  methodology not yet decided for v3 (Phase 3's `RiskBand_i,h`, Phase 4's
+  PSAE, Phase 6/7's sensitivity analysis and visualization). Patching them
+  now would mean inventing that methodology ahead of its own phase; they are
+  left broken and undocumented-as-working, not silently routed around.
+  `age_factor.py` and `event_multiplier.py` are updated to import
+  `risk_calculator` instead (a mechanical rename only, no logic change) so
+  they remain independently usable.
+- References: `src/index/risk_calculator.py`, `tests/test_risk_calculator.py`,
+  `docs/rework/GEAR_v3_methodology_nature_format.md` Sections 1/3,
+  `docs/rework/GEAR_v3_work_plan.md` Phase 1.
+- Status: active. Phase 1.1, 1.2 and 1.4 closed. `sv`/`iv` inclusion is
+  explicitly open, deferred to Phase 3.
+
+## [2026-09-11] GEAR v3 Phase 2.1: Extreme Precipitation processor (Tier 3, percentile-cutoff)
+- Decision: `src/processors/extreme_precipitation_processor.py` (new)
+  computes the raw Extreme Precipitation raster: mean days/year, over the
+  2041-2070 window, with daily CMIP6 `pr` exceeding that pixel's own P95
+  threshold of wet-day (`pr >= 1 mm/day`, ETCCDI convention) amounts. No new
+  download -- reuses the daily `pr` series `cds_precipitation_downloader`
+  already acquires for the SPEI drought term (`spei_processor`'s
+  `raw_dir`/`_open_series`/`_pick_var`, unchanged). Same unified grid
+  infrastructure as every other hazard (native CMIP6 grid -> nearest-neighbour
+  resample to the country's fixed 1 km grid via
+  `cds_tasmax_downloader._resample_to_1km` -> per-country Min-Max, models and
+  scenarios pooled jointly, identical domain-pooling rule to
+  `heat_stress_processor`/`spei_processor`, same shared `GridMismatchError`
+  guard). Tier: **Tier 3 only** -- `EXTREME_PRECIP_PERCENTILE = 95.0`
+  (P95, ETCCDI "very wet days"/R95p convention, Zhang et al. 2011) and
+  `WET_DAY_THRESHOLD_MM = 1.0` are sample-relative percentile-cutoff
+  constants, not a cited absolute damage threshold. HAZUS-MH is not
+  referenced as a threshold source anywhere in this module (confirmed by
+  `tests/test_extreme_precipitation_processor.py::
+  test_no_hazus_mh_used_as_a_threshold_source`), consistent with the Phase 0
+  closure ("Extreme Precipitation downgraded Tier 1 -> Tier 3").
+  `PRECIP_TEMPORAL_WINDOW` extends the Phase 1 `HAZARD_TEMPORAL_WINDOW`
+  pattern (`src/index/risk_calculator.py`) -- same schema, asserted equal at
+  import time -- without merging into that dict (see below).
+- Reason: the methodology's Tier 3 fallback for Extreme Precipitation
+  (`docs/rework/GEAR_v3_methodology_nature_format.md` Section 4) specifies
+  "Percentiles P50/P75/P90/P95 of daily pr extremes," not a fixed physical
+  threshold like Extreme Heat's 40 C -- there is no defensible absolute
+  threshold at this tier (Phase 0 closure). The percentile-cutoff idea is
+  therefore applied one level earlier than Extreme Heat's pattern: instead
+  of counting days above a fixed mm value, each pixel's own P95 of its wet
+  days defines what "extreme" means locally (a monsoon and a semi-arid pixel
+  do not share one mm cutoff), and the raw indicator counts exceedance
+  days/year against that local threshold -- structurally the same
+  "mean days/year exceeding a threshold" shape as Extreme Heat's
+  `days_per_year_with_tasmax_gt_40C`.
+- **Not wired into the core, on purpose**: `risk_calculator.HAZARD_TERMS`
+  and `HAZARD_TEMPORAL_WINDOW` are unchanged (verified:
+  `test_not_wired_into_risk_calculator_hazard_terms_yet`,
+  `test_precip_not_merged_into_the_core_hazard_temporal_window_dict`). This
+  hazard is a Phase 2.5 correlation-gate candidate (against Water Stress and
+  Drought) and is not in any bucket's applicable-hazard table -- both are
+  Phase 3 decisions, not made here.
+- References: `src/processors/extreme_precipitation_processor.py`,
+  `tests/test_extreme_precipitation_processor.py` (11 tests),
+  `docs/rework/GEAR_v3_methodology_nature_format.md` Sections 2/4/5,
+  `docs/rework/GEAR_v3_work_plan.md` Phase 2.1.
+- Status: active. Raw + normalised raster layer only. Correlation gate
+  (Phase 2.5) and applicable-hazard-set inclusion (Phase 3) are open.
+
+## [2026-09-11] GEAR v3 Phase 2.2: Wildfire deferred (data availability)
+- Decision: Wildfire (FWI/EFFIS) is removed from the GEAR v3 core hazard
+  checklist and repositioned as future work / a declared scope boundary --
+  the same treatment already given to SLR (`docs/ARCHITECTURE.md` Section
+  10, "What GEAR does not do": "SLR: excluded for lack of a defensible
+  empirical basis... A natural extension once per-technology coefficients...
+  are available"; formalized as a dedicated entry here is still pending per
+  Phase 8 item 8.1 of `docs/rework/GEAR_v3_work_plan.md`). No processor was
+  ever implemented for Wildfire (Phase 2.2 was never started), so this is a
+  documentation-only closure -- no code to remove.
+- Reason, two independent findings, both checked directly rather than
+  assumed:
+  1. **CDS catalogue gap (Tier: primary-source, direct catalogue query --
+     `analysis/fwi_catalog_check.md`).** The Canadian FWI System needs daily
+     near-surface relative humidity. `near_surface_relative_humidity` is not
+     on the CDS `projections-cmip6` daily catalogue under any model. The
+     fallback (`near_surface_specific_humidity` + `sea_level_pressure`, to
+     derive RH) is not usable either: `near_surface_specific_humidity` is
+     available only for gfdl_esm4/ssp126 and gfdl_esm4/ssp370 -- missing for
+     gfdl_esm4/ssp585 and for miroc6 under all three scenarios. No path
+     exists to compute FWI for the full gfdl_esm4 + miroc6 x 3-SSP matrix
+     this pipeline requires from any CDS-catalogued daily variable.
+  2. **ETH Zurich FWI-CMIP6 dataset ruled out on two independent grounds
+     (Tier: primary-source, direct archive inspection).** Quilcaille et al.
+     2023 (*ESSD* 15:2153-2177, DOI 10.3929/ethz-b-000583391) was checked as
+     an alternative global, SSP-based, pre-computed source. (a) **Zero
+     GFDL-ESM4 coverage**: the archive's `fwixd_hursmin.zip` (recommended
+     hursmin version of the "extreme fire weather days" indicator, closest
+     to a percentile-based use case) was inspected directly -- its ZIP
+     central directory (1,318 internal filenames, read via HTTP range
+     requests, no bulk download) lists MIROC6 under all three required
+     scenarios (ssp126/ssp370/ssp585) but **no GFDL-ESM4 entry at all**,
+     under any scenario including historical; the only GFDL-family model
+     present is GFDL-CM4 (a different model), and only for
+     historical/ssp245/ssp585. (b) **Structurally incompatible regardless of
+     model coverage**: the dataset provides annual indicators only (no daily
+     FWI time series, no EFFIS-style class output), and its "extreme" cutoff
+     (`fwixd`) is defined as the local 95th percentile of FWI over the
+     1850-1900 reference period, per grid cell -- a location-specific,
+     historical-percentile-relative threshold, not the fixed, globally
+     applied EFFIS absolute class boundaries (Low/Moderate/High/Very
+     High/Extreme/Very Extreme) already confirmed as Tier 1 in the Phase 0
+     closure ("FWI/EFFIS wildfire danger classes: 6-class system adopted").
+     Using it would silently substitute a different classification
+     philosophy for the one already decided.
+- This is a **future-work deferral, not a silent omission**: the verified
+  EFFIS 6-class boundaries and the FIRMS-is-not-a-hazard-input argument
+  remain in `docs/rework/GEAR_v3_methodology_nature_format.md` Section
+  10.1 ("Deferred hazards / future work"), citable if a data source (a
+  third GCM with full RH coverage, a different global FWI product, or a
+  future CDS catalogue addition) appears later.
+- Consequence for Phase 2.5 (correlation gate): the Wildfire-related
+  candidate pairs (Wildfire vs. Extreme Heat, Wildfire vs. Water Stress)
+  are removed from the gate's scope along with the hazard. Only Extreme
+  Precipitation (vs. Water Stress/Drought) remains as a gated candidate;
+  the mandatory, non-gated Water Stress/Drought (ws/sv/iv) reporting is
+  unaffected.
+- References: `analysis/fwi_catalog_check.md`,
+  `docs/rework/GEAR_v3_methodology_nature_format.md` Sections 2, 3, 5,
+  10.1, `docs/rework/GEAR_v3_work_plan.md` Phase 2.2/2.5.
+- Status: active. Deferred, not reopened without a new data source.
+
+## [2026-09-11] GEAR v3 Phase 1.3: Thermal bucket implemented as homogeneous (no cooling-technology split)
+- Decision: `risk_calculator.py` computes `Risk_i,h` for every plant in the
+  `thermal` bucket uniformly -- no water-cooled/dry-cooled sub-bucket split
+  is implemented in code.
+- Reason: this is the code-level implementation of the Phase 0 data-
+  availability finding ("GEM cooling-technology field: confirmed absent",
+  above) -- distinct from that finding itself. Since no cooling-technology
+  field exists in GEM under any name, a split is not implementable with
+  current data; homogeneous treatment is the only option, and the resulting
+  likely overstatement of water-stress risk for whatever dry-cooled
+  fraction exists within Thermal is a declared limitation (methodology
+  Section 3.2), not a silent gap. Tier: implementation consequence of a
+  Tier-1 (primary-source-verified) data-availability finding, no new
+  threshold introduced.
+- Status: active.
+
+## [2026-09-11] GEAR v3 Phase 2.3: Extreme Wind processor (ERA5 gust, dual-consumer threshold design)
+- Decision: `src/downloaders/era5_wind_downloader.py` (new) downloads hourly
+  ERA5 10 m instantaneous wind gust (`instantaneous_10m_wind_gust`, CDS
+  dataset `reanalysis-era5-single-levels`), one request per country/year over
+  `ERA5_WIND_BASELINE_PERIOD` (1991-2020). `src/processors/
+  extreme_wind_processor.py` (new) reduces this to a single raw physical
+  raster -- per-pixel mean annual maximum 10 m gust (m/s), the standard
+  characteristic-gust metric in wind engineering -- on the same unified grid
+  infrastructure as every other hazard (`cds_tasmax_downloader._resample_to_
+  1km` onto the country's fixed 1 km grid, per-country Min-Max, shared
+  `GridMismatchError` guard). `WIND_TEMPORAL_WINDOW` follows the
+  `PRECIP_TEMPORAL_WINDOW` pattern: same schema as `risk_calculator.
+  HAZARD_TEMPORAL_WINDOW`, asserted at import time, standalone (not merged).
+  Tier: this module produces the raw+normalized raster and the reusable
+  threshold-dispatch arithmetic only; it introduces no new empirical
+  threshold value beyond the two already closed in Phase 0.4 (below).
+- **One processor, two consumers, threshold logic as a parameter**: the raw
+  layer is deliberately threshold-agnostic (unlike heat/precip's "days above
+  X" indicator) because its two downstream consumers apply genuinely
+  different, non-convergent threshold methods to the same physical quantity
+  (Phase 0.4 closure, methodology Section 3.1/4): Wind bucket Tier 1 (IEC
+  turbine cut-out, ~25 m/s, fixed) vs. Solar bucket Tier 3 (ERA5 gust
+  percentiles P75/P90/P95/P99, final, not a placeholder). `WIND_BUCKET_
+  THRESHOLD_SPEC` / `SOLAR_BUCKET_THRESHOLD_SPEC` are named-constant specs
+  passed into one dispatcher, `classify_extreme_wind(values, threshold_spec)`
+  -- not two copy-pasted processors or two hardcoded threshold branches
+  scattered across the module.
+- **Correlation-gate scope confirmed against the methodology draft, not
+  assumed**: verified `docs/rework/GEAR_v3_methodology_nature_format.md`
+  Section 2 ("Extreme Wind is not part of a single shared five-hazard core;
+  it is assigned per bucket per the mechanistic rationale in Section 3") and
+  Section 5, which names only Extreme Precipitation and Wildfire as gated
+  candidates (plus the report-only Water Stress/Drought pair). Extreme Wind
+  is not listed in either place. This processor is therefore correctly NOT
+  added to any Phase 2.5 correlation-gate candidate list -- confirming, not
+  assuming, the work-plan's Phase 2.3 framing ("dedicated 6th hazard...not
+  part of the chronic-hazard correlation set").
+- **OPEN, flagged not silently decided -- ERA5 baseline period**: every other
+  v3 hazard is a CMIP6 projection for the explicit 2041-2070 window; ERA5 is
+  a historical reanalysis with no SSP/GCM axis and no 2050 horizon. The
+  methodology draft names ERA5 as the Extreme Wind data source but does not
+  specify or reconcile a baseline averaging period against the other
+  hazards' mid-century framing -- unlike the Aqueduct/CMIP6 alignment note
+  already declared in Methods Section 1.1. `ERA5_WIND_BASELINE_PERIOD =
+  (1991-01-01, 2020-12-31)` (the current WMO 30-yr climate normal) is an
+  engineering default chosen here, not a Phase-0-verified decision;
+  `extreme_wind_processor.WIND_TEMPORAL_WINDOW_IS_PROJECTED = False` makes
+  the asymmetry an explicit, queryable flag rather than a buried assumption.
+  Pending the author's confirmation of either this period or an alternative,
+  same status class as the still-open gas `age_factor` rate and the RNG-
+  granularity question.
+- Reason: Phase 0.4 already closed which threshold each bucket uses (this
+  file, "Solar Extreme Wind: ERA5 gust percentile is final, not
+  contingency", below); Phase 2.3 implements the acquisition/processing
+  layer those two closed decisions consume, without pre-empting Phase 3.1's
+  RiskBand assembly or Phase 3.1's applicable-hazard-table wiring.
+- **Not wired into the core, on purpose**: `risk_calculator.HAZARD_TERMS`
+  and `HAZARD_TEMPORAL_WINDOW` are unchanged (verified:
+  `test_not_wired_into_risk_calculator_hazard_terms_yet`,
+  `test_wind_not_merged_into_the_core_hazard_temporal_window_dict`). Not a
+  correlation-gate candidate (see above); its applicable-hazard-table
+  membership (Wind, Solar buckets) is a Phase 3.1 decision.
+- References: `src/downloaders/era5_wind_downloader.py`,
+  `src/processors/extreme_wind_processor.py`,
+  `tests/test_extreme_wind_processor.py` (14 tests),
+  `docs/rework/GEAR_v3_methodology_nature_format.md` Sections 2/3.1/4,
+  `docs/rework/GEAR_v3_work_plan.md` Phase 2.3.
+- Status: active. Raw + normalized raster layer and threshold-dispatch
+  utility only. RiskBand assembly and applicable-hazard-set inclusion
+  (Phase 3.1/3.2) are open; the ERA5 baseline-period choice above is open
+  pending author confirmation.
+
+## [2026-09-11] Solar Extreme Wind: ERA5 gust percentile is final, not contingency (v3 Phase 0.4)
+- Decision: GEAR v3's Solar bucket Extreme Wind hazard uses the ERA5 gust
+  percentile method (P75/P90/P95/P99) as its Tier 3 basis, final -- not a
+  fallback pending a Tier 1 structural threshold. Turbine cut-out speed
+  (~25 m/s, IEC design standard) remains Wind-bucket-specific and is not
+  shared with Solar.
+- Reason: No single defensible Tier 1 value exists for solar tracker
+  structural wind uplift. ASCE 7's design wind speed is inherently
+  site-specific by construction (derived from location, Risk Category,
+  Exposure Category, ASCE 7 Section 26), not a universal constant the way
+  IEC turbine cut-out speed is. Manufacturer survival ratings vary by
+  product generation -- observed range ~51-60+ m/s (115 mph vs. 135+ mph)
+  across two data points from a single manufacturer alone, before
+  accounting for the wider manufacturer landscape. This is not comparable
+  in rigor to the turbine cut-out speed already used for the Wind bucket.
+- Status: active. Closes v3 methodology Section 3.1/Section 4's Solar
+  Extreme Wind entry.

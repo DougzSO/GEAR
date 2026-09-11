@@ -5,9 +5,15 @@ One test per fuel_type_bucket (including the neutral gas/oil-gas and
 nuclear/bioenergy thermal cases), coal's assumed-overhaul sawtooth (decay
 within a cycle, partial recovery at a cycle boundary, multiple cycles), the
 wind CF_initial dead-code-path check, one mixed-fuel case, one
-missing-commissioning_year case, plus the sign convention, the [1,2] clip,
-the study-horizon constant, and the plant_uid-keyed multiplicative
-application.
+missing-commissioning_year case, plus the sign convention, the [1,2] clip
+and the study-horizon constant.
+
+The former "apply to Hazard" (age_factor multiplying a Hazard CSV,
+plant_uid-keyed) tests are removed: that CCRS-assembly-shaped join was
+retired along with ``src/index/ccrs_report.py`` (GEAR v3 Phase 1,
+docs/DECISIONS.md). ``age_factor`` itself is unchanged and still the
+Vulnerability term of Equation 1 (``src/index/risk_calculator.py``), applied
+there directly, not via a separate probe.
 """
 
 import inspect
@@ -17,10 +23,9 @@ import pandas as pd
 import pytest
 
 from src.index import age_factor as af
-from src.index import ccrs_calculator as ccrs
-from src.index.ccrs_calculator import PLANT_UID
+from src.index import risk_calculator as ccrs
+from src.index.risk_calculator import PLANT_UID
 from src import config
-from tests.diagnostics.hazard_step_probes import age_factor_apply_to_hazard
 
 
 # --------------------------------------------------------------------------
@@ -195,53 +200,6 @@ def test_compute_age_factors_flags_and_keeps_missing_year_rows(monkeypatch):
     assert row.loc["A-2", "age_factor"] == 1.0
     assert not row.loc["A-1", "age_factor_neutralized_missing_year"]
     assert row.loc["A-1", "age_factor"] == pytest.approx(1 + 0.004 * (2050 - 2010))
-
-
-# --------------------------------------------------------------------------
-# application: plant_uid key, multiplicative
-# --------------------------------------------------------------------------
-def test_apply_to_hazard_multiplies_per_plant_uid_never_sums(tmp_path):
-    hazard = pd.DataFrame({
-        PLANT_UID: ["A-1", "A-1", "B-2"],
-        "water_scenario": ["opt", "pes", "opt"],
-        "hazard_gfdl_esm4": [0.10, 0.20, 0.50],
-        "hazard_miroc6": [0.40, 0.60, 0.80],
-    })
-    hz_csv = tmp_path / "ccrs_hazard.csv"
-    hazard.to_csv(hz_csv, index=False)
-
-    age_factors = pd.DataFrame({
-        PLANT_UID: ["A-1", "B-2"],
-        "age": [40.0, 20.0],
-        "age_factor": [1.25, 2.0],
-        "age_factor_neutralized_missing_year": [False, False],
-    })
-
-    out = age_factor_apply_to_hazard(hz_csv, age_factors=age_factors)
-
-    # A-1 rows both multiplied by 1.25, B-2 by 2.0 -- multiplication, not addition
-    a1 = out[out[PLANT_UID] == "A-1"]
-    np.testing.assert_allclose(a1["hazard_gfdl_esm4_aged"], [0.10 * 1.25, 0.20 * 1.25])
-    np.testing.assert_allclose(a1["hazard_miroc6_aged"], [0.40 * 1.25, 0.60 * 1.25])
-    b2 = out[out[PLANT_UID] == "B-2"]
-    np.testing.assert_allclose(b2["hazard_gfdl_esm4_aged"], [0.50 * 2.0])
-    # original columns untouched
-    np.testing.assert_allclose(out["hazard_gfdl_esm4"], [0.10, 0.20, 0.50])
-
-
-def test_apply_to_hazard_rejects_a_stale_hazard_csv(tmp_path):
-    hazard = pd.DataFrame({
-        PLANT_UID: ["OLD-999"],
-        "hazard_gfdl_esm4": [0.1], "hazard_miroc6": [0.2],
-    })
-    hz_csv = tmp_path / "ccrs_hazard.csv"
-    hazard.to_csv(hz_csv, index=False)
-    age_factors = pd.DataFrame({
-        PLANT_UID: ["A-1"], "age": [10.0], "age_factor": [1.0],
-        "age_factor_neutralized_missing_year": [False],
-    })
-    with pytest.raises(ValueError, match="stale"):
-        age_factor_apply_to_hazard(hz_csv, age_factors=age_factors)
 
 
 # --------------------------------------------------------------------------

@@ -1282,3 +1282,228 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   `src/index/{ccrs_calculator,monte_carlo}.py`,
   `src/visualization/tables.py`, `docs/memory/04`.
 - **Status:** Ativa. Nenhum commit — aguardando autorização.
+
+## 26. GEAR v3 rework — Phase 0 blocking verifications fechadas (2026-09-11)
+
+- **Contexto:** `docs/rework/GEAR_v3_work_plan.md` (plano de reconstrução da
+  metodologia GEAR v3, ainda não implementado em `src/`) exigia quatro
+  verificações bloqueantes antes de qualquer código da Fase 1: campo de
+  tecnologia de resfriamento e campo de retrofit/repowering no GEM, classes
+  de perigo FWI/EFFIS e limiares de profundidade de inundação HAZUS-MH, e
+  limiar de vento estrutural para trackers solares utility-scale.
+- **Decisão:** as quatro investigações foram concluídas e confirmadas pelo
+  autor; nenhuma implica mudança de código nesta sessão (Fase 0 é
+  só-investigação por regra do próprio plano). Achados:
+  1. Campo de tecnologia de resfriamento: **não existe** em nenhuma das 52
+     colunas do GEM Global Integrated Power Tracker (snapshot
+     `20260809`), para nenhum dos três países. Campo mais próximo
+     (`Technology`) registra ciclo turbina/caldeira, não sistema de
+     resfriamento do condensador.
+  2. Campo de retrofit/repowering: **reconfirmado vazio**, sem mudança
+     desde o inventário anterior. Família "Conversion" (eventos de
+     conversão de combustível) tem ~0 valores não-nulos nos três países.
+  3. Classes de perigo FWI/EFFIS: fonte primária (EFFIS/Copernicus,
+     base Van Wagner & Pickett 1985) define **6 classes**, não 5 — Low
+     (<11.2), Moderate (11.2-21.3), High (21.3-38.0), Very High
+     (38.0-50.0), Extreme (50.0-70.0), Very Extreme (>70.0, adicionada
+     em junho de 2021). Adotadas as 6 como Tier 1 para Wildfire.
+  4. Limiares HAZUS-MH: os valores rascunhados (0,2/0,5/1,5 m) **não
+     existem** no manual técnico primário da FEMA — HAZUS-MH usa curvas
+     contínuas de profundidade-dano por tipo de ocupação, em pés, não
+     cortes categóricos em metros; adicionalmente incompatível com o
+     dado `pr` do CMIP6 já usado no pipeline (sem etapa de conversão
+     precipitação→profundidade de inundação). Extreme Precipitation
+     rebaixada de Tier 1 para Tier 3 (percentil amostral, mesmo método
+     de Extreme Heat).
+  5. Limiar de vento estrutural para trackers solares: **nenhum valor
+     Tier 1 defensável** — ASCE 7 é inerentemente específico de local
+     (não uma constante como o cut-out de turbina IEC), e classificações
+     de sobrevivência variam por geração de fabricante (~51-60+ m/s
+     observado). Fallback ERA5 gust percentile confirmado como **final**
+     para Solar, não contingência.
+- **Consequências:** `docs/rework/GEAR_v3_work_plan.md` Fase 0 fechada,
+  Fase 1 liberada para começar. `docs/rework/GEAR_v3_methodology_nature_
+  format.md` Seções 3.1, 3.2 e a tabela de Tier 1/Tier 3 da Seção 4
+  reescritas para refletir estado resolvido, não mais "pending". Nenhuma
+  mudança em `src/` — os hazards Wildfire e Extreme Precipitation e a
+  reestruturação Hazard/Exposure/Vulnerability da v3 ainda não estão
+  implementados (Fase 1-3 do plano).
+- **Arquivos:** `docs/DECISIONS.md` (cinco novas entradas, 2026-09-11),
+  `docs/ARCHITECTURE.md` Seções 7.1 e 7.3 (notas de reconfirmação),
+  `docs/rework/GEAR_v3_methodology_nature_format.md`,
+  `docs/rework/GEAR_v3_work_plan.md`.
+- **Status:** Ativa. Achados são definitivos (verificação contra fonte
+  primária), não sujeitos a nova checagem a menos que a fonte primária
+  (GEM, EFFIS, FEMA, fabricantes de tracker) publique uma nova versão.
+
+## 27. GEAR v3 Fase 1 — núcleo Risk_i,h substitui CCRS (2026-09-11)
+
+- **Contexto:** Fase 1 do plano de reconstrução v3
+  (`docs/rework/GEAR_v3_work_plan.md`) exigia substituir o núcleo
+  `Hazard × age_factor × EventMultiplier` (CCRS) pela Equação 1
+  (`Risk_i,h = Hazard_i,h × Exposure_i × Vulnerability_i`, por hazard,
+  nunca somado entre hazards), remover `EventMultiplier` do núcleo, e
+  aplicar o achado da Fase 0 sobre ausência do campo de resfriamento no
+  GEM (bucket `thermal` homogêneo).
+- **Decisão:** `src/index/ccrs_calculator.py` e `src/index/ccrs_report.py`
+  foram **deletados** (não depreciados) e substituídos por
+  `src/index/risk_calculator.py`. Principais escolhas:
+  - `risk_i_h(hazard_i_h, exposure_mw, vulnerability)` é o produto direto
+    da Equação 1, uma linha por hazard — não existe mais um `Hazard_i,s`
+    combinado. A infraestrutura de amostragem/transformação/bounds
+    (`sample_terms`, `transform_term`, `FROZEN_BOUNDS`, `plant_uid`) foi
+    **portada sem alteração** — Fase 1 não mexe em normalização
+    (isso é Fase 2.4/2.5, mantido importável, não inlined).
+  - Exposure: `exposure_capacity_mw` (MW bruto, única forma aceita por
+    `risk_i_h`) vs. `exposure_log10_display` (transform de visualização,
+    retorna um array com subtipo `ExposureLog10Display`; `risk_i_h`
+    levanta `TypeError` se receber esse tipo — guarda em nível de tipo,
+    não só de convenção).
+  - `HAZARD_TEMPORAL_WINDOW`: constante nomeada por termo de hazard
+    (`ws`/`sv`/`iv` = ponto-estimativa Aqueduct ~2050; `heat`/`spei` =
+    janela CMIP6 explícita 2041-2070), em vez de depender de prosa em
+    docstring de processor.
+  - `EventMultiplier` removido do núcleo (nenhum import, nenhuma
+    chamada). `event_multiplier.py` continua existindo, apenas com o
+    import de `ccrs_calculator` renomeado para `risk_calculator`
+    (mudança mecânica, sem lógica nova) — candidato a validador da Fase
+    5, não usado por `risk_calculator.py`.
+  - **Sinalizado, não decidido silenciosamente:** `sv`/`iv` (variabilidade
+    sazonal/interanual da água) eram combinados com `ws` em um
+    `water_sub` composto no núcleo antigo. A metodologia v3 (Seção 2)
+    lista só "Water Stress" como hazard — não menciona `sv`/`iv`. Em vez
+    de manter o composto antigo ou descartar os dois indicadores em
+    silêncio, `risk_calculator.py` computa `sv`/`iv` como hazards
+    independentes, rotulados como "não é um hazard da Seção 2 v3,
+    pendente da Fase 3" — decisão de inclusão fica para a Fase 3.
+  - `thermal` permanece homogêneo (Fase 1.3) — nenhuma bifurcação
+    água-de-passagem/seco, já que o campo de resfriamento não existe no
+    GEM (achado da Fase 0).
+- **Quebra em cascata, esperada e não mascarada:** `src/index/
+  risk_bands.py`, `src/index/monte_carlo.py`,
+  `src/index/emdat_validation.py`, `src/main.py` e todo
+  `src/visualization/` ainda importam símbolos agora deletados
+  (`BUCKET_WEIGHTS`, `compute_hazard`, `compute_hazard_by_gcm`, colunas
+  `ccrs_{gcm}`) — quebram na importação ou na chamada. Correção desses
+  módulos depende de decisões metodológicas ainda não tomadas (Fase 3
+  `RiskBand_i,h`, Fase 4 PSAE, Fase 6/7 sensibilidade/visualização); não
+  foram remendados nesta tarefa — fazer isso seria antecipar
+  metodologia de fases futuras. `age_factor.py` foi atualizado (só o
+  import, sem mudança de lógica) e continua funcionando — é a fonte de
+  Vulnerability, inalterada.
+- **Testes:** `tests/test_ccrs_calculator.py`, `tests/test_ccrs_report.py`,
+  `tests/test_ccrs_integration.py` e `tests/diagnostics/
+  hazard_step_probes.py` deletados (testavam exclusivamente a montagem
+  CCRS retirada). `tests/test_age_factor.py` e
+  `tests/test_event_multiplier.py` perderam só os testes de "apply to
+  Hazard" (join contra o schema antigo `hazard_{gcm}`/`ccrs_hazard.csv`)
+  — os testes da lógica própria de cada módulo continuam. Novo
+  `tests/test_risk_calculator.py` (18 testes): Equação 1, guarda de tipo
+  do Exposure, ausência de símbolos CCRS retirados, `HAZARD_TEMPORAL_
+  WINDOW`, bounds/transforms herdados, `compute_risk_by_hazard` fim a
+  fim. Suite completa (exceto os 4 arquivos quebrados listados acima):
+  189 testes passando. `python -m src.index.risk_calculator
+  --check-bounds` confirmado contra os dados reais em disco (bounds
+  inalterados); `python -m src.index.risk_calculator` roda fim a fim
+  (324.240 linhas plant×scenario×hazard_term).
+- **Arquivos:** `src/index/risk_calculator.py` (novo),
+  `src/index/ccrs_calculator.py` / `src/index/ccrs_report.py` (removidos),
+  `src/index/age_factor.py`, `src/index/event_multiplier.py`,
+  `src/index/__init__.py`, `tests/test_risk_calculator.py` (novo),
+  `tests/test_age_factor.py`, `tests/test_event_multiplier.py`,
+  `docs/DECISIONS.md`, `docs/ARCHITECTURE.md` Seções 5 e 7.3,
+  `docs/rework/GEAR_v3_work_plan.md`.
+- **Status:** Ativa. Fases 1.1/1.2/1.4 fechadas. `sv`/`iv` em aberto
+  (Fase 3). `risk_bands.py`/`monte_carlo.py`/`main.py`/
+  `src/visualization/` quebrados, aguardando Fases 3/4/6/7.
+
+## 28. GEAR v3 Fase 2.1 — processor de Extreme Precipitation (2026-09-11)
+
+- **Contexto:** Fase 2.1 pedia um novo processor de hazard reaproveitando o
+  `pr` diário já baixado para o termo SPEI (sem novo download), no mesmo
+  padrão de grade unificada dos demais hazards, Tier 3 (Fase 0 já havia
+  fechado que HAZUS-MH não é fonte de limiar válida).
+- **Decisão:** `src/processors/extreme_precipitation_processor.py` (novo).
+  Indicador bruto: média de dias/ano, na janela 2041-2070, com `pr` diário
+  acima do limiar P95 **por pixel** dos próprios dias úmidos daquele pixel
+  (`pr >= 1 mm/dia`, convenção ETCCDI wet-day; P95 = convenção ETCCDI "very
+  wet days"/R95p, Zhang et al. 2011). Reaproveita
+  `cds_precipitation_downloader.raw_dir`/`_open_series`/`_pick_var` (mesmos
+  usados por `spei_processor` para `pr`) — zero código de download novo.
+  Grade: mesmo padrão nativo→resample 1km
+  (`cds_tasmax_downloader._resample_to_1km`) → Min-Max por país (modelos e
+  cenários pooled juntos) → guarda de grade compartilhada
+  (`GridMismatchError`, `_common.py`) — idêntico a `heat_stress_processor`/
+  `spei_processor`.
+- **Por que percentil-por-pixel, não um mm fixo:** ao contrário do calor
+  (limiar físico fixo 40°C), a metodologia v3 não tem limiar absoluto
+  defensável para "chuva extrema" neste tier — o Tier 3 da metodologia já
+  especifica "percentis de extremos diários de pr". Em vez de aplicar
+  percentil só na classificação (RiskBand, Fase 3), o percentil entra um
+  nível antes: o próprio limiar "extremo" é derivado por pixel (P95 dos dias
+  úmidos daquele pixel), preservando a mesma forma estrutural do indicador
+  de calor ("dias/ano acima de um limiar"), só que o limiar é percentual em
+  vez de físico fixo.
+- **Não plugado ao núcleo, deliberadamente:** `risk_calculator.HAZARD_TERMS`
+  e `HAZARD_TEMPORAL_WINDOW` **não** ganharam entrada `precip` — isso é
+  decisão da Fase 3, condicionada ao gate de correlação da Fase 2.5 (contra
+  Water Stress e Drought). O módulo novo define `PRECIP_TEMPORAL_WINDOW`
+  com o mesmo schema de `risk_calculator.HAZARD_TEMPORAL_WINDOW` (asserção
+  na importação), mas como constante isolada, não mesclada no dicionário do
+  núcleo — mesclar exigiria adicionar `"precip"` a `HAZARD_TERMS` também
+  (há um assert que casa os dois conjuntos), o que ligaria o hazard ao
+  Risk_i,h antes da hora.
+- **Testes:** `tests/test_extreme_precipitation_processor.py` (11 testes) —
+  paths, ausência de HAZUS-MH como fonte de limiar, schema do
+  `PRECIP_TEMPORAL_WINDOW`, não-mesclagem no núcleo, aritmética do indicador
+  (dia de pico conta, pixel seco vira NaN não zero), guarda de grade. Rodado
+  fim a fim contra dado real (Brasil, gfdl_esm4 + miroc6, 3 cenários):
+  processa, guarda de grade passa, Min-Max por país calculado (min≈0.033,
+  max≈16.23 dias/ano). Suite completa: 200 testes passando (fora dos 4
+  arquivos quebrados pela Fase 1).
+- **Arquivos:** `src/processors/extreme_precipitation_processor.py` (novo),
+  `tests/test_extreme_precipitation_processor.py` (novo), `docs/DECISIONS.md`.
+- **Status:** Ativa. Camada de raster (bruta + normalizada) apenas — gate de
+  correlação (Fase 2.5) e inclusão em tabela de hazard aplicável (Fase 3) em
+  aberto.
+
+## 29. GEAR v3 Fase 2.2 — Wildfire adiado, não implementado (2026-09-11)
+
+- **Contexto:** Fase 2.2 pedia um processor de Wildfire (FWI/EFFIS). Nenhum
+  processor chegou a ser escrito — a investigação de fonte de dado (pedida
+  pelo autor antes de qualquer código) encontrou um bloqueio real dos dois
+  lados possíveis.
+- **Decisão:** Wildfire sai do checklist ativo de hazards da v3 e vira
+  trabalho futuro / limite de escopo declarado — mesmo tratamento já dado
+  ao SLR (`docs/ARCHITECTURE.md` Seção 10). Documentação apenas; não há
+  código para remover.
+- **Achados que sustentam a decisão:**
+  1. Catálogo CDS: `near_surface_relative_humidity` (hurs) não existe na
+     lista diária do `projections-cmip6` para nenhum modelo. A alternativa
+     (`near_surface_specific_humidity` + `sea_level_pressure`, pra derivar
+     RH) também falha — `huss` só existe pra gfdl_esm4/ssp126 e
+     gfdl_esm4/ssp370, ausente em gfdl_esm4/ssp585 e em miroc6 nos três
+     cenários. Ver `analysis/fwi_catalog_check.py` /
+     `analysis/fwi_catalog_check.md`.
+  2. Dataset global ETH Zurich FWI-CMIP6 (Quilcaille et al. 2023, DOI
+     10.3929/ethz-b-000583391), verificado listando o índice central do
+     ZIP `fwixd_hursmin.zip` via HTTP Range requests (1318 arquivos, sem
+     baixar 1GB) — **zero cobertura GFDL-ESM4** (só GFDL-CM4, modelo
+     diferente, e só historical/ssp245/ssp585); e mesmo ignorando isso, o
+     dataset só tem indicadores anuais relativos ao percentil 95 do
+     período de referência 1850-1900 por célula, não FWI diário nem as
+     classes absolutas EFFIS já fechadas na Fase 0 — incompatível
+     estruturalmente com a abordagem RiskBand Tier 1 decidida.
+- **Consequências:** `docs/rework/GEAR_v3_methodology_nature_format.md`
+  Seções 2/3/5 atualizadas (checklist "seis" → "cinco" hazards, tabelas de
+  bucket sem Wildfire, gate de correlação sem o par Wildfire); tabela de
+  6 classes EFFIS e o argumento FIRMS-não-é-hazard preservados verbatim
+  numa nova Seção 10.1 "Deferred hazards / future work", ao lado do SLR —
+  citáveis se uma fonte de dado aparecer. `docs/rework/
+  GEAR_v3_work_plan.md` Fase 2.2 vira ponteiro de uma linha; Fase 2.5
+  perde o par Wildfire do escopo do gate.
+- **Arquivos:** `docs/DECISIONS.md`, `docs/rework/
+  GEAR_v3_methodology_nature_format.md`, `docs/rework/
+  GEAR_v3_work_plan.md`, `analysis/fwi_catalog_check.py`
+  (investigação, mantida — não é código de produção).
+- **Status:** Ativa. Adiado, não reaberto sem uma fonte de dado nova.

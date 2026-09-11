@@ -88,3 +88,37 @@ Monte Carlo e as figuras 1–7). As verificações pós-dados V1–V6
 (`ARCHITECTURE.md` Seção 9) estão **todas fechadas**; o CCRS substitui
 SCI/NAES. A camada de índice está completa exceto relatórios per-country
 adicionais.
+
+2026-09-11: Fase 0 do plano de reconstrução GEAR v3
+(`docs/rework/GEAR_v3_work_plan.md`) fechada — quatro verificações
+bloqueantes (campo de resfriamento GEM, campo de retrofit GEM, classes
+FWI/EFFIS, limiares HAZUS-MH, limiar de vento estrutural solar)
+concluídas e confirmadas pelo autor. Só documentação/investigação, sem
+mudança em `src/` — ver item 26 de
+[05-decisoes-tecnicas.md](05-decisoes-tecnicas.md) e `docs/DECISIONS.md`.
+
+2026-09-11: Fase 2.2 do plano GEAR v3 (Wildfire) adiada, não implementada —
+sem RH diária no catálogo CDS para gfdl_esm4+miroc6×3-SSP, e o dataset
+alternativo ETH Zurich FWI-CMIP6 não cobre GFDL-ESM4 e é estruturalmente
+incompatível (indicadores anuais relativos a percentil, não classes EFFIS
+absolutas). Tratado como trabalho futuro, mesmo padrão do SLR — valores
+das 6 classes EFFIS preservados em
+`docs/rework/GEAR_v3_methodology_nature_format.md` Seção 10.1. Ver item 29
+de [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).
+
+2026-09-11: Fase 2.1 do plano GEAR v3 fechada — novo
+`src/processors/extreme_precipitation_processor.py` (dias/ano acima do P95
+por pixel dos dias úmidos, Tier 3, reaproveita o `pr` já baixado para SPEI).
+Não plugado a `risk_calculator.HAZARD_TERMS` ainda (aguarda gate de
+correlação Fase 2.5 e Fase 3). 200 testes passando. Ver item 28 de
+[05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).
+
+2026-09-11: Fase 1 do plano GEAR v3 fechada — `src/index/ccrs_calculator.py`
+/ `ccrs_report.py` deletados (não depreciados), substituídos por
+`src/index/risk_calculator.py` (Equação 1, `Risk_i,h`, por hazard, sem
+`EventMultiplier`). `risk_bands.py`, `monte_carlo.py`, `main.py` e
+`src/visualization/` agora quebrados (aguardam Fases 3/4/6/7) — quebra
+esperada e documentada, não mascarada. 189 testes passando fora desses 4
+arquivos. `sv`/`iv` (variabilidade da água) sinalizados como hazard em
+aberto para a Fase 3. Ver item 27 de
+[05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).
