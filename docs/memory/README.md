@@ -2,9 +2,12 @@
 
 Memória de engenharia de sessão: como o código deste repositório funciona e
 como mexer nele. Propósito diferente de `docs/ARCHITECTURE.md` (metodologia
-do artigo), `docs/INVENTORY.md` (herança do repositório anterior) e
-`docs/DECISIONS.md` (log datado de decisões metodológicas/de fonte de dado).
-Leia os quatro, não um no lugar do outro.
+do artigo), `docs/INVENTORY.md` (herança do repositório anterior),
+`docs/DECISIONS.md` (log datado de decisões metodológicas/de fonte de dado)
+e `docs/LIMITATIONS.md` (índice consolidado, datado, de toda limitação
+declarada/hazard excluído/downgrade de tier já fechado — leia este primeiro
+se a pergunta for "o que este projeto decidiu não fazer, e por quê").
+Leia os cinco, não um no lugar do outro.
 
 ## Ordem de leitura
 
@@ -161,4 +164,29 @@ SSPs × 2041-2070, mas sem variante de máximo diário nem gust; e `sfcWind`
 fechado da Fase 2.3 (conversão exigiria gust-factor não trivial). ERA5
 mantido, assimetria declarada como limitação (não escondida) nas Seções
 2/3.1/4/9 da metodologia. Nenhum código alterado. Ver item 32 de
+[05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).
+
+2026-09-11: Criado `docs/LIMITATIONS.md` — índice único, datado, de toda
+limitação declarada/hazard excluído/downgrade de tier já fechado no
+projeto (SLR, pesos por bucket, campo de resfriamento GEM, campo de
+retrofit GEM, downgrade HAZUS-MH, limiar de vento solar, Wildfire, Extreme
+Wind/ERA5, par de GCM, age_factor gas/oil-gas). Cada linha aponta para a
+entrada completa em `docs/DECISIONS.md`, não duplica o texto. Convenção
+nova, vinculante a partir de agora: todo fechamento de fase que introduzir
+um novo Tier 3, hazard excluído ou limitação declarada precisa adicionar a
+linha datada em `docs/LIMITATIONS.md` na mesma tarefa que a fecha — não
+como limpeza adiada. Ponteiros de uma linha adicionados em
+`docs/ARCHITECTURE.md` (parágrafo de propósito) e no topo deste índice.
+Nesta mesma tarefa: busca bibliográfica limitada por curva de degradação
+de `age_factor` para gás/oil-gas (equivalente ao Kim & Moon/Sagaf do
+carvão) não encontrou fonte Tier 1/2 do tipo necessário — literatura de
+turbomáquinas mede em horas de operação (majoritariamente recuperável via
+lavagem), não idade calendário; Grubert (2020, *IOPSciNotes*) mostra o
+sinal oposto no nível de frota (plantas a gás dos EUA ficaram mais
+eficientes com a idade, ao contrário do carvão), mas confundido com
+retrofit/despacho, não isolável como taxa de envelhecimento por planta.
+Tratamento `age_factor = 1.0` (neutro) confirmado como **final**, não mais
+pendente. Nenhum código alterado (`src/index/age_factor.py` mantém o
+comentário "PROVISIONAL", candidato a uma pequena edição futura, fora do
+escopo desta tarefa). Ver item 33 de
 [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).

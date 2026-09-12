@@ -132,6 +132,109 @@ hazard's threshold design already uses, and no CMIP6 gust product exists
 under any name. See Section 3.1 for the full finding and Section 9 for
 the resulting cross-hazard comparability consequence.
 
+### 2.1 GCM selection rationale (GFDL-ESM4, MIROC6)
+
+Every CMIP6-sourced row in Section 2 (Extreme Heat, Drought, Extreme
+Precipitation) is drawn from exactly two GCMs, `gfdl_esm4` and `miroc6`,
+run jointly across all three active scenarios (SSP1-2.6, SSP3-7.0,
+SSP5-8.5). This subsection states plainly why this specific pair, and
+separates two different kinds of justification that this project's
+own history blended informally: what was **operational** (catalogue
+availability at the time the second model was chosen) and what is
+**climatological** (how the pair actually sits in the CMIP6 ensemble).
+Both are reported; neither is allowed to borrow the other's authority.
+
+**Origin of GFDL-ESM4 as the first/primary model.** GFDL-ESM4 was the
+sole CMIP6 GCM in the prior repository this project's acquisition layer
+was reconstructed from, and its selection as the initial model predates
+this project's own decision record. No documented justification for that
+original choice survives in either repository. This is stated here
+rather than reconstructed after the fact: GFDL-ESM4's role as the
+anchor model is an inherited operational default, not a result of this
+project having compared it against alternatives.
+
+**Why MIROC6 as the second model (operational).** When a second GCM
+became a mandatory sensitivity check, four candidates were checked
+against the Copernicus CDS `projections-cmip6` catalogue for full
+SSP1-2.6/SSP3-7.0/SSP5-8.5 coverage: IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-LR,
+CNRM-CM6-1. IPSL-CM6A-LR was excluded outright (SSP1-2.6 and SSP5-8.5
+absent from its catalogue entry). CNRM-CM6-1 was passed over because
+CNRM-family models typically ship as realization `r1i1p1f2`, which would
+have broken variant parity with the already-downloaded GFDL-ESM4
+(`r1i1p1f1`). Among the two catalogue- and variant-compatible candidates
+remaining, MIROC6 was chosen over MPI-ESM1-2-LR (kept on record as the
+fallback) for its greater structural divergence from GFDL-ESM4 --
+distinct convection scheme and model lineage. This divergence claim was
+a qualitative, author-level judgment at the time of selection, not a
+comparison against a cited sensitivity metric; it is put on a
+quantitative footing below.
+
+**Climatological standing (Tier 1, literature values).** By equilibrium
+climate sensitivity (ECS), the two models are close to each other and
+both sit near the low end of the CMIP6 ensemble: GFDL-ESM4 ECS is
+reported at 2.6-2.7 K (Dunne et al., 2020, *JAMES*; Zelinka et al., 2020,
+*GRL*) and MIROC6 at 2.6 K, explicitly unchanged from its predecessor
+MIROC5 (Tatebe et al., 2019, *GMD*). The full CMIP6 ensemble spans
+approximately 1.8-5.6 K (INM-CM4-8 low, CanESM5 high), with a
+multi-model mean near 3.7 K (Zelinka et al., 2020; Meehl et al., 2020,
+*Science Advances*). **The pair therefore does not bound or span the
+CMIP6 sensitivity range** -- both models sit in the lower third of it,
+roughly 0.05-0.1 K apart. Framing this pair as a low-vs-high
+"sensitivity bounding" pair, as this project's internal history informally
+did based on observed output spread, overstates what the pair
+demonstrates about global climate sensitivity and is not repeated in
+this form here.
+
+What the pair does demonstrate, and what the observed spread in this
+pipeline's own outputs is actually attributable to, is structural and
+regional divergence rather than global-mean sensitivity: distinct
+convection parameterization, model lineage, and native grid resolution
+(GFDL-ESM4's atmosphere is a cubed-sphere grid at approximately
+1 deg x 1.25 deg; MIROC6 uses a T85 spectral grid at approximately
+1.4 deg x 1.4 deg -- Dunne et al., 2020; Tatebe et al., 2019). This
+project's own reprocessing found extreme-heat-day counts differing by
+one to two orders of magnitude between the two models for the same
+plants under identical scenarios, and wind/solar hazard scores that were
+near-zero under GFDL-ESM4 and near-saturated under MIROC6
+(`analysis/ccrs_bucket_weighted_distribution.md`) -- a genuine,
+literature-consistent divergence in regional extremes and coarse-grid
+behavior, not an artifact of one model being "more sensitive" in the
+ECS sense. Independent regional evaluation literature is directionally
+consistent with MIROC6 producing outlier behavior for the specific
+variables this pipeline uses: MIROC6 was flagged as significantly
+underestimating near-surface wind speed relative to observations in a
+22-model Mediterranean evaluation, and was the worst-performing model
+among 13 CMIP6 GCMs for historical surface air temperature over
+Thailand (Kamworapan et al., 2021, *Heliyon*). These are regional,
+single-study findings, not a global consensus verdict on either model,
+and are reported at that evidentiary weight.
+
+**Data-completeness track record (operational, kept separate from the
+above).** Across every CDS catalogue check run in this project
+(Phase 0 SPEI/Hargreaves, Phase 2.1 Extreme Precipitation, Phase 2.2
+FWI/humidity, Phase 2.3 Extreme Wind), exactly one model-specific
+availability gap was ever found, and it was GFDL-ESM4's, not MIROC6's:
+daily `tasmin` is absent from the catalogue for `gfdl_esm4` x SSP3-7.0,
+which is why this pipeline's drought term uses Thornthwaite PET
+(`pr` + `tas`) rather than Hargreaves PET (`pr` + `tasmin` + `tasmax`) --
+Hargreaves would have silently dropped one GCM/scenario cell from the
+drought term (`analysis/spei_catalog_check.md`). Extreme Precipitation
+(Phase 2.1) reuses that same already-clean `pr` series and adds no new
+gap for either model. Extreme Wind (Phase 2.3) found `near_surface_wind_speed`
+fully available for both models across all three scenarios; the only
+absences (a daily-maximum wind variant, an instantaneous gust variable)
+are not on the CDS daily catalogue for *either* model and are not
+model-specific. Wildfire (Phase 2.2) was blocked by relative humidity
+being entirely absent from the daily catalogue for both models under
+every scenario -- a symmetric, variable-level gap, not one model doing
+worse than the other; within the specific-humidity fallback that was
+explored and ultimately rejected, MIROC6 had zero scenario coverage
+against GFDL-ESM4's partial coverage, but this never became operative
+since the fallback itself was abandoned on other grounds (Section 10.1).
+Taken together, MIROC6 has not been the source of a single realized data
+gap in this pipeline; if anything, the one gap on record argues against,
+not for, treating MIROC6 as the operationally weaker choice.
+
 ## 3. Technology-specific applicable hazard subsets
 
 Each bucket is evaluated only against hazards with a declared physical
@@ -198,10 +301,35 @@ model-resolution limits) corroborates that a converted proxy would likely
 bias risk downward in a known direction, but is supporting evidence, not
 the primary rejection ground. ERA5 (1991-2020 historical baseline) is
 therefore retained as Extreme Wind's sole source; the resulting
-scenario-invariance of this one hazard is a declared limitation, carried
-into Section 9's comparability discussion. Full finding:
-`docs/DECISIONS.md`, "GEAR v3 Phase 2.3 follow-up: ERA5 temporal
-asymmetry retained (CMIP6 substitution investigated and rejected)".
+scenario-invariance of this one hazard is carried into Section 9's
+comparability discussion. Full finding: `docs/DECISIONS.md`, "GEAR v3
+Phase 2.3 follow-up: ERA5 temporal asymmetry retained (CMIP6
+substitution investigated and rejected)".
+
+**This is a stance, not an oversight.** The investigation above is not
+reported here as an unresolved gap the project failed to close; it is
+the basis for treating Extreme Wind's historical baseline as a
+deliberate choice. IPCC AR6 WGI Chapter 11 itself attributes "low
+confidence" to projected changes in severe wind in most regions,
+specifically because current-generation GCMs "often do not have
+sufficient resolution or accurate parametrization" to resolve the
+convective and mesoscale processes that generate damaging gusts --
+the same resolution limit finding 1 above documents directly on this
+project's own two configured GCMs. Building a CMIP6-based future wind
+trend for this hazard would have required exactly the unvalidated
+gust-factor conversion rejected in finding 2 -- manufacturing an
+apparent SSP-dependent trend for a physical quantity the climate
+science itself does not yet claim to project reliably. A stable,
+directly observed historical exposure baseline is, given the current
+state of the science, the more epistemically honest representation of
+Extreme Wind risk, not merely the more convenient one: it is scenario-
+invariant because the underlying physical evidence does not support
+a scenario-resolved alternative, not because one was never sought. This
+project treats Extreme Wind as a deliberate scenario-invariant
+structural exposure baseline, and this framing is not conditional on a
+better CMIP6 wind product eventually appearing (Section 9; `docs/
+DECISIONS.md`, "GEAR v3 Extreme Wind: reframed as scenario-invariant
+structural exposure (not a data gap)").
 
 ### 3.2 Cooling technology heterogeneity within Thermal (resolved)
 
@@ -479,6 +607,23 @@ following are the only valid comparisons.
   columns of any comparison table or figure; this must be stated wherever
   such a table appears, not left to be discovered by a reader comparing
   columns that happen not to move.
+- **PSAE, same exception, same reason**: Extreme Wind's contribution to
+  PSAE_i (Section 6) -- whether it counts toward the RiskBand >= High
+  numerator for a given bucket -- is identical across all three SSP
+  columns by construction, because it is computed once from the ERA5
+  baseline and copied across the scenario axis, not because the SSPs
+  happened to produce the same result. This is stated plainly as
+  **structural exposure to severe wind, scenario-independent** (Section
+  3.1), not left as a silent artifact for a reader to infer from three
+  identical-looking columns.
+  **Requirement carried forward to Phase 7 (visualization/reporting,
+  not yet built):** any PSAE table or figure that presents the
+  ssp126/ssp370/ssp585 columns side by side must visually distinguish
+  Extreme Wind's row/contribution from the scenario-varying hazards --
+  e.g., a footnote marker on the hazard label, or shading distinct from
+  the scenario-varying cells -- so the figure itself does not imply a
+  scenario sensitivity for Extreme Wind that does not exist. This is
+  recorded here as a Phase 7 requirement, not implemented by this entry.
 
 ## 10. Declared scope boundaries (closed, not reopened)
 

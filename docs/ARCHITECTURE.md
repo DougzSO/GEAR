@@ -8,7 +8,10 @@ registradas estão tomadas. Os itens de **verificação pós-dados** (V1–V6),
 que só podiam ser resolvidos após a reconstrução da camada de aquisição e a
 inspeção dos dados reais, estão **todos fechados** (V5 fechado em
 2026-09-03). O desenho do CCRS (Seção 5) está fechado e registrado em
-`docs/DECISIONS.md`.
+`docs/DECISIONS.md`. Toda limitação declarada, downgrade de tier ou hazard
+excluído (SLR, Wildfire, escopo de cenário, etc.) tem uma linha datada,
+consolidada e indexada em `docs/LIMITATIONS.md` — não leia só
+`docs/DECISIONS.md` para essa pergunta.
 
 The index layer is now implemented and committed: `src/index/ccrs_calculator.py`
 (T1, the Hazard term and the frozen global Min-Max bounds), `src/index/age_factor.py`

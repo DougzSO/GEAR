@@ -1418,3 +1418,213 @@ stated per entry per the standing rule.
   gust or daily-maximum wind product is added to the catalogue in the
   future (finding 1's absence, not finding 2's physical-quantity mismatch,
   is the part any future catalogue addition could change).
+
+## [2026-09-11] GCM pair (GFDL-ESM4, MIROC6) selection rationale -- retroactive documentation, not a new methodological choice
+
+- Decision: no code or configuration change. This entry, and the new
+  `docs/rework/GEAR_v3_methodology_nature_format.md` Section 2.1 ("GCM
+  selection rationale (GFDL-ESM4, MIROC6)"), formally document the
+  reasoning behind a GCM pair that has been in place and unquestioned
+  since the V4 decision (`docs/DECISIONS.md`, "Second CMIP6 GCM: MIROC6
+  (V4 closed)") and underlies every hazard verification run in Phases
+  0-2.4. The pair is unchanged: still `["gfdl_esm4", "miroc6"]`, no third
+  model added.
+- Reason this entry exists now: the pair's justification had never been
+  written down in one place, was never checked against actual ECS
+  literature, and was at risk of being asserted in the manuscript with
+  more confidence than the project's own history supports. This entry
+  reconstructs what was actually decided and when, separates what was
+  operational (catalogue/variant availability) from what is
+  climatological (ECS standing in the CMIP6 ensemble), and states plainly
+  where no formal justification exists rather than inventing one.
+- Findings, with evidence tier stated per claim:
+  1. **GFDL-ESM4 as the original/primary model: no justification found,
+     Tier: none -- stated as "operational default," not invented.**
+     `docs/memory/05-decisoes-tecnicas.md` records that the prior
+     repository already had `CMIP6_SOURCE_ID_CDS = "gfdl_esm4"` before
+     this project's own decision record begins. No commit, spec, or memory
+     file in either repository gives a reason GFDL-ESM4 was the original
+     single model. Do not backfill one in the manuscript; state it as an
+     inherited operational default.
+  2. **MIROC6 as the second model: operational selection, Tier 1/citable
+     for what the repo record actually says (`docs/DECISIONS.md`, "Second
+     CMIP6 GCM: MIROC6 (V4 closed)").** Of four candidates checked against
+     the CDS catalogue, IPSL-CM6A-LR was excluded for missing
+     SSP1-2.6/SSP5-8.5 coverage; CNRM-CM6-1 was passed over for its
+     typical `r1i1p1f2` variant (parity break with GFDL-ESM4's
+     `r1i1p1f1`); MIROC6 was chosen over the remaining MPI-ESM1-2-LR
+     fallback for "greatest structural divergence" from GFDL-ESM4. That
+     divergence claim was, at the time, a qualitative author judgment
+     (distinct convection scheme, model lineage) -- not backed by a cited
+     sensitivity metric. It is not reinterpreted here as having been an
+     ECS-based choice; it was not one.
+  3. **ECS standing: Tier 1/citable.** GFDL-ESM4 ECS = 2.6-2.7 K (Dunne
+     et al., 2020, *JAMES*, DOI 10.1029/2019MS002015; cross-checked
+     against Zelinka et al., 2020, *GRL*, DOI 10.1029/2019GL085782, whose
+     published forcing/feedback/ECS table gives 2.65 K). MIROC6 ECS =
+     2.6 K, stated explicitly in Tatebe et al. (2019, *GMD*,
+     DOI 10.5194/gmd-12-2727-2019) as unchanged from MIROC5. CMIP6
+     ensemble ECS range ~1.8-5.6 K, mean ~3.7 K (Zelinka et al., 2020;
+     Meehl et al., 2020, *Science Advances*, DOI 10.1126/sciadv.aba1981).
+     **Conclusion, stated without oversell: GFDL-ESM4 and MIROC6 are
+     climatologically close to each other (~0.05-0.1 K apart in ECS) and
+     both sit near the low end of the CMIP6 range. They do not act as a
+     genuine sensitivity-bounding pair in the ECS sense.** Any prior
+     phrasing in this project's history that implied a low-vs-high
+     bounding design (informally motivated by the ~10-100x spread in this
+     pipeline's own heat/wind/solar outputs,
+     `analysis/ccrs_bucket_weighted_distribution.md`) is a description of
+     structural/regional divergence, not of global climate sensitivity,
+     and the manuscript text is written to keep those two claims
+     separate.
+  4. **Grid resolution and regional-bias literature: Tier 1/citable, but
+     regional and non-exhaustive.** GFDL-ESM4 atmosphere ~1 deg x 1.25 deg
+     cubed-sphere (Dunne et al., 2020); MIROC6 ~1.4 deg x 1.4 deg T85
+     spectral (Tatebe et al., 2019) -- both already confirmed empirically
+     by this project's own downloads (V4 update entry above). MIROC6
+     flagged for wind-speed underestimation in a 22-model Mediterranean
+     evaluation and as the worst-performing model of 13 for historical
+     temperature over Thailand (Kamworapan, Thao, Gheewala, Pimonsree &
+     Prueksakorn, 2021, *Heliyon* 7(11):e08263). These are single regional
+     studies, cited at that weight -- not treated as a general verdict
+     against MIROC6.
+  5. **Data-completeness tally: Tier 1/citable, this project's own
+     records.** Across Phase 0 (SPEI/Hargreaves), Phase 2.1 (Extreme
+     Precipitation), Phase 2.2 (FWI/humidity), and Phase 2.3 (Extreme
+     Wind) catalogue checks, exactly one model-specific gap exists in
+     total: `gfdl_esm4` x `ssp370` x daily `tasmin`
+     (`analysis/spei_catalog_check.md`), which is why Thornthwaite PET was
+     chosen over Hargreaves PET for the drought term. MIROC6 has zero
+     catalogue gaps across all four phases. The Phase 2.2 Wildfire
+     blocker (relative humidity absent from the daily catalogue) is
+     symmetric across both models, not model-specific, and Wildfire was
+     deferred on that basis regardless of which model "caused" it
+     (`docs/DECISIONS.md`, "GEAR v3 Phase 2.2: Wildfire deferred").
+- Consequences: none to code, config, or existing outputs. The manuscript
+  now states this pair's rationale as operational-plus-structural, not as
+  an ECS-based bounding design; if a reviewer asks "why these two GCMs,"
+  Section 2.1 is the citable answer, including the explicit admission
+  that the "bounding" framing used informally in this project's own
+  history is weaker than it sounds.
+- References: `docs/rework/GEAR_v3_methodology_nature_format.md` Section
+  2.1, `docs/DECISIONS.md` ("Second CMIP6 GCM: MIROC6 (V4 closed)"),
+  `docs/memory/05-decisoes-tecnicas.md`, `analysis/spei_catalog_check.md`,
+  `analysis/fwi_catalog_check.md`, `analysis/wind_catalog_check.md`,
+  `analysis/gcm_catalog_check.md`, `analysis/ccrs_bucket_weighted_distribution.md`.
+- Status: active. Documentation-only; does not reopen V4 and does not
+  authorize adding, removing, or replacing either model.
+
+## [2026-09-11] GEAR v3 Extreme Wind: reframed as scenario-invariant structural exposure (not a data gap)
+
+- Decision: no code, configuration, or data-source change. This entry
+  reframes the existing Phase 2.3 finding -- ERA5 (1991-2020) retained as
+  Extreme Wind's sole source, no CMIP6/SSP substitution -- from a
+  "declared limitation" to a deliberate, settled position: Extreme Wind
+  is a scenario-invariant structural exposure baseline, by design, not an
+  unresolved data gap this project failed to close. Text updated in
+  `docs/rework/GEAR_v3_methodology_nature_format.md` Section 3.1 (closing
+  framing paragraph, appended after the existing investigation-and-
+  rejection paragraph, which is kept verbatim) and Section 9 (new PSAE
+  bullet stating the scenario-invariance explicitly, plus a Phase 7
+  visualization requirement).
+- Reason: the underlying investigation (`docs/DECISIONS.md`, "GEAR v3
+  Phase 2.3 follow-up: ERA5 temporal asymmetry retained") already found,
+  independently and sufficiently on either ground, that (1) no
+  daily-maximum or gust wind variable exists on the CDS `projections-
+  cmip6` catalogue for either configured GCM, and (2) the one daily
+  variable that does exist (`sfcWind`, daily mean) is not the same
+  physical quantity as the ERA5 instantaneous gust this hazard's
+  threshold design uses, and converting between them would require an
+  unvalidated, condition-dependent gust-factor parameterization already
+  investigated and rejected. What this entry adds is the epistemic
+  framing: IPCC AR6 WGI Chapter 11 itself assigns "low confidence" to
+  projected changes in severe wind in most regions because current-
+  generation GCMs "often do not have sufficient resolution or accurate
+  parametrization" for the convective/mesoscale processes that generate
+  damaging gusts -- the same limitation the Phase 2.3 investigation found
+  directly on this project's own two GCMs. Manufacturing an SSP-varying
+  wind trend via the rejected gust-factor conversion would therefore not
+  have added information; it would have fabricated apparent precision
+  about a quantity the physical climate science does not yet claim to
+  project reliably at this resolution. A stable, directly observed
+  historical baseline is the more epistemically honest choice given the
+  current state of the science, not merely the more convenient one.
+- Consequence for PSAE/comparability (Section 9): Extreme Wind's
+  contribution to PSAE_i is identical across all three SSP columns by
+  construction (computed once from ERA5, copied across the scenario
+  axis), stated explicitly as "structural exposure to severe wind,
+  scenario-independent" rather than left for a reader to infer from
+  static columns. A requirement is recorded for Phase 7 (visualization/
+  reporting, not yet built, no implementation here): any PSAE table or
+  figure showing the ssp126/ssp370/ssp585 columns side by side must
+  visually distinguish Extreme Wind (e.g., a footnote marker or distinct
+  shading) so the figure does not visually imply a scenario sensitivity
+  that does not exist.
+- **This is a settled epistemic position, not a placeholder.** This entry
+  explicitly closes the door on carrying this forward as a "TODO: find
+  better wind data" item. It is not reopened by the future appearance of
+  a CMIP6 daily-maximum or gust product on the catalogue in isolation --
+  the Phase 2.3 follow-up entry already scoped that narrow condition
+  (finding 1's absence) as the one thing that could change; even then,
+  finding 2 (the physical-quantity mismatch and the unvalidated
+  gust-factor conversion it would require) and the epistemic argument in
+  this entry would still need to be independently revisited and closed
+  before ERA5 is replaced. Absent that, this is not an open item.
+- References: `docs/rework/GEAR_v3_methodology_nature_format.md`
+  Sections 3.1, 9; `docs/DECISIONS.md`, "GEAR v3 Phase 2.3 follow-up: ERA5
+  temporal asymmetry retained (CMIP6 substitution investigated and
+  rejected)"; IPCC AR6 WGI Chapter 11 (severe wind projection
+  confidence); `analysis/wind_catalog_check.md`.
+- Status: active, closed. Documentation-only.
+
+## [2026-09-11] Gas/oil-gas age_factor: pinned-neutral treatment confirmed final after a bounded literature search
+
+- Decision: no code change. `src/index/age_factor.py`'s gas/oil-gas
+  `age_factor = 1.0` (pinned neutral) is confirmed as a **final** design
+  choice, not a still-open item awaiting a literature rate. This closes
+  the "provisional/open" status carried since the 2026-09-04 age_factor
+  entry.
+- Reason: a bounded search (a handful of targeted queries, not an
+  open-ended review) for a gas-turbine/combined-cycle age-degradation
+  curve analogous to coal's Kim & Moon (2012)/Sagaf (2020) found no
+  citable Tier 1/Tier 2 source of the required kind:
+  1. Turbomachinery degradation literature (e.g. Diakunchak-style
+     compressor-fouling studies) reports loss in **fired-operating-hours**
+     terms, not calendar age -- typically ~5% output / ~2.5% efficiency
+     loss around 20,000 fired hours, over two-thirds recoverable via
+     routine compressor washing. This project has no per-plant
+     operating-hours, capacity-factor history, or wash-schedule data to
+     convert an hours-based curve into a `retention(calendar_age)` form
+     the way `age = REFERENCE_YEAR - commissioning_year` requires; doing
+     so without that data would fabricate a rate, not cite one.
+  2. Fleet-level longitudinal evidence found the opposite sign from what
+     a simple decay curve would assume: Grubert (2020, *IOPSciNotes*,
+     "Same-plant trends in capacity factor and heat rate for US power
+     plants, 2001-2018") reports that US natural-gas plants ran more, and
+     more efficiently, as they aged (capacity-weighted fleet heat-rate
+     CAGR direction improving), in direct contrast to coal, which
+     declined -- attributed to retrofits, dispatch shifts, and vintage
+     effects rather than an isolable per-plant aging mechanism. This is
+     Tier 2/citable for the fleet-level *contrast* with coal, but is
+     explicitly not usable as a per-plant retention curve: it does not
+     isolate a %/year aging effect from confounding fleet-composition and
+     retrofit trends, and its sign would argue for a neutral-to-positive
+     adjustment, not a decay curve, if taken at face value -- which this
+     entry does not do either, given how confounded the estimate is.
+  3. No source combining a calendar-age index, a per-plant-comparable
+     unit, and isolation from retrofit/dispatch confounds was found for
+     gas or oil-gas thermal generation in this search.
+- Consequence: gas/oil-gas keeps `age_factor = 1.0` in
+  `src/index/age_factor.py` -- unchanged, no code touched by this entry.
+  This is now documented as a **declared absence of evidence**, not
+  evidence of no aging effect, and is not carried forward as a TODO. See
+  `docs/LIMITATIONS.md` for the consolidated limitation-tracking entry.
+- References: `src/index/age_factor.py` (comment there still reads
+  "PROVISIONAL" and is a candidate for a small, separate follow-up edit to
+  align the code comment with this closure -- not done here, out of
+  scope for a documentation-only task); `docs/DECISIONS.md`, "age_factor:
+  >=1 multiplier via `2 - retention(age)`, with corrected coal/hydro/wind
+  retention curves (final)" (2026-09-04); `docs/LIMITATIONS.md`.
+- Status: active, closed. Final -- not reopened by this entry's absence
+  of a source; revisit only if a new calendar-age-indexed, per-plant-
+  comparable source is published.

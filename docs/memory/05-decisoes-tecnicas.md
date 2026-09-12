@@ -1737,3 +1737,80 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   reabre se o catálogo CDS um dia oferecer gust ou máximo diário de
   vento no CMIP6 (motivo 1); o motivo 2 (incompatibilidade de grandeza)
   não seria resolvido por isso sozinho.
+
+## 33. `docs/LIMITATIONS.md` criado — índice consolidado de limitações; busca bibliográfica de age_factor gás/oil-gas fechada (2026-09-11)
+
+- **Contexto:** múltiplas decisões Tier 3/limitação declarada
+  acumularam-se espalhadas em `docs/DECISIONS.md` ao longo das Fases
+  0-2 (homogeneidade de resfriamento térmico, ausência de campo de
+  retrofit no GEM, age_factor gás/oil-gas neutro fixo, exclusão de SLR,
+  adiamento de Wildfire, invariância de cenário do Extreme Wind, pesos
+  por bucket, par de GCM). Pedido do autor: (1) busca bibliográfica
+  limitada por uma curva de degradação de age_factor para
+  gás/oil-gas antes de montar a tabela; (2) criar arquivo único,
+  padronizado, consolidando todas; (3) estabelecer convenção de
+  manutenção daqui pra frente.
+- **Decisão:**
+  1. Busca bibliográfica limitada (não revisão aberta) por curva
+     Tier 1/2 de degradação de eficiência de turbina a gás/ciclo
+     combinado por idade calendário, equivalente ao Kim & Moon
+     (2012)/Sagaf (2020) já usado para carvão. Não encontrada. A
+     literatura de degradação de turbomáquinas mede perda em **horas de
+     operação** (majoritariamente recuperável via lavagem de
+     compressor, ~5% saída/~2,5% eficiência por ~20.000 horas), não em
+     idade calendário — este projeto não tem dado de horas
+     operacionais, histórico de fator de capacidade nem cronograma de
+     lavagem por planta para converter uma coisa na outra sem inventar
+     a taxa. Grubert (2020, *IOPSciNotes*, "Same-plant trends in
+     capacity factor and heat rate for US power plants, 2001-2018")
+     mostra o sinal **oposto** no nível de frota (plantas a gás dos EUA
+     ficaram mais eficientes com a idade, ao contrário do carvão), mas é
+     Tier 2 só para o contraste de frota — confundido com
+     retrofit/despacho/composição de frota, não isolável como taxa de
+     envelhecimento por planta, e por isso não vira uma curva de
+     `retention(age)` utilizável. `age_factor = 1.0` (neutro) para
+     gás/oil-gas confirmado como **final**, não mais "provisional/open"
+     como constava desde 2026-09-04
+     (`docs/DECISIONS.md`, "Gas/oil-gas age_factor: pinned-neutral
+     treatment confirmed final after a bounded literature search").
+  2. `docs/LIMITATIONS.md` criado: uma linha datada por limitação
+     (Limitação | Motivo | Tier de evidência | Alternativas
+     consideradas e rejeitadas | Status Final/Revisitable | Referência
+     para a entrada completa em `docs/DECISIONS.md`). Populado
+     retroativamente com: exclusão de SLR (2026-09-03), pesos
+     w_water/w_heat/w_drought por bucket (2026-09-04), campo de
+     resfriamento GEM ausente (2026-09-11), campo de retrofit GEM
+     ausente (2026-09-11), downgrade HAZUS-MH→Tier 3 de Extreme
+     Precipitation (2026-09-11), limiar de vento estrutural solar sem
+     Tier 1 (2026-09-11), adiamento de Wildfire (2026-09-11),
+     invariância de cenário do Extreme Wind/ERA5 (2026-09-11), par de
+     GCM GFDL-ESM4/MIROC6 como escolha operacional, não de bounding de
+     sensibilidade (2026-09-11), e age_factor gás/oil-gas (2026-09-11,
+     fechado nesta mesma tarefa). A adoção das 6 classes FWI/EFFIS foi
+     conscientemente deixada de fora — não é uma limitação, é uma
+     escolha de classificação Tier 1.
+  3. Convenção de manutenção registrada no topo do próprio
+     `docs/LIMITATIONS.md`: todo fechamento de fase futuro que
+     introduzir um novo Tier 3, hazard excluído, invariância de
+     cenário ou qualquer outra limitação declarada precisa adicionar a
+     linha datada lá **na mesma tarefa que fecha a decisão** — não como
+     limpeza adiada. Uma entrada em `docs/DECISIONS.md` sozinha não
+     basta se o padrão bater com "limitação declarada".
+  4. Ponteiro de uma linha adicionado em `docs/ARCHITECTURE.md`
+     (parágrafo de propósito) e em `docs/memory/README.md` (parágrafo
+     de abertura + índice de leitura), para que uma sessão nova do
+     Claude Code (sem histórico de conversa) encontre
+     `docs/LIMITATIONS.md` imediatamente ao se orientar no repositório.
+- **Consequências:** nenhum código alterado. `src/index/age_factor.py`
+  mantém o comentário "PROVISIONAL" para gás/oil-gas — agora
+  desatualizado frente a esta decisão, sinalizado como candidato a uma
+  pequena edição futura, fora do escopo desta tarefa
+  (documentação-only).
+- **Arquivos:** `docs/LIMITATIONS.md` (novo), `docs/DECISIONS.md`
+  (nova entrada de fechamento do age_factor gás/oil-gas),
+  `docs/ARCHITECTURE.md`, `docs/memory/README.md`. Nenhum arquivo em
+  `src/`/`tests/` tocado.
+- **Status:** Ativa. `docs/LIMITATIONS.md` e a convenção de manutenção
+  são permanentes daqui pra frente. age_factor gás/oil-gas: fechado,
+  final — só reabre com uma fonte nova, indexada por idade calendário e
+  comparável por planta.
