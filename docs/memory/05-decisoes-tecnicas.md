@@ -1814,3 +1814,86 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   são permanentes daqui pra frente. age_factor gás/oil-gas: fechado,
   final — só reabre com uma fonte nova, indexada por idade calendário e
   comparável por planta.
+
+## 34. GEAR v3 Fase 2.5 — gate de correlação implementado, rodado, gap de dados encontrado e fechado (2026-09-12)
+
+- **Contexto:** Fase 2.5 pedia o gate de correlação (Metodologia Seção 5)
+  como classe isolada, consumindo os valores brutos (pré-normalização) já
+  amostrados por `risk_calculator.sample_raster`, aplicando a hierarquia
+  de tie-breaker pré-registrada (`docs/DECISIONS.md`, "GEAR v3 Phase 2.5:
+  pre-registered correlation-gate tie-breaker rule", 2026-09-12).
+- **Decisão:** `src/index/correlation_gate.py` (novo, módulo isolado —
+  não altera `risk_calculator.py` nem `normalization.py`). Seis pares
+  candidatos exatos (precip×ws, precip×spei, sv×ws, iv×ws, sv×iv —
+  todos gated; ws×spei — report-only, nunca excluído), restritos por
+  bucket à relevância mecanística já declarada na Seção 3 (Hydro/Thermal
+  só, já que Wind/Solar não têm dependência hídrica; precip×spei e
+  ws×spei só em Hydro, já que Drought não é hazard de Thermal). Nenhuma
+  nova infraestrutura de regrid/zonal foi escrita: toda camada candidata
+  já compartilha uma única grade 1km por país por construção
+  (`_load_reference_grid`/`_resample_to_1km`, `src/processors/_common.py`)
+  — o módulo reusa a guarda `assert_consistent_grid` já existente para
+  verificar isso programaticamente, em vez de reimplementar harmonização
+  espacial. Pearson é a estatística padrão; Spearman sempre computado em
+  paralelo e substitui como decisão quando `|rho|-|r| > 0.10` (heurística
+  Tier 3, não substitui inspeção visual eventual do scatter).
+- **Achado real, não hipotético — gap de dados no Phase 2.1:** a primeira
+  execução completa (`python -m src.index.correlation_gate`) revelou que
+  `extreme_precipitation_processor.py` nunca tinha sido rodado em modo
+  batch completo para Portugal/Índia — só Brasil tinha raster bruto no
+  disco (o próprio item 28 acima já registrava isso implicitamente: "Rodado
+  fim a fim contra dado real (Brasil...)" — nunca mencionou Portugal/Índia).
+  O módulo foi ajustado para tratar raster ausente como all-NaN
+  (`_sample_raster_or_nan`) e reportar `insufficient_data` em vez de
+  travar a corrida inteira — decisão de robustez, não de mascarar o gap.
+  Investigação confirmou que o dado bruto de entrada (`pr`, CMIP6, os 2
+  GCMs, os 3 cenários) já existia no disco para os 3 países (usado com
+  sucesso pelo SPEI, que consome a mesma série) — ou seja, gap de
+  *processamento pendente*, não de disponibilidade de dado ou bug de
+  pipeline. Confirmado com o autor antes de agir (não presumido).
+- **Reprocessamento:** `python -m src.processors.extreme_precipitation_
+  processor --countries Portugal India` — sucesso limpo, 12/12 combinações
+  (2 países × 2 GCMs × 3 cenários), sem alterar nenhum código do
+  processor. Gate re-rodado por completo (mais simples e mais seguro que
+  tentar recorte incremental); linhas do Brasil verificadas
+  bit-idênticas antes/depois (`pearson_r`/`spearman_rho`/`n`/
+  `gate_verdict` idênticos), confirmando que o rerun não afetou o que já
+  era válido.
+- **Resultado empírico final (56 linhas, 3 países completos):** todo par
+  gated passou (`|r| < 0.80`) em toda combinação bucket/país/GCM com dado
+  disponível — nenhuma exclusão, tie-breaker nunca disparado em dado
+  real. Maior `|r|` observado: 0.702 (sv×iv, Hydro, Portugal). Tabela
+  completa: `data/outputs/tables/correlation_gate.csv`.
+- **Bug encontrado e corrigido nesta tarefa:** o placeholder do eixo GCM
+  para pares sem GCM (`sv`/`iv`/`ws` mutuamente) foi inicialmente escrito
+  como a string literal `"n/a"` — um dos sentinelas padrão de valor
+  ausente do `pandas.read_csv`, que silenciosamente vira `NaN` real ao
+  reler o CSV. Trocado para `"not_gcm_dependent"`. Achado por inspeção
+  manual do CSV, não por teste (nenhum teste cobre round-trip do CSV
+  gravado — lacuna aberta se essa tabela ganhar mais consumidores).
+- **Testes:** `tests/test_correlation_gate.py` (27 testes) — escopo dos
+  pares/buckets, guarda de harmonização (raster ausente pula sem travar;
+  mismatch real ainda levanta `GridMismatchError`), decisão Pearson/
+  Spearman, veredito do gate (pass/fail/report_only/insufficient_data),
+  dispatch do tie-breaker (caso sintético forçando Critério 3 e
+  confirmando retenção de `iv`), um teste de integração real
+  (`skipif` se dado processado ausente). Suite completa: 263 testes
+  passando (fora dos 4 arquivos quebrados pela Fase 1), 0 regressão.
+- **Nota de processo (aplica-se daqui em diante):** um fechamento de fase
+  que depende de dado processado por país só pode ser rotulado "closed"
+  sem qualificação se as 3 correspondências (Brasil/Portugal/Índia)
+  vieram limpas na mesma corrida. Uma corrida parcial (ex.: só Brasil)
+  deve ser rotulada explicitamente como fechamento parcial (`closed for
+  Brazil only`, ou equivalente), nunca como "closed" sem qualificação —
+  ver `docs/LIMITATIONS.md`, parágrafo de convenção de manutenção
+  (2026-09-12), motivado exatamente por este incidente.
+- **Arquivos:** `src/index/correlation_gate.py` (novo),
+  `tests/test_correlation_gate.py` (novo),
+  `src/processors/extreme_precipitation_processor.py` (nenhuma alteração
+  de código — só reprocessamento via CLI existente),
+  `data/outputs/tables/correlation_gate.csv`, `docs/DECISIONS.md`,
+  `docs/rework/GEAR_v3_methodology_nature_format.md` Seção 3.3,
+  `docs/rework/GEAR_v3_work_plan.md` Fase 2.5, `docs/LIMITATIONS.md`.
+- **Status:** Ativa, fechada para os 3 países. Reabrir só se novos dados
+  de entrada (nova versão do Aqueduct, novo download CMIP6) exigirem
+  reprocessamento.

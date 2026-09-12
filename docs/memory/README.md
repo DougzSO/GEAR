@@ -190,3 +190,28 @@ pendente. Nenhum código alterado (`src/index/age_factor.py` mantém o
 comentário "PROVISIONAL", candidato a uma pequena edição futura, fora do
 escopo desta tarefa). Ver item 33 de
 [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).
+
+2026-09-12: Fase 2.5 do plano GEAR v3 fechada — `src/index/
+correlation_gate.py` (novo, módulo isolado) implementa o gate de
+correlação da Seção 5 e o roda contra dado real. Nenhuma infraestrutura
+de regrid nova: toda camada candidata já compartilha uma grade 1km por
+país por construção, o módulo só reusa a guarda `assert_consistent_grid`
+já existente. Achado real na primeira corrida: `extreme_precipitation_
+processor.py` nunca tinha rodado em modo completo para Portugal/Índia
+(só Brasil tinha raster no disco) — investigado antes de agir (dado bruto
+`pr` já existia pros 3 países, usado com sucesso pelo SPEI; gap era de
+processamento pendente, não de disponibilidade de dado nem bug),
+confirmado com o autor, e fechado reprocessando via o CLI já existente
+(`--countries Portugal India`, sem alterar código). Resultado final,
+3 países completos: todo par gated passou (`|r| < 0.80`) em toda
+combinação bucket/país/GCM com dado disponível — nenhuma exclusão, o
+tie-breaker pré-registrado nunca disparou em dado real (maior `|r|`
+observado: 0.702, sv×iv, Hydro, Portugal). Bug encontrado e corrigido:
+placeholder `"n/a"` do eixo GCM é um sentinela padrão de NA do
+`pandas.read_csv` e virava `NaN` real no round-trip do CSV — trocado por
+`"not_gcm_dependent"`. 27 testes novos (263/263 passando fora dos 4
+arquivos quebrados pela Fase 1). Nota de processo registrada em
+`docs/LIMITATIONS.md`: fechamento de fase dependente de dado por país só
+pode ser rotulado "closed" sem qualificação se as 3 correspondências
+vierem limpas na mesma corrida. Ver item 34 de
+[05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).

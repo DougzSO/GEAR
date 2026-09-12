@@ -368,6 +368,51 @@ the current treatment likely overstates water stress risk for whatever
 dry-cooled fraction exists within Thermal, which cannot be separated out
 with the available data.
 
+### 3.3 Correlation-gate outcome (Phase 2.5, empirical, closed for all three countries)
+
+Section 5's correlation gate was run against the processed raw rasters and
+the validated plant set, per country and technology bucket, using the
+pre-registered tie-breaker hierarchy above (Section 5) fixed before this
+run. **Every gated pair passed (`|r| < 0.80`) everywhere data existed, in
+every country and bucket where it was evaluated -- no candidate was
+excluded, and the tie-breaker hierarchy was never invoked.** The
+Extreme-Precipitation entries in the H_b table above (Hydro, Thermal,
+Solar) and the sv/iv candidates are therefore both empirically confirmed
+for Brazil, Portugal, and India alike, not merely assumed pending a gate
+that had not yet run.
+
+The highest observed `|r|` among the five gated pairs was 0.702 (Seasonal
+vs Interannual Variability, Hydro, Portugal) -- well below the 0.80
+threshold; the full pairwise matrix (Pearson's r, Spearman's rho, sample
+size, and the decision-method flag per pair/bucket/country/GCM) is
+reported in `data/outputs/tables/correlation_gate.csv`, retained as a
+reusable Phase 7 supplementary-figure artifact.
+
+**Process note, stated rather than silently corrected:** this gate was
+first run before Extreme Precipitation's raw raster had actually been
+processed for Portugal and India (Phase 2.1 had implemented and tested
+the processor, but had only been executed end-to-end for Brazil) --
+those cells initially came back `insufficient_data`, not `pass`, and were
+reported as such rather than assumed complete. The underlying `pr` input
+already existed on disk for all three countries (the same series SPEI
+already consumed successfully), so this was a pending-processing gap, not
+a data-availability or methodology gap; `extreme_precipitation_processor.py`
+was subsequently run for Portugal and India (`--countries Portugal India`,
+no code change), and the gate was re-run in full -- Brazil's rows verified
+unchanged before and after. This sequence is recorded in full in
+`docs/DECISIONS.md` and is the motivating case for `docs/LIMITATIONS.md`'s
+2026-09-12 process convention that a per-country closure must state its
+actual country coverage rather than round up to "closed."
+
+Water Stress vs Drought (SPEI), the mandatory non-gated Hydro pair, was
+computed and reported alongside (Brazil r = 0.039/-0.283, Portugal
+r = -0.003/0.049, India r = 0.236/0.140, Pearson/GFDL-ESM4 then
+Spearman/MIROC6 pairs shown per country) -- consistently weak, corroborating
+Section 5's mechanistic-distinction statement (structural water stress and
+short-term precipitation-evapotranspiration deficit are not redundant
+signals) without needing the correlation to be high for that statement to
+hold.
+
 ## 4. Hazard normalization and threshold tiers
 
 Every threshold is tagged with its evidence tier; no untagged threshold
@@ -450,6 +495,58 @@ only the newly added ones.
 
 ## 5. Correlation gate for candidate hazards
 
+**Pre-registered tie-breaker hierarchy (fixed before the gate is run).**
+When a candidate pair fails the |r| >= 0.80 test below, which variable is
+retained and which is dropped from a bucket's applicable set is decided by
+the following precedence order. This hierarchy is fixed here, in the
+methodology text, before Phase 2.5 executes the gate against real data --
+not chosen after the fact to justify whichever retention produces a
+cleaner narrative.
+
+1. **Criterion 1 (mechanistic primacy).** Retain the variable with the more
+   direct causal link to the specific technology-bucket failure mode
+   already established in Section 3's H_b tables. Applied per bucket, not
+   globally: retention is decided separately for each bucket's applicable-
+   hazard set, so the same failed pair can resolve differently across
+   buckets when the two variables' mechanistic relevance to that bucket's
+   failure mode differs (e.g., Extreme Precipitation's relevance to Solar
+   substation flooding versus Drought's relevance to Hydro headloss). A
+   pair can therefore appear in one bucket's H_b with variable A retained
+   and in another bucket's H_b with variable B retained; the gate's output
+   table reports this per-bucket outcome rather than a single global
+   verdict.
+2. **Criterion 2 (data-tier confidence).** If mechanistic relevance is
+   equal or ambiguous for a given bucket, retain the variable sourced from
+   the higher-tier, lower-proxy-dependency dataset (Tier 1 > Tier 2 >
+   Tier 3, per the evidence-tier definitions used throughout Section 4 and
+   `docs/DECISIONS.md`).
+3. **Criterion 3 (sv/iv specific).** For the seasonal-variability (sv)
+   versus interannual-variability (iv) pair specifically: if this pair
+   fails the gate, iv is retained over sv, on convergent Tier 2 evidence
+   for the mechanism -- stated with that qualification, not as a single
+   definitive causal study. PNNL's drought-hydropower technical report and
+   FAQ (Pacific Northwest National Laboratory, *Drought Impacts on
+   Hydroelectric Power Generation in the Western United States*, PNNL-33212;
+   companion FAQ) document, via the Colorado River Hoover/Glen Canyon case,
+   that reservoirs are managed to absorb seasonal drought as routine
+   operation, but that sustained interannual drought is a distinct
+   structural threat: reservoir levels at Lake Mead/Lake Powell have
+   declined over two decades, and temporary wet periods within that
+   multi-year drought have been insufficient to refill the reservoirs.
+   Independently, Moghaddasi, Gavahi, Moftakhari & Moradkhani (2024),
+   "Unraveling the hydropower vulnerability to drought in the United
+   States," *Environmental Research Letters* 19(8), find that larger
+   reservoir storage capacity weakens the correlation between seasonal
+   hydrological drought and hydropower generation -- i.e., carry-over
+   storage measurably absorbs the seasonal shock. This second source
+   establishes the seasonal-buffering half of the mechanism on its own
+   terms; it does not itself test or state the multi-year-depletion half,
+   which rests on the PNNL case study. The two sources are read together
+   as convergent, mechanism-consistent Tier 2 evidence -- not one study
+   proving both halves -- for treating the same buffering capacity that
+   absorbs seasonal drought as exhaustible under sustained multi-year
+   drought, which is why iv is retained over sv under this criterion.
+
 Before Extreme Precipitation enters a bucket's applicable set,
 correlation against existing terms in that bucket is computed and
 gated using a single symmetric criterion:
@@ -466,10 +563,18 @@ in the prior draft (r > -0.85 for precipitation).
 
 Wildfire's candidate pairs (Wildfire vs. Extreme Heat, Wildfire vs.
 Water Stress) are removed from this gate's scope along with the hazard
-itself -- deferred, Section 10.1. The gate's only candidate as of this
-methodology is Extreme Precipitation (vs. Water Stress/Drought); the
-mandatory, non-gated Water Stress/Drought pair (ws/sv/iv trio) below is
-unaffected.
+itself -- deferred, Section 10.1. Two disjoint groups of pairs interact
+with this gate: (a) the mandatory, non-gated Water Stress/Drought pair
+(below), exempt from the exclusion rule by design; and (b) gated
+candidates, subject to the |r| >= 0.80 exclusion rule above -- Extreme
+Precipitation (vs. Water Stress/Drought), and the two water-variability
+indicators, seasonal variability (sv) and interannual variability (iv),
+each tested against Water Stress and against each other. **Correction to
+an earlier draft:** sv/iv were previously grouped, in a "ws/sv/iv trio"
+parenthetical, with the mandatory non-gated Water Stress/Drought pair.
+That grouping was inaccurate and is withdrawn here: sv and iv are gated
+candidates like Extreme Precipitation, not exempt from the |r| >= 0.80
+test, and their tie-breaker is Criterion 3 above.
 
 Before computing r, both layers being compared are harmonized to a
 common spatial support: aggregated (upscaled) to the coarser of the two

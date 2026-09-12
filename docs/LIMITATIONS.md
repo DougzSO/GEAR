@@ -18,6 +18,28 @@ same task that closes it** — not as a separate deferred cleanup step. A
 the pattern of a limitation as described above, this file is updated in
 the same sitting.
 
+**Process convention (binding, effective 2026-09-12): partial closures
+must be labeled as such, not rounded up to "closed."** A phase whose
+completion depends on per-country (or otherwise per-subset) processed
+data may only be marked "closed" without qualification if every subset
+came back clean in the same run. If a closure is written while one or
+more subsets are missing, still pending, or unverified, it must say so
+explicitly in its own status line (e.g. "closed for Brazil only, Portugal/
+India pending Phase X" — not "closed" followed by the gap buried in a
+later paragraph). This was not a hypothetical risk: GEAR v3 Phase 2.5's
+correlation gate was first run and reported against real data while
+`extreme_precipitation_processor.py` had, in fact, never been executed
+for Portugal or India (only Brazil had a processed raster on disk) — a
+genuine per-country processing gap, not a data-unavailability or pipeline
+defect, confirmed by checking that the same underlying `pr` input already
+existed for all three countries and was already used successfully by
+SPEI. The gap was caught before Phase 3 was approved to start only
+because the closing entry stated the per-country scope explicitly rather
+than asserting a blanket "closed." See `docs/DECISIONS.md`, "GEAR v3
+Phase 2.5: correlation gate implemented and run" and its follow-up
+closing entry once Portugal/India were reprocessed, for the full
+incident.
+
 Columns: **Limitation** (what was not done, or what is pinned/excluded) |
 **Reason** (why, one line) | **Evidence tier** | **Alternative(s)
 considered and rejected** | **Status** (Final = not expected to be

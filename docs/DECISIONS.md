@@ -1637,3 +1637,250 @@ stated per entry per the standing rule.
 - Status: active, closed. Final -- not reopened by this entry's absence
   of a source; revisit only if a new calendar-age-indexed, per-plant-
   comparable source is published.
+
+## [2026-09-12] GEAR v3 Phase 2.5: pre-registered correlation-gate tie-breaker rule
+
+- Decision: before Phase 2.5's correlation gate is run against real data,
+  a three-criterion tie-breaker hierarchy is fixed for deciding which
+  variable is retained when a candidate pair fails the |r| >= 0.80 test
+  (`docs/rework/GEAR_v3_methodology_nature_format.md` Section 5):
+  1. **Mechanistic primacy** -- retain the variable with the more direct
+     causal link to the specific technology-bucket failure mode already
+     established in Section 3's H_b tables. Applied **per bucket**
+     (author-confirmed scope, not global): the same failed pair can
+     resolve to a different retained variable in different buckets when
+     mechanistic relevance differs by bucket (e.g. Extreme Precipitation
+     for Solar substation flooding vs. Drought for Hydro headloss). The
+     gate's output table is structured per-bucket, not as one global
+     verdict per pair.
+  2. **Data-tier confidence** -- if mechanistic relevance is equal or
+     ambiguous for a bucket, retain the variable from the higher-tier,
+     lower-proxy-dependency dataset (Tier 1 > Tier 2 > Tier 3, this
+     project's tier definitions as used throughout Section 4 and this
+     file).
+  3. **sv/iv-specific** -- if this pair fails the gate, iv (interannual
+     variability) is retained over sv (seasonal variability), on
+     convergent Tier 2 evidence for the mechanism, stated with that
+     qualification and not as a single definitive causal study. PNNL
+     (*Drought Impacts on Hydroelectric Power Generation in the Western
+     United States*, PNNL-33212, and its companion FAQ) documents, via the
+     Colorado River Hoover/Glen Canyon case, that reservoirs are managed
+     to absorb seasonal drought as routine operation, while sustained
+     interannual drought is a distinct structural threat: Lake Mead/Lake
+     Powell levels have declined over two decades, with temporary wet
+     periods within that multi-year drought insufficient to refill the
+     reservoirs. Independently, Moghaddasi, Gavahi, Moftakhari &
+     Moradkhani (2024), "Unraveling the hydropower vulnerability to
+     drought in the United States," *Environmental Research Letters*
+     19(8), find that larger reservoir storage capacity weakens the
+     seasonal-drought/generation correlation -- carry-over storage
+     measurably absorbs the seasonal shock. That second source establishes
+     only the seasonal-buffering half on its own terms; the multi-year-
+     depletion half rests on the PNNL case study, not on this paper. Read
+     together they are convergent, mechanism-consistent Tier 2 evidence
+     for treating the same buffering capacity that absorbs seasonal
+     drought as exhaustible under sustained multi-year drought -- not one
+     study proving both halves, and not upgraded to Tier 1 by this
+     entry.
+- **This is methodological pre-registration, stated as such.** The
+  hierarchy above is fixed in the methodology text *before* Phase 2.5
+  computes a single correlation coefficient on real data, specifically to
+  avoid post-hoc/p-hacking bias in variable retention -- i.e., to prevent
+  the tie-breaker criterion from being chosen, or reordered, after seeing
+  which choice produces a cleaner narrative or a more favorable applicable-
+  hazard set for any given bucket. This framing is a real safeguard for
+  reviewers and is named as such, not left implicit.
+- Correction made in the same edit, not deferred: the methodology's
+  Section 5 previously grouped sv/iv into a "ws/sv/iv trio" parenthetical
+  alongside the mandatory, non-gated Water Stress/Drought pair, implying
+  sv/iv were exempt from the exclusion gate. Author-confirmed (2026-09-12):
+  sv and iv are gated candidates, tested against Water Stress and against
+  each other, like Extreme Precipitation -- not exempt. The stale
+  parenthetical is corrected in the same edit as this tie-breaker addition,
+  so the methodology text and the gate about to be implemented do not
+  disagree. This does not resolve the separate, still-open Phase 3
+  question of whether sv/iv belong in any bucket's H_b table at all (see
+  "GEAR v3 Phase 1" entry, 2026-09-11, "sv/iv... an open question for the
+  author") -- only their status as gated-vs-exempt within the correlation
+  gate itself.
+- Consequence: no code change. This closes the pre-registration
+  prerequisite for Phase 2.5; the gate itself (computing r on harmonized
+  real data and applying this hierarchy) is a separate, subsequent task.
+- References: `docs/rework/GEAR_v3_methodology_nature_format.md` Section
+  5; PNNL-33212, *Drought Impacts on Hydroelectric Power Generation in the
+  Western United States*, and its companion FAQ (Pacific Northwest
+  National Laboratory); Moghaddasi, Gavahi, Moftakhari & Moradkhani
+  (2024), "Unraveling the hydropower vulnerability to drought in the
+  United States," *Environmental Research Letters* 19(8); `docs/
+  DECISIONS.md`, "GEAR v3 Phase 1" (2026-09-11, sv/iv open
+  question), "CCRS global Min-Max bounds" (2026-09-04, ws/sv/iv bound
+  pooling).
+- Status: active. Tie-breaker hierarchy and sv/iv gated-candidate
+  correction closed; sv/iv's Phase 3 H_b-membership question remains
+  separately open.
+
+## [2026-09-12] GEAR v3 Phase 2.5: correlation gate implemented and run -- every gated pair passed, no exclusion
+
+- Decision/result: `src/index/correlation_gate.py` (new, isolated module,
+  standing modularity rule -- no changes to `risk_calculator.py` or
+  `normalization.py`) implements and runs the Section 5 correlation gate
+  on RAW, pre-normalization hazard values, per the author's explicit
+  confirmation that this gate does not consume `normalization.py`'s
+  output. Six candidate pairs, exactly as specified, no others: Extreme
+  Precipitation vs Water Stress (gated), Extreme Precipitation vs Drought/
+  SPEI (gated), sv vs Water Stress (gated), iv vs Water Stress (gated), sv
+  vs iv (gated), Water Stress vs Drought/SPEI (report-only, mandatory,
+  never excluded). Extreme Wind and Wildfire are not part of this gate
+  (unchanged from Section 5).
+- **Spatial harmonization**: no new regridding/zonal-aggregation utility
+  was written. Every candidate raster (`ws`/`sv`/`iv` via the Aqueduct
+  processors, `spei` via `spei_processor`, `precip` via
+  `extreme_precipitation_processor`) already shares one per-country 1 km
+  reference grid by construction (`src/processors/_common.py`'s
+  `_load_reference_grid`/`_resample_to_1km`, already used by every
+  processor). The gate reuses `_common.py`'s existing `assert_consistent_
+  grid` guard to verify this programmatically per pair/country/GCM before
+  sampling, then reuses `risk_calculator.sample_raster`'s nearest-pixel
+  extraction at the plant coordinate set -- a verification of an
+  already-true invariant, not new regridding. See the module docstring
+  for the full reasoning.
+- **Pearson vs Spearman**: Pearson's r is the reported/decision statistic
+  by default (every candidate is a continuous physical quantity, no
+  ordinal-only variable); Spearman's rho is always computed alongside. An
+  automated proxy (`flag_nonlinearity`: `|rho| - |r| > 0.10`, Tier 3,
+  author-declared) substitutes Spearman as the operative decision
+  statistic for a specific (pair, bucket, country, GCM) cell when the two
+  diverge materially -- this fired for 4 of 48 real-data cells (Seasonal
+  Variability vs Water Stress, Hydro, Portugal; Interannual Variability
+  vs Water Stress, Hydro, Portugal and India; Water Stress vs Drought,
+  Hydro, Brazil/MIROC6), each flagged in the output, not silently
+  substituted.
+- **Country/GCM handling**: `r` computed per country separately (never
+  pooled for the gate decision); a `country == "pooled"` reference row is
+  also computed and reported, carrying no gate verdict. Pairs with a
+  GCM-dependent member (`spei`, `precip`) are reported per GCM, never
+  blended (`ARCHITECTURE.md` Section 5.4's standing rule); `precip` vs
+  `spei` is paired same-GCM only.
+- **Empirical result: no exclusion anywhere.** Every one of the five
+  gated pairs passed (`|r| < 0.80`) in every country/bucket/GCM cell where
+  data existed. The pre-registered tie-breaker hierarchy (Criteria 1-3)
+  was implemented and unit-tested (`tests/test_correlation_gate.py`,
+  including a synthetic case forcing Criterion 3 to fire and correctly
+  retain `iv`) but was never invoked on the real data -- the highest
+  observed `|r|` was 0.702 (Seasonal vs Interannual Variability, Hydro,
+  Portugal), still well under the 0.80 threshold. Full pairwise matrix
+  (Pearson's r, Spearman's rho, n, decision method, verdict) written to
+  `data/outputs/tables/correlation_gate.csv`, retained as a Phase 7
+  supplementary-figure artifact. Confirmed independent per bucket
+  (Section 3's H_b tables): Hydro keeps Drought, Water Stress, and
+  Extreme Precipitation (Brazil-confirmed; see gap below); Thermal keeps
+  Water Stress and Extreme Precipitation; sv and iv both remain
+  independent, unexcluded candidates in Hydro and Thermal pending Phase
+  3's separate, still-open decision on whether they belong in any H_b
+  table at all.
+- **Declared data gap, surfaced not absorbed**: Extreme Precipitation's
+  raw processed raster (Phase 2.1) exists for Brazil only as of this run
+  -- Portugal and India are not yet acquired/processed. Every Extreme-
+  Precipitation-involving cell for those two countries came back
+  `insufficient_data` (the module returns all-NaN for a missing raster
+  and reports it as such, rather than crashing the whole gate run or
+  silently treating it as `pass`). This means Extreme Precipitation's
+  H_b inclusion is empirically confirmed for Brazil only; Portugal/India
+  remain provisional pending Phase 2.1 completing acquisition for those
+  countries. This is a Phase 2.1 data-completeness gap, not a defect in
+  this gate -- the gate is re-runnable as-is once those rasters exist, no
+  code change required.
+- **Bug found and fixed during this task**: the flat-term GCM-axis
+  placeholder was initially written as the literal string `"n/a"`. That
+  string is one of pandas' default `read_csv` NA sentinels, so writing it
+  to `correlation_gate.csv` and reading it back silently produced a real
+  `NaN`, indistinguishable from missing data. Changed to
+  `"not_gcm_dependent"` before this entry was written; caught by manually
+  inspecting the round-tripped CSV, not by a test (no test asserts the
+  on-disk CSV round-trips the `gcm` column faithfully -- a gap worth
+  closing if this table sees more consumers).
+- Consequence: `docs/rework/GEAR_v3_methodology_nature_format.md` Section
+  3 gets a new subsection (3.3) stating this empirical result, the
+  Brazil-only caveat, and the highest observed `|r|`, replacing the
+  previously-provisional framing of the H_b table's Extreme Precipitation
+  entries with an actual result. `docs/rework/GEAR_v3_work_plan.md`
+  Phase 2.5 is marked closed (see that file for the substitution text).
+- References: `src/index/correlation_gate.py`; `tests/
+  test_correlation_gate.py`; `data/outputs/tables/correlation_gate.csv`;
+  `docs/rework/GEAR_v3_methodology_nature_format.md` Sections 3.3, 5;
+  `docs/DECISIONS.md`, "GEAR v3 Phase 2.5: pre-registered correlation-gate
+  tie-breaker rule" (2026-09-12, the hierarchy this run applied).
+- Status: active, closed for every pair/bucket/country/GCM combination
+  where Extreme Precipitation data exists. Reopen only to add Portugal/
+  India once Phase 2.1 processes their Extreme Precipitation rasters
+  (rerun `python -m src.index.correlation_gate`, no code change
+  expected).
+
+## [2026-09-12] GEAR v3 Phase 2.5 follow-up: Portugal/India Extreme Precipitation processed, gate closed for all three countries
+
+- **Question asked before acting, and answered first**: before reprocessing
+  anything, the author was asked directly whether Portugal/India Extreme
+  Precipitation had genuinely never been run, or had been run and lost/
+  misplaced -- because the two have different next steps (reprocessing vs.
+  debugging), and the previous entry's "no code change expected" claim is
+  only true under the first. Author confirmed: never executed for those
+  two countries, no prior attempt or failure on record.
+- **Investigation, not assumption, before running anything**: confirmed
+  (a) the native, pre-1km-resample Extreme Precipitation raster was also
+  absent for Portugal/India (ruling out "computed but not saved to the
+  right path" -- there was no output at any stage), (b) the raw `pr`
+  CMIP6 input (both GCMs, all three scenarios) already existed on disk
+  for both countries, identical in structure to Brazil's, and (c) SPEI
+  (`drought_stress_raw_*`), which reuses this exact same `pr` series per
+  `extreme_precipitation_processor.py`'s own docstring, was already
+  computed successfully for all three countries. Together these rule out
+  a data-availability gap or a country-specific pipeline defect and
+  support "simply never executed for these two countries" -- the
+  processor's own CLI (`process_all_countries`) iterates all of
+  `COUNTRIES` by default and is not hardcoded to Brazil.
+- **Action**: `python -m src.processors.extreme_precipitation_processor
+  --countries Portugal India` -- clean success, 12/12 (2 countries x 2
+  GCMs x 3 scenarios) combinations `"success": true`, no retries, no
+  partial failures. No code touched in `extreme_precipitation_processor.py`
+  or anywhere else -- this was reprocessing (Case A), not debugging.
+  `tests/test_extreme_precipitation_processor.py` (11 tests) re-run
+  unaffected, still 11/11.
+- **Gate re-run in full** (`python -m src.index.correlation_gate`), not a
+  partial/incremental recompute -- simpler and safer than adding
+  selective-recompute logic to the module for a one-off. Brazil's 14 rows
+  verified bit-identical before/after (`pearson_r`, `spearman_rho`, `n`,
+  `gate_verdict` all equal), confirming the re-run did not disturb what
+  was already valid.
+- **Final empirical result, all three countries**: every gated pair still
+  passes (`|r| < 0.80`) in every country/bucket/GCM cell -- no exclusion
+  anywhere, tie-breaker still never invoked. Highest `|r|` unchanged at
+  0.702 (Seasonal vs Interannual Variability, Hydro, Portugal) -- that
+  pair does not involve Extreme Precipitation, so it was never affected by
+  the gap. The previously-`insufficient_data` Extreme-Precipitation-vs-
+  Water-Stress and Extreme-Precipitation-vs-Drought cells for Portugal/
+  India now carry real values (e.g. Extreme Precipitation vs Water Stress,
+  Hydro, India, GFDL-ESM4: r = -0.354; Extreme Precipitation vs Drought,
+  Hydro, India, GFDL-ESM4: r = -0.495) -- all well under threshold.
+  `data/outputs/tables/correlation_gate.csv` regenerated in place (56
+  rows, same shape as before, no `insufficient_data` rows remaining for
+  any gated pair).
+- Consequence: `docs/rework/GEAR_v3_methodology_nature_format.md` Section
+  3.3 updated to drop the Brazil-only caveat and state the process
+  incident briefly instead (what happened, how it was resolved, pointer
+  here for the full account) rather than erasing the record of the
+  partial state. `docs/rework/GEAR_v3_work_plan.md` Phase 2.5 updated to
+  "CLOSED, all 3 countries." `docs/LIMITATIONS.md` gets a new binding
+  process convention (2026-09-12): a per-country-dependent phase closure
+  must state its actual country coverage explicitly, never round up to
+  unqualified "closed" -- this incident is the motivating case, named as
+  such.
+- References: `src/processors/extreme_precipitation_processor.py`
+  (unchanged); `src/index/correlation_gate.py`; `data/outputs/tables/
+  correlation_gate.csv`; `docs/rework/GEAR_v3_methodology_nature_format.md`
+  Section 3.3; `docs/rework/GEAR_v3_work_plan.md` Phase 2.5;
+  `docs/LIMITATIONS.md`; `docs/DECISIONS.md`, "GEAR v3 Phase 2.5:
+  correlation gate implemented and run -- every gated pair passed, no
+  exclusion" (2026-09-12, the entry this one closes out).
+- Status: active, closed. Extreme Precipitation is now empirically
+  confirmed independent (not excluded by the gate) for Brazil, Portugal,
+  and India alike, in every bucket it is a candidate for.

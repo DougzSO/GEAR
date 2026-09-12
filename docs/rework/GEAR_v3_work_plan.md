@@ -125,16 +125,52 @@ applicable-hazard tables in Phase 3.
      closed)"; engineering detail in
      `docs/memory/05-decisoes-tecnicas.md` item 31. 23 new tests (pure
      function only), 236/236 passing outside the Phase-1-broken modules.
-2.5. Correlation gate module, implemented as its own class per the
-     standing modularity rule: spatial-harmonization step (upscale to
-     coarser native resolution or aggregate to zonal/basin statistics)
-     followed by the symmetric \|r\| < 0.80 test. Compute and report for
-     (Extreme Precipitation vs Water Stress/Drought), and, report-only
-     with no exclusion gate, (Water Stress vs Drought/sv/iv) per region.
-     Note (2026-09-11): the (Wildfire vs Extreme Heat/Water Stress) pair
-     is removed from this gate's scope -- Wildfire is deferred (Phase
-     2.2, `docs/DECISIONS.md`). Extreme Precipitation is the only gated
-     candidate remaining.
+2.5. **CLOSED (2026-09-12), all 3 countries**: `src/index/correlation_gate.py` -- isolated
+     module (imports `risk_calculator.py`'s plant/raster infrastructure
+     and `_common.py`'s grid-consistency guard, modifies neither) running
+     the pre-registered tie-breaker hierarchy (Methods Section 5, fixed
+     2026-09-12 before this run) against six candidate pairs, exactly:
+     Extreme Precipitation vs Water Stress (gated), Extreme Precipitation
+     vs Drought/SPEI (gated), sv vs Water Stress (gated), iv vs Water
+     Stress (gated), sv vs iv (gated), Water Stress vs Drought/SPEI
+     (report-only, mandatory, never excluded). Runs on RAW, pre-
+     normalization hazard values (author-confirmed: does not consume
+     Phase 2.4's `normalization.py` output). No new regridding/zonal
+     step -- every candidate raster already shares one per-country 1 km
+     grid by construction; the module reuses `_common.py`'s
+     `assert_consistent_grid` guard to verify this, then samples both
+     rasters via `risk_calculator.sample_raster` at the plant coordinate
+     set. Pearson's r is the default decision statistic (continuous
+     physical quantities throughout); Spearman's rho is always computed
+     alongside and substitutes as the decision statistic on a per-cell
+     nonlinearity flag (`|rho| - |r| > 0.10`) rather than being forced
+     uniformly. `r` computed per country (never pooled for the verdict,
+     though a pooled reference row is also reported) and per GCM for the
+     two GCM-dependent terms (`spei`, `precip`), never blended.
+     **Empirical result: every gated pair passed in every country/bucket/
+     GCM cell, all three countries -- no exclusion, tie-breaker never
+     invoked on real data (highest observed \|r\| = 0.702, Seasonal vs
+     Interannual Variability, Hydro, Portugal).** Process note: the first
+     run found Extreme Precipitation's raw raster (Phase 2.1) processed
+     for Brazil only -- Portugal/India came back `insufficient_data`, not
+     `pass`. Confirmed with the author this was a pending-processing gap
+     (raw `pr` input already existed for both, and SPEI already consumed
+     it successfully), not a data or pipeline defect; resolved by running
+     `python -m src.processors.extreme_precipitation_processor --countries
+     Portugal India` (no code change) and re-running the gate in full
+     (Brazil's rows verified unchanged). Full pairwise matrix in
+     `data/outputs/tables/correlation_gate.csv` (Phase 7 supplementary-
+     figure artifact). See `docs/DECISIONS.md`, "GEAR v3 Phase 2.5:
+     correlation gate implemented and run -- every gated pair passed, no
+     exclusion", "GEAR v3 Phase 2.5 follow-up: Portugal/India Extreme
+     Precipitation processed, gate closed for all three countries", and
+     "GEAR v3 Phase 2.5: pre-registered correlation-gate tie-breaker
+     rule". 27 new tests (pure-function + monkeypatched gate-logic/tie-
+     breaker dispatch, one skip-if-absent real-data integration test),
+     263/263 passing outside the four Phase-1-broken modules. See
+     `docs/LIMITATIONS.md`'s 2026-09-12 process convention (per-country
+     closures must state actual coverage) -- this phase is the case that
+     motivated it.
 
 ## Phase 3: Applicable hazard subsets and threshold tiers
 
