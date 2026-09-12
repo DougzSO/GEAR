@@ -1513,6 +1513,15 @@ stated per entry per the standing rule.
   `analysis/gcm_catalog_check.md`, `analysis/ccrs_bucket_weighted_distribution.md`.
 - Status: active. Documentation-only; does not reopen V4 and does not
   authorize adding, removing, or replacing either model.
+- Addendum (2026-09-12): Section 2.1 now adds one paragraph, immediately
+  after the findings above, framing the retrospective case for the pair's
+  continued defensibility. It adds no new evidentiary claim beyond finding
+  4 above -- same convection/resolution divergence, same two Kamworapan
+  et al. (2021) regional flags -- it only makes explicit the framing that
+  the original operational choice (finding 2) happens to hold up under
+  that retrospective structural scrutiny. It explicitly does not claim the
+  models were chosen for that structural contrast at selection time, so it
+  does not contradict or reopen finding 2's operational account.
 
 ## [2026-09-11] GEAR v3 Extreme Wind: reframed as scenario-invariant structural exposure (not a data gap)
 

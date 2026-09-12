@@ -235,6 +235,28 @@ Taken together, MIROC6 has not been the source of a single realized data
 gap in this pipeline; if anything, the one gap on record argues against,
 not for, treating MIROC6 as the operationally weaker choice.
 
+**Why the pair remains defensible going forward.** The selection above was
+made on operational grounds, not on any comparison against a sensitivity
+metric -- that much is stated plainly and is not revisited here. What the
+retrospective climatological analysis in this subsection adds is a
+separate, after-the-fact finding: the original operational choice happens
+to hold up under retrospective structural scrutiny. It does not hold up as
+an ECS-bounding pair -- both models sit within 0.05-0.1 K of each other
+near the low end of the CMIP6 range, and that finding is not softened or
+withdrawn here. Where the pair does deliver genuine comparative value is
+along a different axis than ECS: structural and regional divergence in
+convection representation and native grid resolution (GFDL-ESM4 at
+approximately 1 deg x 1.25 deg versus MIROC6 at approximately
+1.4 deg x 1.4 deg), consistent with the two independent regional findings
+already cited above -- MIROC6's wind-speed underestimation in the
+22-model Mediterranean evaluation and its weakest-of-13 ranking for
+Thailand surface air temperature (Kamworapan et al., 2021). This is
+reported as a retrospective observation about what the pair turned out to
+be useful for, not as a claim that GFDL-ESM4 and MIROC6 were deliberately
+chosen for their convection-scheme or resolution contrast at the time of
+selection; that would contradict the operational account given above and
+is not asserted here.
+
 ## 3. Technology-specific applicable hazard subsets
 
 Each bucket is evaluated only against hazards with a declared physical
