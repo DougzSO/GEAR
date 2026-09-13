@@ -292,6 +292,19 @@ def _candidate_raster_path(term: str, country: str, water_scenario: str, model: 
     raise ValueError(f"unknown normalization candidate {term!r}")
 
 
+def _sample_raster_or_nan(path: Path, lons, lats, context: str):
+    """``rc.sample_raster``, but a missing raster returns all-NaN (logged)
+    instead of crashing the whole recommendation run. Same pattern and same
+    rationale as ``risk_bands._sample_raster_or_nan``: wind's ERA5 gust
+    acquisition is incomplete (no country has a processed
+    ``extreme_wind_gust_raw_*.tif`` yet), and a still-pending candidate
+    should not make every other candidate's recommendation unrunnable."""
+    if not path.exists():
+        logger.warning("missing raster for %s: %s -- treating as all-NaN", context, path)
+        return np.full(np.shape(lons), np.nan, dtype="float64")
+    return rc.sample_raster(path, lons, lats)
+
+
 def sample_candidate_terms(model: str) -> pd.DataFrame:
     """One row per (plant, water scenario) with every candidate term's RAW
     value sampled for ``model`` on the GCM-dependent terms. Same shape as
@@ -301,7 +314,7 @@ def sample_candidate_terms(model: str) -> pd.DataFrame:
         plants = rc.load_plants(country)
         lons = plants["lon"].to_numpy("float64")
         lats = plants["lat"].to_numpy("float64")
-        wind_values = rc.sample_raster(wind_raw_path(country), lons, lats)
+        wind_values = _sample_raster_or_nan(wind_raw_path(country), lons, lats, f"wind/{country}")
         for water_scen in rc.WATER_SCENARIOS:
             part = plants.copy()
             part["water_scenario"] = water_scen
@@ -353,6 +366,13 @@ def compute_normalization_recommendations(models: list[str] | None = None) -> di
 
     for term in FLAT_BOUND_TERMS:
         sample = _pool(frames[models[0]], term)
+        if sample.size < 3:
+            logger.warning(
+                "skipping %s: only %d finite pooled value(s) -- no processed "
+                "raster for this candidate yet (see PENDING_RISK_I_H_HAZARDS-"
+                "style gap, hazard_scope.py).", term, sample.size,
+            )
+            continue
         rec = _recommend_one(term, "pooled", sample)
         recommendations[term] = {"bounds": rec["bounds"], "check": rec["check"], "transform": rec["transform"]}
         rows.append(rec)
@@ -361,10 +381,17 @@ def compute_normalization_recommendations(models: list[str] | None = None) -> di
         per_gcm = {}
         for model, frame in frames.items():
             sample = _pool(frame, term)
+            if sample.size < 3:
+                logger.warning(
+                    "skipping %s/%s: only %d finite pooled value(s) -- no "
+                    "processed raster for this candidate yet.", term, model, sample.size,
+                )
+                continue
             rec = _recommend_one(term, model, sample)
             per_gcm[model] = {"bounds": rec["bounds"], "check": rec["check"], "transform": rec["transform"]}
             rows.append(rec)
-        recommendations[term] = per_gcm
+        if per_gcm:
+            recommendations[term] = per_gcm
 
     origin_table = build_origin_table(rows)
     return {"recommendations": recommendations, "origin_table": origin_table}

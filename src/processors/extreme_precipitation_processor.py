@@ -54,23 +54,29 @@ cutoffs, i.e. percentiles of this module's OUTPUT, not of daily pr) are
 Phase 3 work, not implemented here.
 
 --------------------------------------------------------------------------
-Not yet an applicable hazard -- correlation-gate candidate (Phase 2.5)
+Wired into Risk_i,h -- correlation gate already passed (Phase 2.5)
 --------------------------------------------------------------------------
-This processor produces the raster layer only. It is NOT wired into
-``src/index/risk_calculator.py``'s ``HAZARD_TERMS`` / `Risk_i,h` computation
-in this task, and it is NOT added to any bucket's applicable-hazard table.
-Methods Section 5 requires this hazard to pass the correlation gate (|r| <
-0.80 against Water Stress and Drought, spatially harmonised first) before
-Phase 3 decides its applicable-hazard-set membership. Wiring it into the
-core now would pre-empt that gate.
+This processor produces the raw raster layer; ``src/index/risk_calculator.py``
+is what samples it per plant and turns it into ``Risk_{i,h}`` (Equation 1).
+The gate this module's own docstring once described as still pending has
+since closed: Methods Section 5's |r| < 0.80 correlation gate ran against
+Water Stress and Drought for every bucket/country/GCM cell
+(``data/outputs/tables/correlation_gate.csv``, Phase 2.5) and every
+Extreme-Precipitation pair passed (max |r| = 0.702). ``risk_calculator.py``
+imports ``PRECIP_TEMPORAL_WINDOW`` below directly (it is precip's entry in
+``risk_calculator.HAZARD_TEMPORAL_WINDOW``, not a copy of it) -- see
+``docs/DECISIONS.md``, "GEAR v3 Risk_i,h integration gap: precip wired in,
+wind still blocked on ERA5 acquisition".
 
-``PRECIP_TEMPORAL_WINDOW`` mirrors the shape of
-``src.index.risk_calculator.HAZARD_TEMPORAL_WINDOW`` (Phase 1) exactly (same
-keys), imported and asserted against that schema rather than duplicated
-freehand -- but it is a standalone constant in this module, not merged into
-the core dict: merging would require adding "precip" to
-``risk_calculator.HAZARD_TERMS`` too (an assert there enforces the two sets
-match), which is exactly the premature-wiring this section says not to do.
+``PRECIP_TEMPORAL_WINDOW`` is still defined here, not in
+``risk_calculator.py``, because this processor is the natural owner of its
+own hazard's temporal-window metadata (mirrors how the raw-value method
+above is documented here, not there); ``risk_calculator.py`` reads it rather
+than restating the same five values. This module intentionally does not
+import ``risk_calculator`` (it would recreate the circular import that
+existed before the wiring above -- ``risk_calculator`` now imports this
+module for the raster path and the temporal window, so the dependency only
+runs one way).
 
 --------------------------------------------------------------------------
 Grid, normalisation, caching -- unchanged pattern
@@ -107,7 +113,6 @@ from src.downloaders.cds_tasmax_downloader import (
     _resample_to_1km,
     configured_models,
 )
-from src.index.risk_calculator import HAZARD_TEMPORAL_WINDOW as _CORE_HAZARD_TEMPORAL_WINDOW
 from src.processors._common import load_country_rasters
 from src.processors._common import GridMismatchError  # noqa: F401 - re-exported for callers/tests
 
@@ -124,10 +129,15 @@ RAW_UNITS = "days_per_year_with_pr_gt_local_p95_wet_day"
 # Unit conversion for the raw CMIP6 pr flux (kg m-2 s-1 -> mm/day).
 _PR_FLUX_TO_MM_PER_DAY = 86400.0
 
-# Temporal-window assumption -- explicit named constant, same schema as
-# src.index.risk_calculator.HAZARD_TEMPORAL_WINDOW (Phase 1 pattern), not
-# merged into that dict (see module docstring, "Not yet an applicable
-# hazard").
+# Temporal-window assumption -- explicit named constant, same schema as every
+# entry in src.index.risk_calculator.HAZARD_TEMPORAL_WINDOW (that module
+# imports THIS constant as its "precip" entry -- see module docstring).
+# The expected-keys literal below is intentionally not imported from
+# risk_calculator: that module now imports this one, so importing back would
+# recreate the circular dependency the wiring change removed.
+_TEMPORAL_WINDOW_SCHEMA_KEYS = frozenset({
+    "source", "horizon_year", "window", "is_explicit_30yr_window", "note",
+})
 PRECIP_TEMPORAL_WINDOW = {
     "source": "cmip6_pr",
     "horizon_year": 2050,
@@ -136,10 +146,9 @@ PRECIP_TEMPORAL_WINDOW = {
     "note": "Same explicit CMIP6 30-yr window as heat/spei -- pr is the same "
             "downloaded daily series spei_processor already consumes.",
 }
-_CORE_SCHEMA_KEYS = set(next(iter(_CORE_HAZARD_TEMPORAL_WINDOW.values())))
-assert set(PRECIP_TEMPORAL_WINDOW) == _CORE_SCHEMA_KEYS, (
-    "PRECIP_TEMPORAL_WINDOW must use the identical schema as "
-    "risk_calculator.HAZARD_TEMPORAL_WINDOW entries -- extend the pattern, "
+assert set(PRECIP_TEMPORAL_WINDOW) == _TEMPORAL_WINDOW_SCHEMA_KEYS, (
+    "PRECIP_TEMPORAL_WINDOW must use the identical schema as every "
+    "risk_calculator.HAZARD_TEMPORAL_WINDOW entry -- extend the pattern, "
     "don't diverge from it."
 )
 

@@ -215,3 +215,23 @@ arquivos quebrados pela Fase 1). Nota de processo registrada em
 pode ser rotulado "closed" sem qualificação se as 3 correspondências
 vierem limpas na mesma corrida. Ver item 34 de
 [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).
+
+2026-09-13: Gap de integração fechado (parcial) — `precip` (Extreme
+Precipitation) plugado em `risk_calculator.HAZARD_TERMS`/`FROZEN_BOUNDS`
+(estava com processor e RiskBand fechados desde a Fase 2.1/3.2, mas nunca
+tinha entrado em `Risk_i,h`; achado durante preparação do manuscrito).
+`wind` (Extreme Wind) permanece FORA — checagem de prontidão de dado
+mostrou que a aquisição ERA5 ainda está incompleta (Portugal 12/30 anos,
+Índia 2/30, nenhum país com raster processado), ao contrário do que a
+tarefa presumia inicialmente. `hazard_scope.PENDING_RISK_I_H_HAZARDS`
+novo — guarda de regressão nomeada e testada
+(`test_every_h_b_member_has_a_risk_i_h_entry_or_a_documented_exception`)
+contra esse tipo de gap se repetir num hazard futuro. Tabela de origem de
+normalização (Seção 4.3, prometida desde a Fase 2.4, nunca gerada) escrita
+em `data/outputs/tables/normalization_origin_table.csv`. Fase 3.3 (troca
+de transform) continua separada, não tocada. 327/328 testes relevantes
+passando (a 1 falha restante é pré-existente, não relacionada — ERA5 real
+parcial, confirmada reproduzível sem as mudanças desta tarefa). Ver item
+39 de [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md) e
+`docs/DECISIONS.md`, "GEAR v3 Risk_i,h integration gap: precip wired in,
+wind still blocked on ERA5 acquisition".

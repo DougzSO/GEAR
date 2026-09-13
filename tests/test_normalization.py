@@ -205,6 +205,14 @@ def test_origin_table_never_records_the_retired_transform():
 # --------------------------------------------------------------------------
 # risk_calculator infrastructure is unchanged (Phase 2.4 imports, not rebuilds)
 # --------------------------------------------------------------------------
-def test_risk_calculator_frozen_bounds_and_hazard_terms_untouched():
-    assert rc.HAZARD_TERMS == ("ws", "heat", "sv", "iv", "spei")
+def test_risk_calculator_frozen_bounds_and_hazard_terms_untouched_by_normalization():
+    """This module (normalization.py, Phase 2.4) never edits risk_calculator
+    -- it produces an independent recommendation for Phase 3.3 to apply
+    later (module docstring). This does NOT mean risk_calculator.HAZARD_TERMS
+    can never change: a separate task wired 'precip' into it directly
+    (docs/DECISIONS.md, "GEAR v3 Risk_i,h integration gap"), unrelated to
+    this module's neg_log_minmax transform recommendation, which is still
+    not applied anywhere. The invariant this test actually checks is that
+    HAZARD_TERMS and FROZEN_BOUNDS stay 1:1, whatever HAZARD_TERMS currently
+    is."""
     assert set(rc.FROZEN_BOUNDS) == set(rc.HAZARD_TERMS)

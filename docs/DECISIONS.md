@@ -1884,3 +1884,175 @@ stated per entry per the standing rule.
 - Status: active, closed. Extreme Precipitation is now empirically
   confirmed independent (not excluded by the gate) for Brazil, Portugal,
   and India alike, in every bucket it is a candidate for.
+
+## [2026-09-13] GEAR v3 Risk_i,h integration gap: precip wired in, wind still blocked on ERA5 acquisition
+
+- **What was investigated, before any change**: manuscript preparation
+  surfaced that `src/index/risk_calculator.py`'s `FROZEN_BOUNDS`/
+  `HAZARD_TERMS` only covered `ws, sv, iv, heat, spei` -- Extreme
+  Precipitation (`precip`) and Extreme Wind (`wind`) were absent, even
+  though both already had closed processors (Phase 2.1/2.3) and closed
+  RiskBand classification (Phase 3.2, `src/index/risk_bands.py`). Traced
+  the actual code path rather than assuming: `risk_bands.py`'s own module
+  docstring states plainly it does "not... compute Risk_{i,h} (Equation 1,
+  continuous, risk_calculator.py)" -- RiskBand classification runs on raw
+  physical values against absolute/percentile/binary thresholds, entirely
+  independent of `risk_calculator.HAZARD_TERMS`. `data/outputs/tables/
+  risk_by_hazard.csv` confirmed empirically: only `ws, heat, iv, spei, sv`
+  ever appeared as `hazard_term` values. **Confirmed: `Risk_i,h` was
+  silently absent for `precip`/`wind` for every bucket/country -- not
+  computed through any other path.** This was a genuine Phase 1 scope gap
+  (Phase 1's closing report explicitly ported the sampling/transform/
+  bounds infrastructure "unchanged" and did not anticipate hazards whose
+  processors did not exist yet), not a bug introduced later.
+- **Data-readiness check, before wiring anything in** -- the task
+  requesting this change assumed both hazards had "confirmed real data for
+  all three countries"; that assumption did not survive a direct check:
+  - `precip`: confirmed ready. `data/processed/climate/extreme_precip_raw_
+    {country}_{model}_{scenario}_1km.tif` exists for all 3 countries x 2
+    GCMs x 3 scenarios; `risk_bands.csv`'s existing `precip` rows are
+    non-null for Brazil (12447), India (13344), and Portugal (675). The
+    Phase 2.5 correlation gate already passed for every Extreme-
+    Precipitation pair (max |r| = 0.702, `data/outputs/tables/
+    correlation_gate.csv`).
+  - `wind`: **NOT ready, contrary to the task's premise.** No country has
+    a processed `extreme_wind_gust_raw_{country}_1km.tif` (zero files on
+    disk). The underlying ERA5 per-year cache (`data/raw/climate/
+    era5_wind/{country}/{year}/annual_max.nc`) is itself incomplete:
+    Brazil has all 30 years (1991-2020), Portugal 12/30, India 2/30.
+    `risk_bands.csv`'s `wind` rows are already known to be all-null for
+    every country (consistent with the still-open 2026-09-12 LIMITATIONS
+    entry on this acquisition). Wiring `wind` into `risk_calculator.py`
+    now would require every plant's `Risk_i,h[wind]` to be computed from
+    zero real values -- not attempted. This is reported factually, per
+    standing instruction, not silently worked around.
+- **Resolution -- precip wired in, wind explicitly left pending**:
+  - `src/index/risk_calculator.py`: added `precip` to `HAZARD_TERMS`,
+    `LIN_TERMS` (not `LOG_TERMS` -- see below), `GCM_DEPENDENT_TERMS`,
+    `HAZARD_LABELS`, `V3_CORE_HAZARD_TERMS`, and `HAZARD_TEMPORAL_WINDOW`
+    (imports `extreme_precipitation_processor.PRECIP_TEMPORAL_WINDOW`
+    directly rather than duplicating its five values). `raster_path()`
+    gained a `precip` branch. `FROZEN_BOUNDS["precip"]` was set from a
+    real recompute (`compute_global_bounds()`), per-GCM: GFDL-ESM4
+    `(0.36666667461395264, 13.800000190734863)`, MIROC6
+    `(0.7666666507720947, 12.566666603088379)`. `BOUNDS_DATA_SNAPSHOT` is
+    now a mixed-date string (`"2026-09-04 (ws/sv/iv/heat/spei), 2026-09-13
+    (precip)"`) -- the other five terms' bounds are untouched, only
+    `precip`'s is new. `--check-bounds` passes clean against this snapshot.
+  - **Transform choice, stated plainly, and deliberately NOT
+    `normalization.py`'s recommendation**: `precip`'s pooled skewness is
+    GCM-dependent and, either way, not a case for `Tlog` (log1p): GFDL-
+    ESM4 = -0.125 (already "fairly symmetrical", |skew| <= 0.5), MIROC6 =
+    -0.586 (mildly skewed, but LEFT, not right). `Tlog` exists to compress
+    a long RIGHT tail; applying it here would misuse the transform against
+    data that, if anything, leans the other way. `precip` was therefore
+    placed in `LIN_TERMS` (direct Min-Max), the same treatment as `sv`/
+    `iv`, decided from the term's own empirical shape under
+    `risk_calculator.py`'s existing two-transform scheme (`Tlog`/`Tlin`)
+    -- **not** an adoption of `normalization.py`'s new `neg_log_minmax`
+    recommendation (which, being magnitude-only, recommends `neg_log_minmax`
+    for MIROC6's `precip` regardless of sign). That transform swap is
+    Phase 3.3, explicitly still separate and not touched by this task.
+  - A circular import surfaced during this change:
+    `extreme_precipitation_processor.py` had imported `risk_calculator.
+    HAZARD_TEMPORAL_WINDOW` only to assert its own `PRECIP_TEMPORAL_WINDOW`
+    matched its schema, from back when `risk_calculator.py` did not depend
+    on the processor at all. Now that the dependency runs the other way
+    (`risk_calculator.py` imports the processor), that import was removed
+    and the schema-keys check inlined as a local literal in the processor
+    -- the processor no longer imports `risk_calculator` at all, breaking
+    the cycle. The processor's module docstring section "Not yet an
+    applicable hazard" was rewritten to "Wired into Risk_i,h -- correlation
+    gate already passed (Phase 2.5)", reflecting the actual current state.
+  - `wind` was deliberately left out of `HAZARD_TERMS`/`FROZEN_BOUNDS`.
+    `risk_calculator.py`'s module docstring now states why in the same
+    place it once said "Phase 2 acquisition work, not yet available":
+    `risk_bands.py` already tolerates a missing raster (returns all-NaN,
+    logged) for its classification pass, but `risk_calculator.py`
+    deliberately does not adopt that tolerance for `Risk_i,h` -- a
+    published continuous risk number, unlike a classification label,
+    should not silently exist as a function of zero real observations.
+    `sample_raster` still raises loudly on a missing file for every
+    already-wired term; that behavior is preserved.
+  - `src/index/hazard_scope.py`: added `PENDING_RISK_I_H_HAZARDS`, an
+    explicit, reasoned exception set (currently just `{"wind": "..."}`)
+    naming every H_b member that has no `Risk_i,h` entry yet and why --
+    the standing mechanism that stops this specific gap (a hazard with a
+    closed processor/RiskBand but never wired into `Risk_i,h`) from
+    recurring silently for some future hazard. An entry must be removed
+    from this dict in the same change that adds the corresponding
+    `HAZARD_TERMS` entry, never left stale.
+  - `src/index/normalization.py`: `sample_candidate_terms`'s wind sampling
+    crashed outright (`rasterio.errors.RasterioIOError`) on the missing
+    raster -- fixed with a `_sample_raster_or_nan` helper mirroring
+    `risk_bands.py`'s already-established pattern for the identical
+    problem, and `compute_normalization_recommendations` now skips (logs,
+    does not crash) any candidate whose pooled sample has fewer than 3
+    finite values. This is a robustness fix only -- it does not change
+    `normalization.py`'s candidate list, its transform-selection
+    methodology, or any already-computed recommendation for a term with
+    real data.
+- **Regression test added** (`tests/test_hazard_scope.py`,
+  `test_every_h_b_member_has_a_risk_i_h_entry_or_a_documented_exception`):
+  every hazard named in any bucket's H_b must be in either
+  `risk_calculator.HAZARD_TERMS` or `hazard_scope.
+  PENDING_RISK_I_H_HAZARDS`, never both, never neither. A companion test
+  (`test_pending_risk_i_h_hazards_are_reasoned_not_bare`) rejects a bare/
+  placeholder reason string. Existing tests updated for the new state:
+  `tests/test_risk_calculator.py` (FROZEN_BOUNDS structure, LIN/GCM-
+  dependent membership, temporal window, both `compute_risk_by_hazard`
+  end-to-end fixtures), `tests/test_extreme_precipitation_processor.py`
+  and `tests/test_extreme_wind_processor.py` (the "not wired in yet"
+  guards flipped/updated to match precip's new state and wind's continued
+  absence), `tests/test_normalization.py` (the "untouched by
+  normalization.py" test re-scoped to what it actually verifies -- that
+  `HAZARD_TERMS`/`FROZEN_BOUNDS` stay 1:1, not that `HAZARD_TERMS` is
+  frozen forever). 327 of 328 relevant tests pass (the one pre-existing,
+  unrelated failure -- `test_extreme_wind_processor.py::
+  test_real_data_ensure_raw_raster`, an xarray concat error over the
+  partial real ERA5 data -- reproduces identically with this task's
+  changes stashed out, confirming it predates this task).
+  `python -m src.index.risk_calculator` regenerated `risk_by_hazard.csv`
+  end to end against real committed data: `precip` now has 64,710
+  `Risk_i,h` rows (p50 = 2.9668, p95 = 96.0715, max = 8894.153) alongside
+  the five pre-existing terms.
+- **Normalization origin table generated** (Methods Section 4.3, promised
+  but never produced before this task): `data/outputs/tables/
+  normalization_origin_table.csv`, 9 rows (`ws`, `sv`, `iv` pooled;
+  `heat`, `spei`, `precip` per GCM), columns `hazard_term, hazard_label,
+  gcm, origin_source, data_tier, lower_bound_raw, upper_bound_raw, pool_n,
+  skewness, shapiro_stat, shapiro_p, shapiro_subsampled, is_skewed,
+  transform_selected, transform_note`. `wind` is absent from this table
+  (logged, not silent) for the same data-readiness reason above -- it is
+  not excluded by methodology, only by missing data. This table is
+  `normalization.py`'s Phase 3.3 *recommendation* (it uses
+  `neg_log_minmax` where skewed, by design) -- it is descriptive of what
+  Phase 3.3 would apply, and is explicitly NOT what `risk_calculator.
+  FROZEN_BOUNDS`/`transform_term` currently compute (still `Tlog`/`Tlin`,
+  unchanged, per this task's own scope limit below).
+- **Explicitly not done in this task** (per the task's own scope limit):
+  Phase 3.3 (adopting `normalization.py`'s `neg_log_minmax` transform
+  recommendation into `risk_calculator.py`) was NOT performed. `precip`'s
+  `Tlin` treatment in `risk_calculator.py` and its `neg_log_minmax`
+  recommendation (MIROC6 only) in `normalization_origin_table.csv` are
+  both correct simultaneously -- they are two different modules answering
+  two different questions (current production transform vs. a pending
+  Phase 3.3 recommendation), not a contradiction.
+- References: `src/index/risk_calculator.py`; `src/index/hazard_scope.py`;
+  `src/index/normalization.py`; `src/index/risk_bands.py`;
+  `src/processors/extreme_precipitation_processor.py`;
+  `data/outputs/tables/risk_by_hazard.csv`;
+  `data/outputs/tables/normalization_origin_table.csv`;
+  `data/outputs/tables/correlation_gate.csv`; `docs/LIMITATIONS.md`,
+  "2026-09-11 -- GEM retrofit/repowering field absent" and "2026-09-12 --
+  Extreme Wind: ERA5 gust input not yet downloaded for any country"
+  (both still accurate, unchanged by this task); `docs/DECISIONS.md`,
+  "GEAR v3 Phase 3.2 follow-up: Extreme Wind data-gap investigation" (the
+  ERA5 acquisition-status entry this task's wind findings are consistent
+  with, not a correction of it).
+- Status: **precip closed, final.** wind remains **open, blocked on
+  author-authorized ERA5 acquisition completion** (Portugal 12/30 years,
+  India 2/30 years, no country processed) -- same blocker already on
+  record, now also reflected in `risk_calculator.py`/`hazard_scope.py`
+  directly rather than only in `docs/LIMITATIONS.md`. Phase 3.3 (transform
+  swap) remains separately open, untouched by this task.

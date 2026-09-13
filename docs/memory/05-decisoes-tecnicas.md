@@ -1897,3 +1897,67 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
 - **Status:** Ativa, fechada para os 3 países. Reabrir só se novos dados
   de entrada (nova versão do Aqueduct, novo download CMIP6) exigirem
   reprocessamento.
+
+## 39. Gap de integração Risk_i,h: `precip` plugado em `risk_calculator.py`, `wind` continua bloqueado (2026-09-13)
+
+- **Contexto:** Preparação do manuscrito revelou que `risk_calculator.
+  HAZARD_TERMS`/`FROZEN_BOUNDS` nunca incluiu `precip`/`wind`, mesmo com
+  processor e RiskBand (Fase 3.2) já fechados pros dois. Investigado antes
+  de mexer: `risk_bands.py` classifica sobre valor bruto, nunca chama
+  `risk_calculator`; `risk_by_hazard.csv` real só tinha `ws/heat/iv/spei/
+  sv` como `hazard_term`. Gap confirmado, não um caminho escondido.
+  Checagem de prontidão de dado (a tarefa presumia os dois prontos):
+  `precip` está — raster processado nos 3 países, gate de correlação já
+  passou; `wind` **não está** — nenhum país tem `extreme_wind_gust_raw_
+  *.tif`, e o cache ERA5 por ano em si está incompleto (Brasil 30/30,
+  Portugal 12/30, Índia 2/30).
+- **Decisão:** `precip` adicionado a `HAZARD_TERMS`/`LIN_TERMS` (não
+  `LOG_TERMS` — skew empírico é -0.125 GFDL-ESM4 / -0.586 MIROC6, ou já
+  simétrico ou levemente enviesado à ESQUERDA, `Tlog` existe pra
+  comprimir cauda DIREITA, não caberia aqui)/`GCM_DEPENDENT_TERMS`/
+  `HAZARD_TEMPORAL_WINDOW` (importa `PRECIP_TEMPORAL_WINDOW` do processor
+  direto, não duplica) com bounds reais recomputados via
+  `compute_global_bounds()`. Import circular entre `risk_calculator.py`
+  e `extreme_precipitation_processor.py` (o processor importava
+  `HAZARD_TEMPORAL_WINDOW` só pra validar schema) resolvido removendo a
+  dependência do processor sobre `risk_calculator` — a direção agora é
+  só `risk_calculator` -> processor. `wind` deliberadamente NÃO entrou:
+  ao contrário de `risk_bands.py`, este módulo não adota amostragem
+  tolerante a raster ausente pra `Risk_i,h` (um número contínuo publicado,
+  diferente de um rótulo de classificação, não deveria existir em cima de
+  zero dado real). Escolha de transform documentada como distinta da
+  recomendação de `normalization.py` (que sugere `neg_log_minmax` pro
+  MIROC6 só por magnitude de skew, ignorando o sinal) — Fase 3.3
+  continua separada, não tocada aqui.
+  `hazard_scope.PENDING_RISK_I_H_HAZARDS` criado: dict nomeado de exceção
+  pra todo membro de algum H_b sem entrada em `Risk_i,h` ainda (hoje só
+  `wind`, com motivo), removido do dict só quando a entrada real existir —
+  guarda de regressão contra esse gap específico se repetir num hazard
+  futuro (`tests/test_hazard_scope.py`,
+  `test_every_h_b_member_has_a_risk_i_h_entry_or_a_documented_exception`).
+  `normalization.py` ganhou tolerância a raster ausente (`_sample_raster_
+  or_nan`, mesmo padrão de `risk_bands.py`) — sem essa correção o módulo
+  quebrava (`RasterioIOError`) na primeira tentativa de rodar, já que
+  tenta amostrar `wind` incondicionalmente.
+- **Consequências:** `risk_by_hazard.csv` regenerado com dado real — 6
+  termos agora, `precip` com 64.710 linhas (p50=2.9668, p95=96.0715,
+  max=8894.153). Tabela de origem de normalização (Seção 4.3, nunca
+  gerada antes) escrita em `data/outputs/tables/
+  normalization_origin_table.csv` (9 linhas, `wind` ausente com motivo
+  logado, não `wind` como um dos hazards computáveis — a tabela é a
+  recomendação da Fase 3.3, não o que `risk_calculator.py` usa hoje).
+  `docs/LIMITATIONS.md` ganhou entrada nova (2026-09-13) restringindo o
+  gap de `wind` de "RiskBand/classificação" (já registrado 2026-09-12)
+  pra também "sem Risk_i,h" explicitamente — não substitui a entrada
+  anterior, é mais específica.
+- **Arquivos:** `src/index/risk_calculator.py`, `src/index/hazard_scope.py`,
+  `src/index/normalization.py`, `src/processors/
+  extreme_precipitation_processor.py`, `tests/test_risk_calculator.py`,
+  `tests/test_hazard_scope.py`, `tests/test_extreme_precipitation_
+  processor.py`, `tests/test_extreme_wind_processor.py`, `tests/
+  test_normalization.py`, `docs/DECISIONS.md`, `docs/LIMITATIONS.md`.
+- **Status:** Ativa. `precip` fechada, final. `wind` continua aberta,
+  bloqueada na mesma aquisição ERA5 já registrada (Portugal 12/30, Índia
+  2/30) — agora também refletida em código (`PENDING_RISK_I_H_HAZARDS`),
+  não só em `docs/LIMITATIONS.md`. Fase 3.3 (troca de transform) continua
+  separada, não tocada por esta tarefa.

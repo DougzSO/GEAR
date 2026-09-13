@@ -143,7 +143,15 @@ def test_wind_not_merged_into_the_core_hazard_temporal_window_dict():
 
 
 def test_not_wired_into_risk_calculator_hazard_terms_yet():
-    assert set(rc.HAZARD_TERMS) == {"ws", "heat", "sv", "iv", "spei"}
+    """precip was wired in (correlation gate passed, real data for all three
+    countries); wind is not -- ERA5 gust acquisition is still incomplete
+    (Brazil 30/30 years cached, Portugal 12/30, India 2/30; no country has a
+    processed extreme_wind_gust_raw_*.tif), so there is no real per-plant
+    value to compute Risk_i,h from yet. See docs/DECISIONS.md, "GEAR v3
+    Risk_i,h integration gap: precip wired in, wind still blocked on ERA5
+    acquisition"."""
+    assert set(rc.HAZARD_TERMS) == {"ws", "heat", "sv", "iv", "spei", "precip"}
+    assert "wind" not in rc.HAZARD_TERMS
 
 
 # --------------------------------------------------------------------------

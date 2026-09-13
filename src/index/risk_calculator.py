@@ -56,10 +56,43 @@ Hazard terms currently computable, and an open methodology question
 --------------------------------------------------------------------------
 The v3 methodology's six-hazard core checklist (Section 2) lists exactly:
 Water Stress, Extreme Heat, Drought, Extreme Precipitation, Wildfire, Extreme
-Wind. Of these, only three have raw data acquired and processed as of Phase
-1: Water Stress (``ws``), Extreme Heat (``heat``), Drought (``spei``).
-Extreme Precipitation, Wildfire and Extreme Wind are Phase 2 acquisition
-work, not yet available, and are therefore not computed here.
+Wind. Water Stress (``ws``), Extreme Heat (``heat``), Drought (``spei``) were
+wired in at Phase 1. Extreme Precipitation (``precip``) is wired in here as
+of the integration-gap closure below. Wildfire remains deferred (data
+unavailable, ``docs/LIMITATIONS.md``); Extreme Wind remains NOT computed
+here -- its RiskBand classification exists (``src/index/risk_bands.py``,
+Phase 3.2), but the ERA5 gust acquisition is still incomplete (Brazil has
+all 30 years cached, Portugal 12/30, India 2/30; no country has a processed
+``extreme_wind_gust_raw_*.tif``), so there is no real per-plant value to
+compute ``Risk_{i,h}`` from yet. Wiring Extreme Wind into ``HAZARD_TERMS``
+before that data exists would require the same silent-NaN-tolerant sampling
+``risk_bands.py`` uses for its classification pass; this module intentionally
+does not adopt that tolerance (``sample_raster`` raises loudly on a missing
+raster) because ``Risk_{i,h}``, unlike a RiskBand, is a real published
+number, not a classification label -- see ``docs/DECISIONS.md``, "GEAR v3
+Risk_i,h integration gap: precip wired in, wind still blocked on ERA5
+acquisition" for the full account.
+
+--------------------------------------------------------------------------
+Extreme Precipitation (``precip``) -- transform choice, stated plainly
+--------------------------------------------------------------------------
+``precip`` is GCM-dependent (CMIP6 ``pr``-derived, like ``heat``/``spei``),
+so its ``FROZEN_BOUNDS`` entry is per-GCM. Its LOG_TERMS/LIN_TERMS
+assignment is decided by the same empirical skewness check
+``normalization.py`` (Phase 2.4) already runs for every candidate, but
+applied here only to choose between this module's two PRE-EXISTING
+transforms (``Tlog``=log1p+Min-Max, ``Tlin``=direct Min-Max) -- **not** an
+adoption of ``normalization.py``'s new ``neg_log_minmax`` recommendation,
+which is Phase 3.3's separate, still-pending transform swap and is not
+touched by this change. The pooled skewness came back GCM-dependent and, in
+either case, not a case for ``Tlog``: GFDL-ESM4's pooled sample skew is
+-0.125 (already within the |skew|<=0.5 "fairly symmetrical" band), and
+MIROC6's is -0.586 (mildly skewed, but LEFT, not right) -- ``Tlog``
+(log1p) is designed to compress a long RIGHT tail, which is not what either
+GCM's distribution has here, so applying it would misuse the transform's
+own rationale rather than correct a real right-skew. ``precip`` is therefore
+placed in ``LIN_TERMS`` (direct Min-Max), the same treatment as ``sv``/
+``iv``, on the data's own shape -- not a default or an oversight.
 
 **Flagged, not silently resolved**: the pre-v3 codebase also computed two
 further Aqueduct indicators, seasonal variability (``sv``) and interannual
@@ -132,6 +165,8 @@ from src.config import (
     OUTPUT_TABLES,
 )
 from src.downloaders.cds_tasmax_downloader import configured_models
+from src.processors.extreme_precipitation_processor import PRECIP_TEMPORAL_WINDOW
+from src.processors.extreme_precipitation_processor import raw_raster_path as precip_raw_path
 from src.processors.heat_stress_processor import raw_raster_path as heat_raw_path
 from src.processors.spei_processor import raw_raster_path as spei_raw_path
 from src.processors.water_stress_processor import raw_raster_path as ws_raw_path
@@ -143,15 +178,15 @@ logger = logging.getLogger(__name__)
 # Terms and transforms
 # --------------------------------------------------------------------------
 # NOT the final v3 applicable-hazard set -- see the module docstring section
-# "Hazard terms currently computable". Extreme Precipitation / Wildfire /
-# Extreme Wind are absent (Phase 2, not yet acquired); sv/iv are present but
-# flagged pending Phase 3.
-HAZARD_TERMS = ("ws", "heat", "sv", "iv", "spei")
+# "Hazard terms currently computable". Wildfire / Extreme Wind are absent
+# (Wildfire deferred for data unavailability; Extreme Wind blocked on
+# incomplete ERA5 acquisition); sv/iv are present but flagged pending Phase 3.
+HAZARD_TERMS = ("ws", "heat", "sv", "iv", "spei", "precip")
 LOG_TERMS = frozenset({"ws", "heat", "spei"})   # log1p -> Min-Max
-LIN_TERMS = frozenset({"sv", "iv"})             # linear Min-Max
+LIN_TERMS = frozenset({"sv", "iv", "precip"})   # linear Min-Max
 # Terms whose global bound is per-GCM (magnitudes are not model-comparable);
 # every other term's bound is a single flat pair pooling all GCMs.
-GCM_DEPENDENT_TERMS = frozenset({"heat", "spei"})
+GCM_DEPENDENT_TERMS = frozenset({"heat", "spei", "precip"})
 FLAT_BOUND_TERMS = tuple(t for t in HAZARD_TERMS if t not in GCM_DEPENDENT_TERMS)
 
 # ``wd`` (water depletion) is left out: rank-redundant with ``ws``
@@ -166,10 +201,11 @@ HAZARD_LABELS = {
     "ws": "Water Stress",
     "heat": "Extreme Heat",
     "spei": "Drought",
+    "precip": "Extreme Precipitation",
     "sv": "Water Seasonal Variability (not a v3 Section 2 hazard -- Phase 3 pending)",
     "iv": "Water Interannual Variability (not a v3 Section 2 hazard -- Phase 3 pending)",
 }
-V3_CORE_HAZARD_TERMS = frozenset({"ws", "heat", "spei"})
+V3_CORE_HAZARD_TERMS = frozenset({"ws", "heat", "spei", "precip"})
 
 # --------------------------------------------------------------------------
 # Temporal-window assumption per hazard term -- explicit, named, not buried
@@ -206,6 +242,12 @@ HAZARD_TEMPORAL_WINDOW: dict[str, dict[str, object]] = {
         "window": "2041-2070", "is_explicit_30yr_window": True,
         "note": "same explicit CMIP6 30-yr window as heat.",
     },
+    # Reused, not duplicated freehand: extreme_precipitation_processor defines
+    # this against the exact same schema (asserted there) but keeps it
+    # standalone until precip is wired into HAZARD_TERMS -- which this task
+    # now does, so the two dicts are merged here rather than kept as two
+    # sources of truth.
+    "precip": PRECIP_TEMPORAL_WINDOW,
 }
 assert set(HAZARD_TEMPORAL_WINDOW) == set(HAZARD_TERMS), (
     "HAZARD_TEMPORAL_WINDOW must declare a temporal-window entry for every "
@@ -238,10 +280,16 @@ _UID_DIGEST_BYTES = 6   # 48-bit hash; collision-checked at load time
 # Format: RAW bounds (pre-log1p) (min, max). Tlog applies log1p to both the
 # data and the bound.
 #   - ws/sv/iv: one pair per term (water rasters are GCM-independent).
-#   - heat/spei: one pair per GCM each (MIROC6 ~10-100x GFDL for heat; never
-#     in the same pool).
+#   - heat/spei/precip: one pair per GCM each (MIROC6 ~10-100x GFDL for heat;
+#     never in the same pool).
+#
+# precip's bounds were added on 2026-09-13 (the ws/sv/iv/heat/spei bounds
+# below are unchanged from the original 2026-09-04 snapshot -- this is a
+# mixed-date snapshot, not a full recompute; see docs/DECISIONS.md, "GEAR v3
+# Risk_i,h integration gap: precip wired in, wind still blocked on ERA5
+# acquisition").
 # --------------------------------------------------------------------------
-BOUNDS_DATA_SNAPSHOT = "2026-09-04"
+BOUNDS_DATA_SNAPSHOT = "2026-09-04 (ws/sv/iv/heat/spei), 2026-09-13 (precip)"
 FROZEN_BOUNDS: dict[str, object] = {
     "ws": (3.3699998880365456e-07, 29.883182525634766),
     "sv": (0.060949064791202545, 1.6313080787658691),
@@ -253,6 +301,10 @@ FROZEN_BOUNDS: dict[str, object] = {
     "spei": {
         "gfdl_esm4": (1.4441261291503906, 4.022922515869141),
         "miroc6": (1.2722063064575195, 4.160458564758301),
+    },
+    "precip": {
+        "gfdl_esm4": (0.36666667461395264, 13.800000190734863),
+        "miroc6": (0.7666666507720947, 12.566666603088379),
     },
 }
 
@@ -285,6 +337,8 @@ def raster_path(term: str, country: str, water_scenario: str, model: str) -> Pat
         return heat_raw_path(country, model, WATER_TO_HEAT[water_scenario])
     if term == "spei":
         return spei_raw_path(country, model, WATER_TO_HEAT[water_scenario])
+    if term == "precip":
+        return precip_raw_path(country, model, WATER_TO_HEAT[water_scenario])
     raise ValueError(
         f"unknown term {term!r} (expected one of {HAZARD_TERMS}; "
         f"{EXCLUDED_INDICATORS} is excluded from GEAR by design)"

@@ -86,16 +86,18 @@ def test_precip_temporal_window_matches_core_schema():
     assert ep.PRECIP_TEMPORAL_WINDOW["horizon_year"] == 2050
 
 
-def test_precip_not_merged_into_the_core_hazard_temporal_window_dict():
-    """PRECIP_TEMPORAL_WINDOW is a standalone constant -- 'precip' must not
-    appear as a key in risk_calculator.HAZARD_TEMPORAL_WINDOW itself, since
-    that would silently wire this hazard into Risk_i,h ahead of Phase 2.5/3."""
-    assert "precip" not in rc.HAZARD_TEMPORAL_WINDOW
-    assert "precip" not in rc.HAZARD_TERMS
+def test_precip_temporal_window_is_risk_calculators_precip_entry():
+    """The Phase 2.5 correlation gate closed (every Extreme-Precipitation
+    pair passed, |r| <= 0.702) and this task wired precip into Risk_i,h --
+    risk_calculator.HAZARD_TEMPORAL_WINDOW['precip'] IS this module's
+    PRECIP_TEMPORAL_WINDOW object (imported, not copied), not merely equal
+    to it, so the two can never silently drift apart."""
+    assert rc.HAZARD_TEMPORAL_WINDOW["precip"] is ep.PRECIP_TEMPORAL_WINDOW
+    assert "precip" in rc.HAZARD_TERMS
 
 
-def test_not_wired_into_risk_calculator_hazard_terms_yet():
-    assert set(rc.HAZARD_TERMS) == {"ws", "heat", "sv", "iv", "spei"}
+def test_wired_into_risk_calculator_hazard_terms():
+    assert set(rc.HAZARD_TERMS) == {"ws", "heat", "sv", "iv", "spei", "precip"}
 
 
 # --------------------------------------------------------------------------
