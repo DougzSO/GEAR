@@ -16,6 +16,20 @@ cache/
 # bulk CSV extracts are regenerable from those scripts and are not.
 analysis/*.csv
 
+# Local-only scratch analysis and notes — never committed.
+CLAUDE.md
+analysis/absolute_threshold_research.md
+analysis/aqueduct_indicator_correlation.md
+analysis/aqueduct_indicator_correlation.py
+analysis/aqueduct_schema_check.md
+analysis/ccrs_band_classification_v2.md
+analysis/ccrs_band_classification_v2.py
+analysis/ccrs_bucket_weighted_distribution.md
+analysis/ccrs_bucket_weighted_distribution.py
+analysis/legacy_methodology_scan.md
+analysis/spei_catalog_check.md
+analysis/spei_catalog_check.py
+
 # Python
 __pycache__/
 *.pyc

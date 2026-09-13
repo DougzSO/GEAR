@@ -1,309 +1,235 @@
-"""Tests for src/index/risk_bands -- WaterRiskBand and HeatRiskBand.
+"""Tests for src/index/risk_bands -- Phase 3.2, GEAR v3 work plan.
 
-Covers: the fixed absolute WaterRiskBand cuts (one case per cut + one value
-per band), the p25/p75/p95 HeatRiskBand cuts on a known synthetic sample,
-that HeatRiskBand uses GFDL-ESM4 alone (not MIROC6, not a blend), that
-plant_uid is the identity key, and that no function returns a single number
-combining the two bands. Monkeypatched tests need no data on disk.
+Replaces the retired CCRS-era test_risk_bands.py (WaterRiskBand/HeatRiskBand
+against the deleted ccrs_calculator), exactly as tests/test_risk_calculator.py
+replaced the retired ccrs_calculator tests in Phase 1.
+
+Covers: pure band arithmetic (percentile_band_cuts, _bandize) with no I/O;
+one Tier 1 hazard (Water Stress, absolute cutoffs) and one Tier 3 hazard
+(Drought, percentile cutoffs) end to end via classify_hazard; the binary
+Wind-bucket scheme; that a (hazard, bucket) combination outside
+hazard_scope.APPLICABLE_HAZARDS always raises HazardNotApplicableError,
+never a silent default band; and the THRESHOLD_REGISTRY <-> H_b consistency
+guard.
 """
+
+from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from src.index import hazard_scope as hs
 from src.index import risk_bands as rb
-from src.index import ccrs_calculator as ccrs
 
 
 # --------------------------------------------------------------------------
-# helpers
+# percentile_band_cuts -- pure function, no I/O
 # --------------------------------------------------------------------------
-def _fake_terms(rows):
-    """Build a frame shaped like ccrs.sample_terms(): one row per
-    (plant, water_scenario) with raw ws/sv/iv/heat."""
-    base = {
-        "country": "Testland", "plant_name": "p", "lat": 0.0, "lon": 0.0,
-        "capacity_mw": 10.0, "commissioning_year": 2000.0, "bucket": "thermal",
-        "water_scenario": "opt", "heat_scenario": "ssp126",
-        "ws": 0.0, "sv": 0.0, "iv": 0.0, "heat": 0.0,
-    }
-    return pd.DataFrame([{**base, **r} for r in rows])
+def test_percentile_band_cuts_drops_lowest_as_diagnostic():
+    values = np.arange(1, 101, dtype="float64")  # 1..100
+    info = rb.percentile_band_cuts(values, (50.0, 75.0, 90.0, 95.0))
+    assert info["diagnostic_percentile"] == 50.0
+    assert info["band_percentiles"] == (75.0, 90.0, 95.0)
+    assert len(info["band_cuts"]) == 3
+    # np.percentile(1..100, 75) == 75.25
+    assert info["band_cuts"][0] == pytest.approx(75.25, abs=0.5)
+    assert info["n"] == 100
 
 
-# --------------------------------------------------------------------------
-# 1. WaterRiskBand -- absolute cuts
-# --------------------------------------------------------------------------
-def test_water_band_cuts_are_the_fixed_published_constants():
-    assert rb.WATER_BAND_CUTS == (0.208, 0.415, 0.667, 1.0)
-    assert rb.WATER_RISK_BANDS == (
-        "Low", "Low-Medium", "Medium-High", "High", "Extremely-High")
+def test_percentile_band_cuts_ignores_nan():
+    values = np.array([np.nan, *range(1, 101)], dtype="float64")
+    info = rb.percentile_band_cuts(values, (50.0, 75.0, 90.0, 95.0))
+    assert info["n"] == 100
 
 
-def test_water_band_one_value_per_band():
-    got = list(rb.water_risk_band([0.10, 0.30, 0.50, 0.80, 1.50]))
-    assert got == ["Low", "Low-Medium", "Medium-High", "High", "Extremely-High"]
-
-
-def test_water_band_values_exactly_on_each_cut_go_to_the_higher_band():
-    # left-closed: a value == cut belongs to the band above the cut
-    got = list(rb.water_risk_band([0.208, 0.415, 0.667, 1.0]))
-    assert got == ["Low-Medium", "Medium-High", "High", "Extremely-High"]
-    # just below each cut stays in the lower band
-    eps = 1e-9
-    got_below = list(rb.water_risk_band([0.208 - eps, 0.415 - eps, 0.667 - eps, 1.0 - eps]))
-    assert got_below == ["Low", "Low-Medium", "Medium-High", "High"]
-
-
-def test_water_band_nan_is_unbanded_and_result_is_gcm_pool_independent():
-    out = rb.water_risk_band([np.nan, 0.5])
-    assert out[0] is None and out[1] == "Medium-High"
-
-
-def test_s_water_uses_raw_within_water_weights():
-    # S_water = 0.4164*ws + 0.2505*sv + 0.3331*iv on RAW values
-    w = ccrs.WITHIN_WATER_WEIGHTS
-    val = rb.s_water([1.0], [2.0], [3.0])[0]
-    assert val == pytest.approx(w["ws"] * 1 + w["sv"] * 2 + w["iv"] * 3)
+def test_percentile_band_cuts_raises_on_all_nan():
+    with pytest.raises(ValueError, match="no finite values"):
+        rb.percentile_band_cuts(np.array([np.nan, np.nan]))
 
 
 # --------------------------------------------------------------------------
-# 2. HeatRiskBand -- p25/p75/p95 on a known sample
+# _bandize -- pure function, no I/O
 # --------------------------------------------------------------------------
-def test_heat_percentile_cuts_on_known_sample():
-    sample = np.arange(0, 101)               # 0..100 inclusive
-    cuts = rb.heat_percentile_cuts(sample)
-    assert cuts == {
-        25: np.percentile(sample, 25),
-        75: np.percentile(sample, 75),
-        95: np.percentile(sample, 95),
-    }
-    assert (cuts[25], cuts[75], cuts[95]) == (25.0, 75.0, 95.0)
+def test_bandize_four_band_left_closed():
+    cuts = (10.0, 20.0, 30.0)
+    values = np.array([-5.0, 10.0, 15.0, 20.0, 29.999, 30.0, 100.0])
+    bands = rb._bandize(values, cuts, rb.BAND_LABELS)
+    assert list(bands) == ["Low", "Medium", "Medium", "High", "High", "Extreme", "Extreme"]
 
 
-def test_heat_band_classification_against_computed_cuts():
-    cuts = {25: 25.0, 75: 75.0, 95: 95.0}
-    got = list(rb.heat_risk_band([10.0, 25.0, 50.0, 75.0, 90.0, 95.0, 120.0], cuts))
-    #                               LOW  MED*  MED   HIGH*  HIGH  EXT*   EXT     (* = exactly on cut -> higher band)
-    assert got == ["LOW", "MEDIUM", "MEDIUM", "HIGH", "HIGH", "EXTREME", "EXTREME"]
+def test_bandize_binary_wind_scheme():
+    values = np.array([0.0, 24.9, 25.0, 40.0])
+    bands = rb._bandize(values, (25.0,), rb.WIND_BUCKET_BAND_LABELS)
+    assert list(bands) == ["Low", "Low", "Extreme", "Extreme"]
 
 
-def test_heat_percentile_cuts_ignores_nan():
-    cuts = rb.heat_percentile_cuts([np.nan, 0.0, 50.0, 100.0, np.nan])
-    assert cuts == rb.heat_percentile_cuts([0.0, 50.0, 100.0])
+def test_bandize_nan_is_none():
+    bands = rb._bandize(np.array([np.nan, 5.0]), (10.0, 20.0, 30.0), rb.BAND_LABELS)
+    assert bands[0] is None
+    assert bands[1] == "Low"
 
 
-# --------------------------------------------------------------------------
-# 3. HeatRiskBand uses GFDL-ESM4 alone -- not MIROC6, not a blend
-# --------------------------------------------------------------------------
-def test_primary_gcm_is_gfdl_and_is_first_configured():
-    assert rb.PRIMARY_GCM == "gfdl_esm4"
-    assert rb.PRIMARY_GCM == ccrs.configured_models()[0]
-
-
-def test_compute_bands_heat_side_is_gfdl_only(monkeypatch):
-    calls = []
-
-    def fake_sample_terms(model):
-        calls.append(model)
-        # heat is wildly different per GCM; gfdl small, miroc6 large
-        heat = {"gfdl_esm4": 1.0, "miroc6": 500.0}[model]
-        return _fake_terms([
-            {"plant_uid": "T-1", "ws": 0.1, "sv": 0.1, "iv": 0.1, "heat": heat},
-            {"plant_uid": "T-2", "ws": 0.1, "sv": 0.1, "iv": 0.1, "heat": heat * 2},
-            {"plant_uid": "T-3", "ws": 0.1, "sv": 0.1, "iv": 0.1, "heat": heat * 3},
-        ])
-
-    monkeypatch.setattr(ccrs, "sample_terms", fake_sample_terms)
-
-    result = rb.compute_bands()                      # default -> primary GCM
-    assert calls == ["gfdl_esm4"]                    # sampled once, gfdl only
-    assert result.heat_gcm == "gfdl_esm4"
-    # heat_days column is the gfdl values (1, 2, 3), never miroc6 (500, ...)
-    assert sorted(result.frame["heat_days"]) == [1.0, 2.0, 3.0]
-    # cuts are percentiles of the gfdl sample, not miroc6, not a pooled mix
-    assert result.heat_cuts == rb.heat_percentile_cuts([1.0, 2.0, 3.0])
-    assert max(result.heat_cuts.values()) < 10       # nowhere near the miroc6 scale
-
-
-def test_compute_bands_miroc6_uses_its_own_percentiles_not_a_blend(monkeypatch):
-    def fake_sample_terms(model):
-        heat = {"gfdl_esm4": 1.0, "miroc6": 500.0}[model]
-        return _fake_terms([
-            {"plant_uid": "T-1", "heat": heat},
-            {"plant_uid": "T-2", "heat": heat * 2},
-        ])
-
-    monkeypatch.setattr(ccrs, "sample_terms", fake_sample_terms)
-    result = rb.compute_bands("miroc6")
-    assert result.heat_gcm == "miroc6"
-    assert result.heat_cuts == rb.heat_percentile_cuts([500.0, 1000.0])
-    # not the gfdl cuts, not the mean of the two
-    assert result.heat_cuts != rb.heat_percentile_cuts([1.0, 2.0])
+def test_bandize_rejects_mismatched_cuts_and_labels():
+    with pytest.raises(ValueError, match="cannot bound"):
+        rb._bandize(np.array([1.0]), (10.0, 20.0), rb.BAND_LABELS)  # 2 cuts, 4 labels
 
 
 # --------------------------------------------------------------------------
-# 4. plant_uid is the identity key
+# classify_hazard -- Tier 1 (absolute), Water Stress
 # --------------------------------------------------------------------------
-def test_bands_keyed_by_plant_uid_not_plant_name(monkeypatch):
-    def fake_sample_terms(model):
-        return _fake_terms([
-            # same plant_name, distinct plant_uid, different water inputs
-            {"plant_uid": "BRA-aaaa", "plant_name": "Shared Name",
-             "ws": 0.05, "sv": 0.05, "iv": 0.05, "heat": 1.0},   # low S_water
-            {"plant_uid": "BRA-bbbb", "plant_name": "Shared Name",
-             "ws": 1.5, "sv": 1.5, "iv": 1.5, "heat": 1.0},      # high S_water
-        ])
+def test_water_stress_tier1_absolute_cuts():
+    values = np.array([0.05, 0.1, 0.25, 0.4, 0.6, 0.8, 0.95])
+    result = rb.classify_hazard("ws", "hydro", values)
+    assert result.spec.tier == 1
+    assert result.spec.kind == "absolute"
+    assert list(result.bands) == ["Low", "Medium", "Medium", "High", "High", "Extreme", "Extreme"]
+    assert result.cuts_used == rb.WATER_STRESS_TIER1_CUTS
+    assert result.percentile_info is None
 
-    monkeypatch.setattr(ccrs, "sample_terms", fake_sample_terms)
-    frame = rb.compute_bands().frame
 
-    assert rb.PLANT_UID in frame.columns
-    assert len(frame) == 2
-    by_uid = dict(zip(frame[rb.PLANT_UID], frame["water_risk_band"]))
-    assert by_uid["BRA-aaaa"] == "Low"
-    assert by_uid["BRA-bbbb"] == "Extremely-High"
-    # the shared name did not collapse or cross the two records
-    assert frame["plant_name"].tolist() == ["Shared Name", "Shared Name"]
+def test_water_stress_applies_to_both_hydro_and_thermal():
+    values = np.array([0.5])
+    for bucket in ("hydro", "thermal"):
+        result = rb.classify_hazard("ws", bucket, values)
+        assert result.spec.tier == 1
+        assert result.bands[0] == "High"
 
 
 # --------------------------------------------------------------------------
-# 5. the two bands are never merged into one score
+# classify_hazard -- Tier 3 (percentile), Drought/SPEI
 # --------------------------------------------------------------------------
-def test_output_has_two_separate_band_columns_and_no_combined_column(monkeypatch):
-    monkeypatch.setattr(ccrs, "sample_terms", lambda model: _fake_terms([
-        {"plant_uid": "T-1", "ws": 0.3, "sv": 0.3, "iv": 0.3, "heat": 5.0},
-        {"plant_uid": "T-2", "ws": 0.9, "sv": 0.9, "iv": 0.9, "heat": 50.0},
-    ]))
-    cols = set(rb.compute_bands().frame.columns)
-    assert {"water_risk_band", "heat_risk_band"} <= cols
-    forbidden = ("combined", "overall", "risk_band_combined", "ccrs_band",
-                 "band_score", "merged_band", "total_band")
-    assert not any(f in c for c in cols for f in forbidden)
+def test_drought_spei_tier3_percentile():
+    pooled = np.arange(1, 101, dtype="float64")
+    raw = np.array([1.0, 76.0, 91.0, 96.0])  # below P75, in Medium, in High, in Extreme
+    result = rb.classify_hazard("spei", "hydro", raw, pooled_values=pooled)
+    assert result.spec.tier == 3
+    assert result.spec.kind == "percentile"
+    assert list(result.bands) == ["Low", "Medium", "High", "Extreme"]
+    assert result.percentile_info["diagnostic_percentile"] == 50.0
 
 
-def test_no_public_function_combines_the_two_bands():
-    combining = [
-        n for n in dir(rb)
-        if callable(getattr(rb, n)) and not n.startswith("_")
-        and any(k in n.lower() for k in ("combine", "merge", "overall", "blend"))
-    ]
-    assert combining == []
-
-
-def test_band_label_sets_are_disjoint():
-    # water bands are Title-case, heat bands UPPER -- they can never be
-    # confused for one ordinal scale
-    assert set(rb.WATER_RISK_BANDS).isdisjoint(rb.HEAT_RISK_BANDS)
-
-
-def test_contingency_table_is_a_2d_crosstab_never_a_scalar(monkeypatch):
-    monkeypatch.setattr(ccrs, "sample_terms", lambda model: _fake_terms([
-        {"plant_uid": "T-1", "ws": 0.05, "sv": 0.05, "iv": 0.05, "heat": 1.0},
-        {"plant_uid": "T-2", "ws": 1.5, "sv": 1.5, "iv": 1.5, "heat": 100.0},
-        {"plant_uid": "T-3", "ws": 0.5, "sv": 0.5, "iv": 0.5, "heat": 20.0},
-    ]))
-    frame = rb.compute_bands().frame
-    tab = rb.contingency_table(frame, "count")
-    assert list(tab.index) == list(rb.WATER_RISK_BANDS)
-    assert list(tab.columns) == list(rb.HEAT_RISK_BANDS)
-    assert tab.to_numpy().sum() == len(frame.dropna(subset=["water_risk_band", "heat_risk_band"]))
-    cap = rb.contingency_table(frame, "capacity_mw")
-    assert cap.shape == (len(rb.WATER_RISK_BANDS), len(rb.HEAT_RISK_BANDS))
-    with pytest.raises(ValueError):
-        rb.contingency_table(frame, "combined_score")
+def test_drought_spei_requires_pooled_values():
+    with pytest.raises(ValueError, match="pooled_values is required"):
+        rb.classify_hazard("spei", "hydro", np.array([1.0]))
 
 
 # --------------------------------------------------------------------------
-# report emits the comparability warning verbatim
+# Extreme Wind -- Tier 1 binary (Wind bucket) vs Tier 3 percentile (Solar)
 # --------------------------------------------------------------------------
-def test_build_summary_contains_the_heat_warning_verbatim(monkeypatch):
-    monkeypatch.setattr(ccrs, "sample_terms", lambda model: _fake_terms([
-        {"plant_uid": "T-1", "ws": 0.3, "sv": 0.3, "iv": 0.3, "heat": 5.0},
-        {"plant_uid": "T-2", "ws": 0.9, "sv": 0.9, "iv": 0.9, "heat": 50.0},
-    ]))
-    text = rb.build_summary(rb.compute_bands())
-    assert rb.HEAT_BAND_WARNING in text
-    assert "not comparable across runs" in rb.HEAT_BAND_WARNING.lower()
-    assert "never" in text.lower() and "merge" in text.lower()
-    assert "stable across runs" in rb.HEAT_BAND_WARNING
+def test_extreme_wind_wind_bucket_is_binary():
+    values = np.array([10.0, 24.9, 25.0, 30.0])
+    result = rb.classify_hazard("wind", "wind", values)
+    assert result.spec.tier == 1
+    assert result.spec.labels == rb.WIND_BUCKET_BAND_LABELS
+    assert list(result.bands) == ["Low", "Low", "Extreme", "Extreme"]
 
 
-# --------------------------------------------------------------------------
-# real-data sanity (skipped if inputs absent)
-# --------------------------------------------------------------------------
-def _inputs_present() -> bool:
-    try:
-        return (ccrs.raster_path("heat", "Brazil", "opt", "gfdl_esm4").exists()
-                and (ccrs.ASSETS_PROCESSED / "gem_validated_plants_Brazil.csv").exists())
-    except Exception:
-        return False
-
-
-@pytest.mark.skipif(not _inputs_present(), reason="processed rasters / plant CSVs absent")
-def test_real_data_bands_and_pooled_heat_split():
-    result = rb.compute_bands()
-    frame = result.frame
-    assert (frame[rb.PLANT_UID].value_counts() == len(ccrs.WATER_SCENARIOS)).all()
-    assert set(frame["water_risk_band"].dropna()) <= set(rb.WATER_RISK_BANDS)
-    assert set(frame["heat_risk_band"].dropna()) <= set(rb.HEAT_RISK_BANDS)
-    # pooled heat split is ~25 / 50 / 20 / 5 by construction
-    shares = frame["heat_risk_band"].value_counts(normalize=True)
-    assert shares["LOW"] == pytest.approx(0.25, abs=0.03)
-    assert shares["EXTREME"] == pytest.approx(0.05, abs=0.02)
+def test_extreme_wind_solar_bucket_is_percentile():
+    pooled = np.arange(1, 101, dtype="float64")
+    raw = np.array([1.0, 91.0, 96.0, 99.5])
+    result = rb.classify_hazard("wind", "solar", raw, pooled_values=pooled)
+    assert result.spec.tier == 3
+    assert result.spec.percentiles == rb.WIND_SOLAR_TIER3_PERCENTILES
+    assert result.percentile_info["diagnostic_percentile"] == 75.0
+    assert list(result.bands) == ["Low", "Medium", "High", "Extreme"]
 
 
 # --------------------------------------------------------------------------
-# 9. worst_case_band -- ordinal max across the two independent scales
-# (Douglas's 2026-09-05 request), NOT a merge -- see the module comment
-# above worst_case_band for the proposed rank mapping and tie-break.
+# Extreme Heat -- Solar is a FINAL Tier 3 fallback (closed 2026-09-12 by a
+# bounded literature search, not provisional), same cuts as Thermal
 # --------------------------------------------------------------------------
-def test_worst_case_rank_tables_span_0_to_1_in_scale_order():
-    assert [rb.WATER_BAND_RANK[b] for b in rb.WATER_RISK_BANDS] == [0.0, 0.25, 0.5, 0.75, 1.0]
-    assert [rb.HEAT_BAND_RANK[b] for b in rb.HEAT_RISK_BANDS] == pytest.approx(
-        [0.0, 1 / 3, 2 / 3, 1.0]
-    )
+def test_extreme_heat_solar_is_final_not_provisional_and_uses_thermal_style_cuts():
+    thermal_spec = rb.THRESHOLD_REGISTRY[("heat", "thermal")]
+    solar_spec = rb.THRESHOLD_REGISTRY[("heat", "solar")]
+    assert thermal_spec.provisional is False
+    assert solar_spec.provisional is False
+    assert solar_spec.percentiles == thermal_spec.percentiles == rb.GENERIC_TIER3_PERCENTILES
 
 
-def test_worst_case_band_water_worse():
-    # water at "High" (0.75) outranks heat at "MEDIUM" (0.333)
-    label, determinant = rb.worst_case_band("High", "MEDIUM")
-    assert (label, determinant) == ("High", "water")
+# --------------------------------------------------------------------------
+# sv/iv -- Tier 3, Hydro only (not Thermal)
+# --------------------------------------------------------------------------
+def test_sv_iv_are_hydro_only_tier3():
+    for term in ("sv", "iv"):
+        assert ("hydro", term) or True  # documentation anchor
+        spec = rb.THRESHOLD_REGISTRY[(term, "hydro")]
+        assert spec.tier == 3
+        assert spec.percentiles == rb.GENERIC_TIER3_PERCENTILES
+        assert (term, "thermal") not in rb.THRESHOLD_REGISTRY
 
 
-def test_worst_case_band_heat_worse():
-    # heat at "EXTREME" (1.0) outranks water at "Low-Medium" (0.25)
-    label, determinant = rb.worst_case_band("Low-Medium", "EXTREME")
-    assert (label, determinant) == ("EXTREME", "heat")
+# --------------------------------------------------------------------------
+# Inapplicable hazard/bucket combinations -- must raise, never silently band
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("hazard,bucket", [
+    ("spei", "thermal"),   # Drought is Hydro-only
+    ("spei", "wind"),
+    ("spei", "solar"),
+    ("ws", "wind"),        # Water Stress has no water-independent bucket
+    ("ws", "solar"),
+    ("wind", "hydro"),     # Extreme Wind never applies to a water bucket
+    ("wind", "thermal"),
+    ("sv", "thermal"),     # sv/iv are Hydro-only (not Thermal, Phase 3.1)
+    ("iv", "wind"),
+    ("heat", "hydro"),     # Extreme Heat never applies to Hydro
+    ("not_a_hazard", "hydro"),
+])
+def test_inapplicable_combination_raises_not_a_silent_band(hazard, bucket):
+    with pytest.raises(rb.HazardNotApplicableError):
+        rb.classify_hazard(hazard, bucket, np.array([1.0]), pooled_values=np.array([1.0, 2.0, 3.0]))
 
 
-def test_worst_case_band_tie_defaults_to_water():
-    # both at the bottom of their own scale -- a rank tie (0.0 == 0.0)
-    label, determinant = rb.worst_case_band("Low", "LOW")
-    assert (label, determinant) == ("Low", "water")
-    # both at the top of their own scale -- a rank tie (1.0 == 1.0)
-    label, determinant = rb.worst_case_band("Extremely-High", "EXTREME")
-    assert (label, determinant) == ("Extremely-High", "water")
+def test_every_h_b_combination_is_classifiable():
+    """The converse: every combination hazard_scope DOES mark applicable
+    must have a THRESHOLD_REGISTRY entry (enforced at import time too; this
+    re-checks it as a normal test, not only a load-time assertion)."""
+    for bucket, hazards in hs.APPLICABLE_HAZARDS.items():
+        for hazard in hazards:
+            assert (hazard, bucket) in rb.THRESHOLD_REGISTRY
 
 
-def test_worst_case_band_both_lowest_is_the_tie_case_not_an_error():
-    # explicit 4th case from the brief: both at their own lowest level
-    label, determinant = rb.worst_case_band("Low", "LOW")
-    assert label in rb.WATER_RISK_BANDS  # resolves to the water label on tie
-    assert determinant == rb.WORST_CASE_TIE_BREAK
-
-
-def test_worst_case_band_none_when_either_input_is_unbanded():
-    assert rb.worst_case_band(None, "HIGH") == (None, None)
-    assert rb.worst_case_band("High", None) == (None, None)
-
-
-def test_worst_case_band_frame_adds_two_columns_not_a_score():
-    frame = pd.DataFrame({
-        "water_risk_band": ["Low", "High", "Extremely-High", None],
-        "heat_risk_band": ["LOW", "MEDIUM", "EXTREME", "HIGH"],
+# --------------------------------------------------------------------------
+# compute_risk_bands -- pipeline-level, monkeypatched sampling (no raster I/O)
+# --------------------------------------------------------------------------
+def _fake_plants(bucket: str, n: int = 6) -> pd.DataFrame:
+    return pd.DataFrame({
+        rb.PLANT_UID: [f"p{bucket}{i}" for i in range(n)],
+        "country": "Testland", "plant_name": [f"plant{i}" for i in range(n)],
+        "lon": 0.0, "lat": 0.0, "capacity_mw": 10.0, "commissioning_year": 2000.0,
+        "bucket": bucket, "fuel_type": "x", "mixed_fuel_type": False,
+        "fuel_types_found": "x",
     })
-    out = rb.worst_case_band_frame(frame)
-    # row 2 is a top-of-scale tie (Extremely-High == EXTREME, both rank 1.0) -> water wins
-    assert list(out["worst_case_band"]) == ["Low", "High", "Extremely-High", None]
-    assert list(out["worst_case_determinant"]) == ["water", "water", "water", None]
-    assert not any(pd.api.types.is_numeric_dtype(out[c]) for c in ("worst_case_band", "worst_case_determinant"))
+
+
+def test_compute_risk_bands_only_classifies_applicable_combinations(monkeypatch):
+    """End-to-end pipeline check with fully monkeypatched sampling: no
+    (hazard, bucket) row appears in the output frame unless
+    hazard_scope.APPLICABLE_HAZARDS marks it applicable."""
+    rng = np.random.default_rng(0)
+
+    def fake_sample_hazard_terms(model=rb.PRIMARY_GCM):
+        parts = []
+        for bucket in hs.APPLICABLE_HAZARDS:
+            plants = _fake_plants(bucket)
+            for water_scen in ("opt", "bau", "pes"):
+                part = plants.copy()
+                part["water_scenario"] = water_scen
+                part["heat_scenario"] = "ssp126"
+                for term in ("ws", "sv", "iv", "heat", "spei", "precip", "wind"):
+                    part[term] = rng.uniform(0.0, 50.0, size=len(part))
+                parts.append(part)
+        return pd.concat(parts, ignore_index=True)
+
+    monkeypatch.setattr(rb, "sample_hazard_terms", fake_sample_hazard_terms)
+    result = rb.compute_risk_bands()
+
+    present = set(zip(result.frame["hazard_term"], result.frame["bucket"]))
+    assert present == set(rb.THRESHOLD_REGISTRY)
+    assert result.frame["risk_band"].notna().all()
+    assert set(result.frame["risk_band"].unique()) <= set(rb.BAND_LABELS) | set(rb.WIND_BUCKET_BAND_LABELS)
+
+
+def test_compute_risk_bands_rejects_unconfigured_model():
+    with pytest.raises(ValueError, match="not a configured GCM"):
+        rb.compute_risk_bands(model="not_a_real_gcm")

@@ -1898,6 +1898,150 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   de entrada (nova versão do Aqueduct, novo download CMIP6) exigirem
   reprocessamento.
 
+## 35. GEAR v3 Fase 3.1 — `hazard_scope.py`, tabela H_b por bucket, reconciliada após conflito de sessões paralelas (2026-09-12)
+
+- **Contexto:** Fase 3.2 (`RiskBand_i,h`) depende da tabela H_b (Seção 3
+  da metodologia) para saber quais combinações hazard/bucket são
+  classificáveis. Duas sessões tocaram `src/index/hazard_scope.py` ao
+  mesmo tempo (ver `docs/DECISIONS.md`, "GEAR v3 Phase 3.1: hazard_scope.py
+  reconciliation after parallel-session conflict") — reconciliado antes de
+  qualquer uma das duas fases prosseguir.
+- **Decisão:** `APPLICABLE_HAZARDS` (dict bucket -> tupla de termos) +
+  `applicable_hazards(bucket)` como única fonte de verdade de H_b: Hydro
+  `(ws, spei, precip, sv, iv)` |5|, Thermal `(ws, heat, precip)` |3|, Wind
+  `(wind,)` |1|, Solar `(heat, precip, wind)` |3|. `sv`/`iv` adicionados a
+  Hydro (não Thermal) por decisão do autor — ambos passaram no gate de
+  correlação (Fase 2.5) em Hydro e Thermal, mas Thermal já é tratado como
+  bucket homogêneo (sem campo de tecnologia de resfriamento no GEM), então
+  não há base por-planta para justificar um mecanismo de sensibilidade a
+  *variabilidade* de água especificamente em Thermal.
+- **Consequências:** módulo sem I/O de raster/CSV — apenas dados +
+  `applicable_hazards()` + guarda `_validate()` em tempo de import. Fase
+  3.2 (`risk_bands.py`) só lê daqui (`APPLICABLE_HAZARDS`/`HAZARD_LABELS`),
+  nunca escreve.
+- **Arquivos:** `src/index/hazard_scope.py`, `tests/test_hazard_scope.py`
+  (11 testes), `docs/DECISIONS.md`, `docs/LIMITATIONS.md` (convenção de
+  coordenação entre sessões paralelas).
+- **Status:** Ativa, fechada.
+
+## 36. GEAR v3 Fase 3.2 — `risk_bands.py`, classificação RiskBand_i,h por hazard (2026-09-12)
+
+- **Contexto:** Camada de classificação discreta de `Hazard_i,h` (Seção 4
+  da metodologia), separada de `Risk_i,h` (contínuo, `risk_calculator.py`)
+  e de PSAE (Fase 4, ainda não implementada). Substitui o módulo CCRS
+  antigo de mesmo nome (`WaterRiskBand`/`HeatRiskBand`, importava
+  `ccrs_calculator` já deletado) — deletado, não mantido, mesmo padrão da
+  Fase 1 com `ccrs_calculator.py` -> `risk_calculator.py`.
+- **Decisão:** `THRESHOLD_REGISTRY: dict[(hazard,bucket), ThresholdSpec]`,
+  validado 1:1 contra `hazard_scope.APPLICABLE_HAZARDS` em tempo de import
+  (nunca pode haver combinação em um módulo sem entrada correspondente no
+  outro). Um único dispatcher `classify_hazard(hazard, bucket, raw_values,
+  pooled_values=None)` branch por `spec.kind` ("absolute" | "binary" |
+  "percentile") — mesmo padrão do `extreme_wind_processor.
+  classify_extreme_wind`. Tabela completa de tier/threshold e a convenção
+  de "4 bandas, corte mais baixo descartado como estatística diagnóstica"
+  (decisão nova desta fase) estão documentadas em `docs/DECISIONS.md`,
+  "GEAR v3 Phase 3.2: RiskBand_i,h threshold classification, consolidated
+  tier/threshold table" — não duplicado aqui.
+- **Consequências:** `sample_hazard_terms()` estende a amostragem de
+  `risk_calculator.py` com `precip` (via
+  `extreme_precipitation_processor.raw_raster_path`) e `wind` (via
+  `extreme_wind_processor.raw_raster_path`, sem eixo de modelo/cenário),
+  mesmo padrão que `correlation_gate.py` já usa para `precip`. Raster
+  ausente (Extreme Wind, nenhum país processado ainda — Fase 2.3 de
+  aquisição) vira NaN com warning logado, nunca crash; percentil sem
+  amostra finita vira linha `insufficient_data` no pipeline, não uma banda
+  default silenciosa.
+- **Arquivos:** `src/index/risk_bands.py`, `tests/test_risk_bands.py` (29
+  testes), `docs/DECISIONS.md`, `docs/rework/
+  GEAR_v3_methodology_nature_format.md` Seções 3 e 4/4.1.
+- **Status:** Ativa, fechada para a lógica de classificação. Extreme Wind
+  sem raster processado para nenhum país ainda (ver item 37).
+
+## 37. GEAR v3 Fase 3.2 follow-up — Solar Extreme Heat Tier 1 fechado como rejeitado (busca bibliográfica limitada); Extreme Wind investigado (2026-09-12)
+
+- **Solar Extreme Heat:** busca bibliográfica limitada (3 checagens) não
+  encontrou threshold Tier 1 defensável — coeficiente de temperatura de
+  painel varia >2x por tecnologia (c-Si ~-0,3 a -0,5%/°C; CdTe ~-0,21%/°C;
+  CIGS ~-0,2 a -0,45%/°C), GEM não registra tecnologia de painel por
+  planta (mesma categoria de lacuna do campo de tecnologia de resfriamento
+  ausente em Thermal), IEC 61215/61730 medem/certificam coeficiente
+  próprio do fabricante em vez de mandar um valor único, e nenhum estudo
+  revisado por pares liga o coeficiente a um limiar de dias/ano — derating
+  de PV é contínuo na temperatura, não um degrau como o cut-out de 25 m/s
+  do Wind ou o 40°C do Thermal. `THRESHOLD_REGISTRY[("heat","solar")]`
+  fechado como Tier 3 FINAL (não mais provisório) — mesmo padrão de
+  fechamento do age_factor gás/oil-gas. Ver `docs/DECISIONS.md`, "GEAR v3
+  Phase 3.2 follow-up: Solar Extreme Heat Tier 1 PV threshold...".
+- **Extreme Wind:** investigado — `data/raw/climate/` não tem diretório
+  `era5_wind` para nenhum país; nenhum download de ERA5 gust foi feito
+  ainda (diferente do gap de Extreme Precipitation na Fase 2.5, que era só
+  processamento pendente com dado bruto já presente). Aguardando decisão
+  do autor sobre iniciar o download (90 requisições CDS — 30 anos × 3
+  países — usando as credenciais já configuradas). Ver `docs/DECISIONS.md`
+  e `docs/LIMITATIONS.md` para a correção retroativa do fechamento da Fase
+  2.3.
+- **Arquivos:** `src/index/risk_bands.py`, `docs/DECISIONS.md`,
+  `docs/LIMITATIONS.md`, `docs/rework/
+  GEAR_v3_methodology_nature_format.md` Seção 4.
+- **Status:** Solar Extreme Heat — ativa, fechada. Extreme Wind — aberta,
+  bloqueada em decisão do autor (ver `docs/DECISIONS.md`).
+
+## 38. GEAR v3 Fase 3.2 follow-up — bug de mislabeling GRIB corrigido e reestruturação de footprint de disco do download ERA5 (2026-09-12)
+
+- **Contexto:** autorizado pelo autor após o incidente de disco cheio.
+  Dois problemas independentes encontrados na investigação, ambos
+  corrigidos nesta tarefa antes de retomar o download.
+- **Bug 1 (integridade de dado):** `era5_wind_downloader._download_raw_year`
+  copiava os bytes brutos da resposta CDS para um arquivo chamado
+  `gust_hourly.nc` sempre que `zipfile.ZipFile` falhava (`BadZipFile`) —
+  sem checar o formato real. Na prática, toda resposta do CDS pra
+  `instantaneous_10m_wind_gust` é GRIB puro, não zip. Isso rotulou
+  errado os 18 anos do Brasil já baixados (1991-2008) como NetCDF.
+  **Decisão:** `_is_grib` (checagem de magic bytes) identifica o formato
+  real; resposta GRIB salva como `.grib` (nunca mais `.nc` errado);
+  formato desconhecido falha alto (`unknown_response_format`), nunca
+  salva com extensão arbitrária. `open_gust_dataset` escolhe o engine
+  (`cfgrib` vs NetCDF padrão) pelos bytes do arquivo, não pela extensão —
+  isso recuperou os 18 anos já baixados (ainda nomeados `.nc` no disco,
+  conteúdo GRIB) sem precisar rebaixá-los. `cfgrib`/`eccodes` instalados
+  (`requirements.txt`).
+- **Achado adicional (correção de dado real, não só do bug):** resposta
+  real do CDS pra essa variável tem forma `(time, step, lat, lon)`
+  (estrutura de previsão ECMWF, hora-base + passo), não `(time, lat, lon)`
+  como o fixture sintético dos testes assumia. `compute_annual_max_for_
+  year`/`compute_mean_annual_max_gust` agora reduzem sobre `time` E `step`
+  quando presentes. Nomes reais de coordenada são `latitude`/`longitude`,
+  não `lat`/`lon` — `_normalize_dims` renomeia antes de qualquer uso de
+  `.rio`/`_normalize_longitude`.
+- **Bug 2 (footprint de disco):** `download_country_baseline` mantinha
+  todo ano bruto (30 anos × país) no disco ao mesmo tempo (~0,5-1GB/ano),
+  causa direta do disco zerado. **Decisão:** `ensure_year_annual_max`
+  (novo, em `extreme_wind_processor.py` — não em `era5_wind_downloader.py`,
+  pra evitar import circular já que processor importa de downloader,
+  nunca o contrário) baixa 1 ano, reduz pro máximo anual daquele ano
+  (`annual_max.nc`, ~130KB observado vs ~470MB bruto), apaga o arquivo
+  bruto (+ `.idx` do cfgrib), só então segue pro próximo ano.
+  `ensure_all_years_annual_max`/`ensure_raw_raster` usam esse fluxo como
+  caminho de produção; `download_country_baseline`/`download_all_era5_wind`
+  mantidos só para uso manual/debug, docstring avisando que não são mais
+  o caminho de produção. Zip mantido ao lado do nc extraído também corrigido
+  (zip apagado após extração bem-sucedida).
+- **Verificação:** 18 anos do Brasil recuperados e reduzidos sem
+  reprocessar CDS (18/18 sucesso). Footprint de `era5_wind/Brazil` caiu de
+  ~8,4GB pra ~2,3MB. 18 testes novos (`test_era5_wind_downloader.py`) + 11
+  novos em `test_extreme_wind_processor.py`, incluindo teste que confirma
+  diretamente que nunca há mais de 1 ano bruto no disco ao mesmo tempo.
+  322/322 passando fora dos 3 arquivos ainda quebrados pela Fase 1.
+- **Arquivos:** `src/downloaders/era5_wind_downloader.py`,
+  `src/processors/extreme_wind_processor.py`, `requirements.txt`,
+  `tests/test_era5_wind_downloader.py`, `tests/
+  test_extreme_wind_processor.py`, `docs/DECISIONS.md`,
+  `docs/LIMITATIONS.md`.
+- **Status:** Ativa, fechada para os dois fixes. Download dos anos
+  restantes (Brasil 2009-2020, Portugal, Índia inteiros) rodando sob o
+  pipeline corrigido — ver entrada de status de conclusão quando terminar.
+
 ## 39. Gap de integração Risk_i,h: `precip` plugado em `risk_calculator.py`, `wind` continua bloqueado (2026-09-13)
 
 - **Contexto:** Preparação do manuscrito revelou que `risk_calculator.

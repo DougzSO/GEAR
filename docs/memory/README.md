@@ -216,6 +216,23 @@ pode ser rotulado "closed" sem qualificação se as 3 correspondências
 vierem limpas na mesma corrida. Ver item 34 de
 [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).
 
+2026-09-12: Fase 3.1 (`src/index/hazard_scope.py`, tabela H_b por bucket,
+11 testes) e Fase 3.2 (`src/index/risk_bands.py`, classificação
+`RiskBand_i,h` por hazard/bucket, 29 testes) do plano GEAR v3 fechadas.
+`hazard_scope.py` é a única fonte de verdade de quais combinações
+hazard/bucket existem (Hydro |5| com sv/iv, Thermal |3| sem sv/iv, Wind
+|1|, Solar |3|); `risk_bands.py` substitui (deleta, não mantém) o módulo
+CCRS antigo de mesmo nome, lê `hazard_scope` para nunca classificar uma
+combinação fora do H_b, e resolve a convenção "4 bandas, corte percentil
+mais baixo é estatística diagnóstica" para os hazards Tier 3 de 4 cortes.
+Extreme Heat/Solar cai em Tier 3 provisório (sem valor Tier 1 de PV
+confirmado em lugar nenhum do repositório — não inventado). 303/303
+testes passando fora dos 3 arquivos ainda quebrados pela Fase 1
+(`main.py`, `monte_carlo.py`, `src/visualization/`). Ver itens 35-36 de
+[05-decisoes-tecnicas.md](05-decisoes-tecnicas.md) e `docs/DECISIONS.md`,
+"GEAR v3 Phase 3.1: hazard_scope.py reconciliation..." e "GEAR v3 Phase
+3.2: RiskBand_i,h threshold classification...".
+
 2026-09-13: Gap de integração fechado (parcial) — `precip` (Extreme
 Precipitation) plugado em `risk_calculator.HAZARD_TERMS`/`FROZEN_BOUNDS`
 (estava com processor e RiskBand fechados desde a Fase 2.1/3.2, mas nunca

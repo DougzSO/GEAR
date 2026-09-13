@@ -18,6 +18,12 @@ earthengine-api>=0.1.350
 cdsapi>=0.7.0
 netcdf4>=1.6.0
 h5netcdf>=1.2.0
+
+# GRIB reader for era5_wind_downloader.py -- CDS's reanalysis-era5-single-levels
+# response for instantaneous_10m_wind_gust is raw GRIB in practice, not a zip
+# of NetCDF files; xarray's cfgrib engine opens it directly.
+cfgrib>=0.9.15
+eccodes>=2.48.0
 requests>=2.31.0
 openpyxl>=3.1.0
 tqdm>=4.65.0

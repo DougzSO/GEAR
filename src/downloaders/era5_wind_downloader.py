@@ -43,6 +43,40 @@ for high-frequency ERA5 fields and let a partial download resume cleanly.
 ``_country_area``/``_climate_bounds`` are imported from
 ``cds_tasmax_downloader``, not re-implemented, so the wind bounding box is
 the exact same per-country box the rest of the pipeline already uses.
+
+--------------------------------------------------------------------------
+Response format -- GRIB in practice, not guaranteed NetCDF (fixed 2026-09-12)
+--------------------------------------------------------------------------
+``reanalysis-era5-single-levels`` does not always return a real zip archive
+of NetCDF files for this variable -- in practice the response for
+``instantaneous_10m_wind_gust`` is a raw GRIB message. ``_download_raw_year``
+detects this by magic bytes (``_is_grib``) and saves it with the correct
+``.grib`` extension; it previously (bug, fixed this date) fell back to
+writing the same raw bytes into a file literally named ``gust_hourly.nc``
+whenever ``zipfile.ZipFile`` raised ``BadZipFile`` -- silently mislabeling a
+GRIB payload as NetCDF. This was caught only because 18 already-downloaded
+Brazil years (1991-2008) turned out to be unreadable by every plain-NetCDF
+reader once cfgrib was installed and cross-checked against them (magic
+bytes = ``GRIB``, not any NetCDF signature). ``open_gust_dataset`` opens
+either format correctly by inspecting the actual file extension it was
+saved under, never by assuming NetCDF. See ``docs/DECISIONS.md``, "GEAR v3
+Phase 3.2 follow-up: ERA5 GRIB mislabeling bug fixed, 18 Brazil years
+recovered".
+
+--------------------------------------------------------------------------
+Disk footprint -- process-then-delete per year (fixed 2026-09-12)
+--------------------------------------------------------------------------
+This module's own bulk functions (``download_country_baseline``/
+``download_all_era5_wind``) keep every year's raw hourly file on disk at
+once (~0.5-1 GB/year x 30 years/country) -- this is what filled the disk
+mid-run in practice. They are kept for manual/debugging use only; the
+production path is ``src.processors.extreme_wind_processor.
+ensure_all_years_annual_max``, which downloads one year via
+``_download_raw_year``, reduces it to that year's tiny per-pixel maximum
+immediately, and deletes the raw file before starting the next year --
+capping peak disk use at roughly one year's raw download regardless of
+baseline length. See that function's docstring and ``docs/DECISIONS.md``,
+"GEAR v3 Phase 3.2 follow-up: ERA5 download disk-footprint restructuring".
 """
 
 from __future__ import annotations
@@ -80,6 +114,14 @@ def raw_dir(country: str, year: int) -> Path:
     return CLIMATE_RAW / "era5_wind" / country / str(year)
 
 
+def _is_grib(path: Path) -> bool:
+    """First 4 bytes of a real GRIB message are the literal ASCII ``GRIB``
+    (edition 1 and 2 alike). Used to positively identify a CDS response that
+    is not a valid zip, instead of assuming it must be NetCDF."""
+    with open(path, "rb") as f:
+        return f.read(4) == b"GRIB"
+
+
 def _get_client():
     import cdsapi
 
@@ -110,12 +152,12 @@ def _download_raw_year(country: str, year: int, overwrite: bool) -> dict:
     marker = out_dir / ".downloaded"
 
     if marker.exists() and not overwrite:
-        nc_files = sorted(out_dir.glob("*.nc"))
-        if nc_files:
+        data_files = sorted(out_dir.glob("*.nc")) + sorted(out_dir.glob("*.grib"))
+        if data_files:
             logger.info("ERA5 gust cached for %s/%d, skipping.", country, year)
             return {
                 "success": True, "path": str(out_dir), "reason": "cached",
-                "seconds": 0.0, "files": [str(f) for f in nc_files],
+                "seconds": 0.0, "files": [str(f) for f in data_files],
             }
 
     request = _build_request(country, year)
@@ -140,42 +182,97 @@ def _download_raw_year(country: str, year: int, overwrite: bool) -> dict:
     try:
         with zipfile.ZipFile(zip_path) as archive:
             archive.extractall(out_dir)
+        zip_path.unlink()
+        data_files = sorted(out_dir.glob("*.nc"))
+        if not data_files:
+            logger.error(
+                "CDS ERA5 gust %s/%d: zip extracted but no .nc member in %s",
+                country, year, out_dir,
+            )
+            return {"success": False, "path": str(out_dir), "reason": "no_nc_after_extract", "seconds": elapsed}
     except zipfile.BadZipFile:
-        (out_dir / "gust_hourly.nc").write_bytes(zip_path.read_bytes())
+        # The CDS response was not actually a zip. Previously this silently
+        # copied the raw bytes into a file named "gust_hourly.nc" -- if the
+        # payload was GRIB (as it is for this dataset/variable in practice),
+        # that mislabeled a GRIB file as NetCDF, and every reader downstream
+        # either misread it silently or failed opaquely. Fixed: identify the
+        # actual format by magic bytes and name it correctly, or fail loud.
+        if _is_grib(zip_path):
+            grib_path = out_dir / "gust_hourly.grib"
+            zip_path.rename(grib_path)
+            data_files = [grib_path]
+            logger.info(
+                "CDS ERA5 gust %s/%d: response was raw GRIB, not a zip -- "
+                "saved as %s (not mislabeled .nc).",
+                country, year, grib_path.name,
+            )
+        else:
+            magic = zip_path.read_bytes()[:4]
+            logger.error(
+                "CDS ERA5 gust %s/%d: response is neither a valid zip nor "
+                "GRIB (first 4 bytes: %r) -- unknown format, not saved as "
+                "any extension.", country, year, magic,
+            )
+            return {
+                "success": False, "path": str(out_dir),
+                "reason": f"unknown_response_format: magic={magic!r}", "seconds": elapsed,
+            }
 
-    nc_files = sorted(out_dir.glob("*.nc"))
-    if not nc_files:
-        logger.error(
-            "CDS ERA5 gust %s/%d: download finished but no .nc file in %s",
-            country, year, out_dir,
-        )
-        return {"success": False, "path": str(out_dir), "reason": "no_nc_after_extract", "seconds": elapsed}
-
-    marker.write_text(f"downloaded in {elapsed:.0f}s: {[f.name for f in nc_files]}")
+    marker.write_text(f"downloaded in {elapsed:.0f}s: {[f.name for f in data_files]}")
     logger.info("CDS ERA5 gust %s/%d: OK in %.0fs", country, year, elapsed)
     return {
         "success": True, "path": str(out_dir), "reason": "downloaded",
-        "seconds": elapsed, "files": [str(f) for f in nc_files],
+        "seconds": elapsed, "files": [str(f) for f in data_files],
     }
 
 
 def download_country_baseline(country: str, overwrite: bool = False) -> dict:
-    """Download every year of ``ERA5_WIND_BASELINE_PERIOD`` for one country.
-    Report is ``{year: status}``; failures on individual years do not stop
-    the others."""
+    """Download every year of ``ERA5_WIND_BASELINE_PERIOD`` for one country,
+    keeping every year's raw hourly file on disk simultaneously (up to
+    ~28 GB/country). Report is ``{year: status}``; failures on individual
+    years do not stop the others.
+
+    **Not the production path any more.** This is the bulk-download
+    pattern that filled the disk mid-run in practice (GEAR v3 Phase 3.2
+    follow-up incident, ``docs/DECISIONS.md``) -- kept only for manual/
+    debugging use (e.g. inspecting a raw file by hand) where a small
+    number of years is downloaded deliberately, not the full baseline.
+    The production entry point is ``src.processors.extreme_wind_processor.
+    ensure_all_years_annual_max``, which downloads, reduces, and deletes
+    one year at a time, capping peak disk use at roughly one year's raw
+    download (~0.5 GB) regardless of the baseline length.
+    """
     return {year: _download_raw_year(country, year, overwrite) for year in BASELINE_YEARS}
 
 
 def download_all_era5_wind(countries, overwrite: bool = False) -> dict:
-    """Process every configured country over the full baseline period.
-    Report is nested ``country -> year -> status``."""
+    """``download_country_baseline`` for every country -- see that
+    function's docstring: not the production path, debugging use only."""
     return {country: download_country_baseline(country, overwrite) for country in countries}
 
 
-def _open_series(nc_files: list[Path]) -> xr.Dataset:
-    if len(nc_files) == 1:
-        return xr.open_dataset(nc_files[0])
-    return xr.open_mfdataset([str(f) for f in nc_files], combine="by_coords")
+def open_gust_dataset(data_files: list[Path]) -> xr.Dataset:
+    """Open one year's raw gust file(s), selecting the ``cfgrib`` engine for
+    a GRIB response and the default (NetCDF) engine otherwise -- replaces
+    the old ``_open_series``, which always assumed NetCDF and could not
+    open a GRIB response at all.
+
+    Format is detected from the file's own magic bytes (``_is_grib``), not
+    its extension: years downloaded before the mislabeling fix (18 Brazil
+    years, 1991-2008) are real GRIB content sitting in a file still named
+    ``gust_hourly.nc`` on disk (fixing the bug does not retroactively rename
+    already-downloaded files) -- content-based detection opens those
+    correctly with no separate migration step, and also correctly opens
+    every newly-downloaded, correctly-named ``.grib`` file the fixed
+    ``_download_raw_year`` now produces. CDS returns exactly one file per
+    one-variable-one-year request in practice; ``open_mfdataset`` is used
+    only if more than one ever appears, so a multi-file response is not
+    silently mishandled."""
+    engine = "cfgrib" if _is_grib(data_files[0]) else None
+    if len(data_files) == 1:
+        return xr.open_dataset(data_files[0], engine=engine) if engine else xr.open_dataset(data_files[0])
+    kwargs = {"engine": engine} if engine else {}
+    return xr.open_mfdataset([str(f) for f in data_files], combine="by_coords", **kwargs)
 
 
 def _pick_var(ds: xr.Dataset) -> str:

@@ -40,6 +40,54 @@ Phase 2.5: correlation gate implemented and run" and its follow-up
 closing entry once Portugal/India were reprocessed, for the full
 incident.
 
+**Coordination convention (binding, effective 2026-09-12): a phase's
+primary deliverable file is written by that phase's session only.** When
+two phases run in parallel Claude Code sessions and one depends on the
+other's output (e.g. Phase 3.2's `RiskBand_{i,h}` classification depends on
+Phase 3.1's per-bucket `H_b` table), the dependent session must not write a
+placeholder or draft version of the file it is waiting on, even to unblock
+its own progress — doing so risks silently overwriting the upstream
+session's real, in-progress, or already-author-confirmed work. A session
+that hits a missing prerequisite file must stop and report the blocker
+rather than create one. This was not a hypothetical risk: a Phase 3.2
+session wrote its own version of `src/index/hazard_scope.py` (Phase 3.1's
+deliverable) to unblock itself, overwriting the Phase 3.1 session's version
+and reintroducing a Thermal sv/iv inclusion the author had already
+explicitly rejected in favor of Hydro-only. The conflict was caught and
+reconciled before either phase proceeded further only because the Phase
+3.1 session diffed the file against its own last-known state and noticed
+the mismatch. See `docs/DECISIONS.md`, "GEAR v3 Phase 3.1: hazard_scope.py
+reconciliation after parallel-session conflict" for the full incident.
+
+**Coordination convention (binding, effective 2026-09-12): a background
+process from an earlier task must be confirmed stopped before its code is
+changed or a fresh run of the same acquisition starts.** Same failure
+family as the convention above -- coordination between sessions/processes,
+not a single-session code bug -- but the other direction: instead of two
+sessions racing on a file, one session's own previously-launched background
+process kept running, on the OLD in-memory code, after a *later* session
+had already found and fixed a bug in that same code on disk. A long-running
+acquisition process does not reload its module code mid-run; fixing a
+source file on disk has no effect on a process that imported it minutes or
+hours earlier. Before editing a file a known background process is
+actively using, or before starting a new run of the same acquisition,
+confirm that process is actually stopped (not just "the file is fixed
+now") -- checking only the file is not enough. This was not a hypothetical
+risk: the ERA5 wind gust download launched earlier the same session
+(GEAR v3 Phase 3.2 follow-up, "Extreme Wind data-gap investigation") kept
+running, unnoticed, straight through the disk-full incident, the disk
+cleanup, and the start of the GRIB-mislabeling bug fix -- still executing
+`era5_wind_downloader.py`'s original, buggy, pre-fix code the whole time.
+It was still actively downloading Portugal, and had already produced 3
+more mislabeled/duplicated years there (the same defect the fix addressed
+for Brazil), by the time it was noticed via a stray process still visible
+in `ps aux` and stopped. Caught only because the per-year verification
+step for Brazil prompted a fresh process check, not because anything
+about the stale process itself raised an alarm. See `docs/DECISIONS.md`,
+"GEAR v3 Phase 3.2 follow-up: stale background download process ran on
+pre-fix code, Portugal partial re-corruption caught and cleaned" for the
+full incident.
+
 Columns: **Limitation** (what was not done, or what is pinned/excluded) |
 **Reason** (why, one line) | **Evidence tier** | **Alternative(s)
 considered and rejected** | **Status** (Final = not expected to be
@@ -137,6 +185,17 @@ alternative if one appears) | **Reference** (pointer to the full
 | Status | **Final — a settled epistemic position, not a placeholder.** Explicitly not reopened as a "TODO: find better wind data" item. Even a future CMIP6 daily-maximum/gust product appearing on the catalogue would resolve only one of the two independent rejection grounds and would not by itself reopen this. |
 | Reference | `docs/DECISIONS.md`, "GEAR v3 Phase 2.3 follow-up: ERA5 temporal asymmetry retained (CMIP6 substitution investigated and rejected)" and "GEAR v3 Extreme Wind: reframed as scenario-invariant structural exposure (not a data gap)". |
 
+## 2026-09-12 — Extreme Wind: ERA5 gust input not yet downloaded for any country (acquisition status, open)
+
+| Field | Content |
+|---|---|
+| Limitation | `data/raw/climate/` has no `era5_wind/` directory for Brazil, Portugal, or India — the hourly ERA5 `instantaneous_10m_wind_gust` download (`era5_wind_downloader.py`, Phase 2.3) has not been run for any country. `extreme_wind_processor.py` is code-complete and unit-tested (14 tests, monkeypatched), but has never produced a real processed raster for any country. Phase 3.2's real-data run correctly reported `insufficient_data` for both Extreme Wind rows (Wind and Solar buckets) in every country as a direct consequence, not a bug. |
+| Reason | This was never silently assumed complete: the original Phase 2.3 closing entry (`docs/memory/05-decisoes-tecnicas.md` item 30) already logged "1 expected skip (real ERA5 data absent)" and its status line already read "Ativa" (active), not "closed" — the phase never claimed the acquisition step was done, only that the processor code was. This entry makes that already-honest scope explicit in `LIMITATIONS.md` for the first time, prompted by Phase 3.2's real-data run surfacing the same gap the Phase 2.5 correlation-gate incident already established a naming convention for. |
+| Evidence tier | Direct filesystem check (`data/raw/climate/` contents), not inferred. |
+| Alternatives considered and rejected | None — no substitution or workaround was attempted; per standing instruction, a missing-data finding is reported factually and left for the author to authorize the acquisition (90 CDS API requests: 30 years x 3 countries), not silently worked around. |
+| Status | **In progress, author-authorized 2026-09-12.** Two blockers found and fixed en route: (1) a data-integrity bug silently mislabeled 18 already-downloaded Brazil years as NetCDF when they were actually GRIB — fixed and all 18 recovered without re-downloading (`docs/DECISIONS.md`, "ERA5 GRIB mislabeling bug fixed"); (2) the original bulk-download shape kept every year's raw file on disk at once, which is what caused the disk-full incident — restructured to download/reduce/delete one year at a time (`docs/DECISIONS.md`, "ERA5 download disk-footprint restructuring"). The download for the remaining years (Brazil 2009-2020, all of Portugal, all of India) was launched under the fixed, disk-safe pipeline; see the follow-up status entry for completion. |
+| Reference | `docs/DECISIONS.md`, "GEAR v3 Phase 3.2 follow-up: Extreme Wind data-gap investigation", "...GRIB mislabeling bug fixed, 18 Brazil years recovered", "...ERA5 download disk-footprint restructuring"; `docs/memory/05-decisoes-tecnicas.md` items 30, 37, 38. |
+
 ## 2026-09-11 — GCM pair (GFDL-ESM4, MIROC6): operational selection, not an ECS-based bounding design
 
 | Field | Content |
@@ -158,6 +217,7 @@ alternative if one appears) | **Reference** (pointer to the full
 | Alternatives considered and rejected | Turbomachinery degradation literature (fired-hours-based, largely recoverable) — rejected, wrong unit of exposure (hours vs. calendar age) and this project has no per-plant operating-hours or wash-schedule data; Grubert (2020) fleet CAGR — rejected as a per-plant curve, since it reflects fleet composition/retrofit trends, not an isolated aging mechanism. |
 | Status | **Final, not still-pending.** This closes the "provisional/open" status carried in `src/index/age_factor.py` and prior `docs/DECISIONS.md` entries since 2026-09-04. Gas/oil-gas remains `age_factor = 1.0` by declared design choice (absence of evidence, not evidence of no effect), not as an open item awaiting a source that will eventually appear. Revisit only if a new, calendar-age-indexed, per-plant-comparable source is published. |
 | Reference | `docs/DECISIONS.md`, "Gas/oil-gas age_factor: pinned-neutral treatment confirmed final after a bounded literature search" (2026-09-11); prior provisional status in "age_factor: >=1 multiplier via `2 - retention(age)`, with corrected coal/hydro/wind retention curves (final)" (2026-09-04). `src/index/age_factor.py`'s "PROVISIONAL" code comment is now stale and is a candidate for a small follow-up edit — not made here (documentation-only task). |
+
 ## 2026-09-13 — Extreme Wind: no Risk_i,h (Equation 1) yet, not only a RiskBand gap
 
 | Field | Content |

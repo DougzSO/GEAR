@@ -269,17 +269,33 @@ and utility-scale solar trackers are vulnerable to extreme wind
 
 | Bucket | H_b (applicable) | \|H_b\| | Exclusion rationale for the rest |
 |---|---|---|---|
-| Hydro | Drought, Water Stress, Extreme Precipitation | 3 | Not thermally cooled; no heat mechanism modeled for hydraulic structures |
+| Hydro | Drought, Water Stress, Extreme Precipitation, Seasonal Variability (sv), Interannual Variability (iv) | 5 | Not thermally cooled; no heat mechanism modeled for hydraulic structures |
 | Thermal | Water Stress, Extreme Heat, Extreme Precipitation | 3 | Drought mechanism already captured via Water Stress; no wind-uplift mechanism for thermal plant structures |
 | Wind | Extreme Wind | 1 | No water dependency; heat is not the governing failure mechanism |
 | Solar PV | Extreme Heat, Extreme Precipitation, Extreme Wind | 3 | No water dependency |
 
+**Hydro's sv/iv addition (Phase 3.1, 2026-09-12, updates the table above).**
+The table as originally drafted predates Phase 2.5's correlation-gate run
+and did not name ``sv``/``iv`` at all. Both were tested there as
+independent hazard candidates against Water Stress, in Hydro and Thermal
+(the only two buckets with a water mechanism), and both passed in both
+buckets (highest observed \|r\| = 0.702, Section 3.3). Author-confirmed:
+both are added to Hydro's H_b (hydraulic head/inflow is sensitive to both
+seasonal and multi-year water variability, not only mean Water Stress),
+but explicitly NOT to Thermal's, since Phase 0 confirmed no
+cooling-technology field exists in the ingested GEM data to justify a
+water-*variability*-specific mechanism for Thermal beyond what Water
+Stress already captures (Section 3.2's Thermal-homogeneity decision).
+Single source of truth for ``H_b``: `src/index/hazard_scope.py`
+(`docs/DECISIONS.md`, "GEAR v3 Phase 3.1: hazard_scope.py reconciliation
+after parallel-session conflict").
+
 Declared limitation, explicit rather than implicit: this framework
 models operational and structural-stress mechanisms captured by the
-five hazards above; it does not model all conceivable structural
-failure modes (e.g., seismic, foundation subsidence, wildfire -- see
-Section 10.1). The boundary of "in scope" is the five hazards, stated
-plainly, not defended as exhaustive.
+five hazards above (plus sv/iv in Hydro); it does not model all
+conceivable structural failure modes (e.g., seismic, foundation
+subsidence, wildfire -- see Section 10.1). The boundary of "in scope" is
+these hazards, stated plainly, not defended as exhaustive.
 
 ### 3.1 Wind threshold distinction between buckets (resolved)
 
@@ -425,10 +441,12 @@ differing native resolution or reference period.
 | Hazard | Bucket | Tier 1 (cited, absolute) | Tier 3 (fallback) |
 |---|---|---|---|
 | Water Stress | Hydro, Thermal | WRI Aqueduct category cutoffs (<0.1 / 0.1-0.4 / 0.4-0.8 / >0.8) | not required |
-| Extreme Heat | Solar | PV efficiency-loss-per-degree engineering threshold | not required |
+| Extreme Heat | Solar | **Closed, rejected (Phase 3.2 follow-up, bounded literature search, 2026-09-12)**: no single defensible PV efficiency-loss-per-degree cutoff exists. Manufacturer Pmax temperature coefficients vary by module technology by more than 2x (crystalline silicon approximately -0.3 to -0.5%/degC; CdTe approximately -0.21%/degC; CIGS approximately -0.2 to -0.45%/degC), and GEM records no per-plant PV module-technology field to pick the right one (the same category of gap as Thermal's absent cooling-technology field, Section 3.2). IEC 61215/61730 measure and certify a manufacturer-specific coefficient rather than mandate a single one; IEC 61730's 98th-percentile module-operating-temperature <=70 degC limit is a safety qualification threshold, not a performance-loss risk threshold, and does not convert to an ambient-air days/year metric without an irradiance/wind-dependent NOCT-style offset this pipeline does not model. No peer-reviewed study was found translating a temperature coefficient into a days/year-above-X ambient threshold for utility-scale PV the way Extreme Heat's 40 degC cutoff is sourced for Thermal -- PV derating is continuous in temperature deviation from 25 degC STC, not a step-function, so a categorical Tier 1 cutoff does not map onto it structurally | **Final (not provisional)**: same percentile method and same pooled cuts as the Thermal row below (the raw `tasmax>40C` indicator does not vary by bucket) |
 | Extreme Heat | Thermal | none defensible (cooling-water-temperature thresholds do not match the ambient-air tasmax variable modeled; rejected as a mismatched-mechanism Tier 1) | Sample percentiles P50/P75/P90/P95 of tasmax>40C days (current method, retained) |
-| Drought | Hydro | none available linking SPEI to generation impact | Sample percentiles of SPEI<=-1.0 months/year (current method, retained) |
+| Drought | Hydro | none available linking SPEI to generation impact | Sample percentiles P50/P75/P90/P95 of SPEI<=-1.0 months/year (current method, retained) |
 | Extreme Precipitation | Thermal, Solar, Hydro | none defensible: HAZUS-MH uses continuous depth-damage curves, not categorical depth cutoffs, and is structurally incompatible with this pipeline's CMIP6 `pr` input (no precipitation-to-inundation-depth conversion step exists); verified against the primary FEMA Hazus Flood Model Technical Manual, rejected as Tier 1 | Percentiles P50/P75/P90/P95 of daily pr extremes (same method as Extreme Heat) |
+| Seasonal Variability (sv) | Hydro | none -- outside Section 2's five-hazard checklist | Percentiles P50/P75/P90/P95 of raw sv, same no-Tier-1-source convention as Drought/Extreme Precipitation (Phase 3.2, 2026-09-12; sv's Hydro H_b membership itself closed in Phase 3.1, `docs/DECISIONS.md`) |
+| Interannual Variability (iv) | Hydro | none -- outside Section 2's five-hazard checklist | same as Seasonal Variability (sv) |
 | Extreme Wind | Wind | Turbine cut-out speed (~25 m/s / 90 km/h, IEC design standard) | Percentiles P75/P90/P95/P99 of ERA5 gust |
 | Extreme Wind | Solar | none defensible: ASCE 7 design wind speed is inherently site-specific (location, Risk Category, Exposure Category), not a universal constant; manufacturer survival ratings vary by product generation (observed range ~51-60+ m/s across two data points from one manufacturer); verified not comparable in rigor to the Wind-bucket turbine cut-out speed | Percentiles P75/P90/P95/P99 of ERA5 gust, final method, not a contingency pending a Tier 1 value |
 
@@ -441,6 +459,22 @@ not a gust product, and no daily-maximum variant exists either.
 
 Wildfire's Tier 1 EFFIS 6-class table and its FIRMS-as-validator argument
 are deferred, not deleted -- see Section 10.1.
+
+### 4.1 Band-count convention for percentile-cut Tier 3 hazards (resolved)
+
+Every Tier 3 row above except Extreme Wind/Solar's is a **4-percentile**
+cutoff set (P50/P75/P90/P95); Extreme Wind/Solar's is P75/P90/P95/P99.
+Four cuts bound five zones, but this framework names exactly four
+RiskBand labels (Low/Medium/High/Extreme, Section 0 overview). Resolved
+(author-confirmed, 2026-09-12): the **lowest** percentile in each 4-cut
+set (P50, or P75 for Extreme Wind/Solar) is reported as a diagnostic
+statistic only and is never a RiskBand boundary; the remaining three
+cuts bound the four canonical labels. A fifth label ("Very High") to use
+every cut literally was considered and rejected as inflating the band
+structure to accommodate an implementation detail -- the same category
+of move already rejected once for HAZUS-MH's depth cutoffs earlier in
+this section. See `docs/DECISIONS.md`, "GEAR v3 Phase 3.2: RiskBand_i,h
+threshold classification, consolidated tier/threshold table".
 
 ### 4.2 Normalization transform: FROZEN_BOUNDS
 

@@ -90,12 +90,13 @@ import rioxarray  # noqa: F401 - registers the .rio accessor
 import xarray as xr
 
 from src.config import CLIMATE_PROCESSED, COUNTRIES, CRS_TARGET
+from src.downloaders import era5_wind_downloader
 from src.downloaders.cds_tasmax_downloader import _normalize_longitude, _resample_to_1km
 from src.downloaders.era5_wind_downloader import (
     BASELINE_YEARS,
     ERA5_WIND_BASELINE_PERIOD,
-    _open_series,
     _pick_var,
+    open_gust_dataset,
 )
 from src.downloaders.era5_wind_downloader import raw_dir as era5_raw_dir
 from src.index.risk_calculator import HAZARD_TEMPORAL_WINDOW as _CORE_HAZARD_TEMPORAL_WINDOW
@@ -214,32 +215,208 @@ def normalized_raster_path(country: str) -> Path:
 
 
 # --------------------------------------------------------------------------
-# Reading the raw hourly series
+# Per-year processing -- download, reduce, delete (disk-footprint fix,
+# 2026-09-12; see era5_wind_downloader module docstring, "Disk footprint").
 # --------------------------------------------------------------------------
-def _load_hourly_gust(country: str, years: list[int] | None = None) -> xr.DataArray:
-    """Open every configured baseline year's hourly gust series for
-    ``country`` and concatenate along time. Raises ``FileNotFoundError`` if
-    any year is missing -- this module never triggers a download itself."""
-    years = years or BASELINE_YEARS
-    all_files: list[Path] = []
-    missing: list[int] = []
-    for year in years:
-        nc_dir = era5_raw_dir(country, year)
-        nc_files = sorted(nc_dir.glob("*.nc"))
-        if not nc_files:
-            missing.append(year)
-        all_files.extend(nc_files)
+def annual_max_path(country: str, year: int) -> Path:
+    """Tiny per-year cache: one 2D (lat, lon) field, the per-pixel maximum
+    gust within that single year -- a few MB at most, vs. the ~0.5-1 GB raw
+    hourly file it is derived from and immediately replaces."""
+    return era5_raw_dir(country, year) / "annual_max.nc"
 
-    if missing:
-        raise FileNotFoundError(
-            f"No raw ERA5 gust .nc files for {country}, year(s) {missing} under "
-            f"{era5_raw_dir(country, missing[0]).parent}. Run "
-            f"era5_wind_downloader.download_country_baseline first."
+
+def _normalize_dims(obj):
+    """CDS/cfgrib return ``latitude``/``longitude`` dim names; the rest of
+    this module (and ``_normalize_longitude``, ``_resample_to_1km``,
+    ``.rio``) uses ``lat``/``lon``, matching every other processor. Renames
+    only if present -- a no-op on the synthetic ``(time, lat, lon)``
+    fixtures this module's tests use, which are already named ``lat``/
+    ``lon``. Works on a ``Dataset`` or a ``DataArray`` alike (``.rename``
+    has the same dict-based signature on both)."""
+    rename = {d: d[:3] for d in ("latitude", "longitude") if d in obj.dims}
+    return obj.rename(rename) if rename else obj
+
+
+def compute_annual_max_for_year(gust_da: xr.DataArray) -> xr.DataArray:
+    """Per-pixel maximum gust within one year's hourly series -- the
+    single-year building block ``compute_mean_annual_max_gust`` uses
+    internally per calendar year, exposed separately so the per-year
+    process-then-delete flow (``ensure_year_annual_max``) can reduce one
+    year's file in isolation, without ever loading another year into memory.
+
+    Reduces over every temporal dimension present: ``time``, and ``step``
+    for ECMWF forecast-type GRIB responses, where the valid hour is
+    ``time + step`` rather than a single flat time axis (this is the actual
+    shape of a real CDS ``instantaneous_10m_wind_gust`` response opened via
+    cfgrib -- confirmed against the recovered Brazil 1991-2008 files, GEAR
+    v3 Phase 3.2 follow-up). The synthetic ``(time, lat, lon)``-only
+    fixtures in this module's tests have no ``step`` dimension; ``dim``
+    simply omits it in that case, so this is one reduction rule for both
+    shapes, not a special case for real data.
+    """
+    reduce_dims = [d for d in ("time", "step") if d in gust_da.dims]
+    return gust_da.max(dim=reduce_dims, skipna=True)
+
+
+def ensure_year_annual_max(country: str, year: int, overwrite: bool = False) -> dict:
+    """Download (if needed) one year's raw ERA5 gust file, reduce it to that
+    year's per-pixel maximum, cache the tiny result at ``annual_max_path``,
+    and delete the raw hourly payload -- this is the per-year unit the
+    disk-footprint fix is built from. ``ensure_all_years_annual_max`` calls
+    this once per baseline year instead of ``era5_wind_downloader.
+    download_country_baseline``'s keep-everything approach.
+
+    Idempotent: if ``annual_max_path`` already exists and ``overwrite`` is
+    ``False``, returns immediately without re-downloading or re-deleting
+    anything (there is nothing left to delete -- the raw file for a
+    completed year no longer exists by construction).
+    """
+    out_path = annual_max_path(country, year)
+    if out_path.exists() and not overwrite:
+        return {"success": True, "path": str(out_path), "reason": "cached"}
+
+    dl_status = era5_wind_downloader._download_raw_year(country, year, overwrite)
+    if not dl_status["success"]:
+        return {"success": False, "path": None, "reason": dl_status["reason"]}
+
+    raw_files = [Path(f) for f in dl_status["files"]]
+    try:
+        ds = open_gust_dataset(raw_files)
+        ds = _normalize_dims(ds)  # latitude/longitude -> lat/lon BEFORE _normalize_longitude,
+        ds = _normalize_longitude(ds)  # which requires ds["lon"] to already exist
+        var = _pick_var(ds)
+        da = ds[var]
+        annual_max = compute_annual_max_for_year(da).astype("float32")
+        annual_max.name = "extreme_wind_gust_annual_max"
+        annual_max = annual_max.load()  # materialize before closing the source file
+        ds.close()
+
+        if set(annual_max.dims) != {"lat", "lon"}:
+            # Observed once on real data (Brazil 2012): a degenerate
+            # single-scalar reduction instead of the expected 2D grid --
+            # root cause not fully identified (the source raw file was
+            # already deleted by the time this was noticed, per this
+            # function's own design, so it could not be inspected after
+            # the fact). Never silently accept a malformed reduction as
+            # "processed": raise here so the raw file is NOT deleted and
+            # the year is reported as a failure, available for a retry
+            # with the raw file still on disk to diagnose if it recurs.
+            raise ValueError(
+                f"expected a 2D (lat, lon) reduction, got dims={annual_max.dims} "
+                f"shape={annual_max.shape} -- refusing to cache or delete the raw file."
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "ERA5 gust %s/%d: failed to reduce raw file(s) %s: %s: %s",
+            country, year, raw_files, type(exc).__name__, exc,
         )
+        return {"success": False, "path": None, "reason": f"reduce_failed: {type(exc).__name__}: {exc}"}
 
-    ds = _normalize_longitude(_open_series(all_files))
-    var = _pick_var(ds)
-    return ds[var]
+    annual_max.to_netcdf(out_path)
+
+    # The whole point: delete the raw payload now that the tiny reduced
+    # artifact is safely on disk. Never delete before the write above
+    # succeeds. Includes cfgrib's .idx sidecar (a per-file index cache it
+    # writes next to a GRIB source, negligible size but still raw-adjacent
+    # debris with no purpose once the source is gone).
+    for f in raw_files:
+        f.unlink(missing_ok=True)
+        for idx in f.parent.glob(f"{f.name}*.idx"):
+            idx.unlink(missing_ok=True)
+    marker = era5_raw_dir(country, year) / ".downloaded"
+    marker.unlink(missing_ok=True)  # annual_max_path's own existence is now the cache signal
+
+    logger.info("ERA5 gust %s/%d: reduced to annual max and raw file deleted.", country, year)
+    return {"success": True, "path": str(out_path), "reason": "processed"}
+
+
+def ensure_all_years_annual_max(country: str, overwrite: bool = False) -> dict:
+    """``ensure_year_annual_max`` for every ``BASELINE_YEARS`` entry. Report
+    is ``{year: status}``; a failure on one year does not stop the others
+    (same convention as the retired ``download_country_baseline``)."""
+    return {year: ensure_year_annual_max(country, year, overwrite) for year in BASELINE_YEARS}
+
+
+# --------------------------------------------------------------------------
+# Concurrent acceleration -- the CDS queue, not local CPU/network, is the
+# bottleneck for this backlog (confirmed empirically: Portugal and India
+# progressed independently and concurrently as two separate OS processes
+# with no conflict, GEAR v3 Phase 3.2 follow-up). Threads (not processes)
+# are appropriate: cdsapi's client.retrieve() is a blocking network call,
+# so the workers spend almost all their time waiting on I/O, not competing
+# for CPU. Safe to run concurrently because every (country, year) pair
+# already writes to and deletes a fully distinct path -- checked, not
+# assumed: raw_dir(country, year) is parametrized by both country AND
+# year (never a fixed/shared filename reused across iterations), so is
+# annual_max_path, the ``.downloaded`` marker, and cfgrib's per-source
+# ``.idx`` sidecar. No two (country, year) tasks ever touch the same file.
+# --------------------------------------------------------------------------
+_RATE_LIMIT_MARKERS = ("rate limit", "too many requests", "429", "concurrent", "quota", "throttl")
+
+
+def ensure_years_concurrent(
+    country_years: list[tuple[str, int]], max_workers: int = 3, overwrite: bool = False,
+) -> dict:
+    """Concurrent variant of ``ensure_year_annual_max`` for accelerating a
+    CDS-queue-bound multi-year/multi-country backlog. Runs up to
+    ``max_workers`` ``(country, year)`` downloads at once (default/cap 3,
+    per the author's instruction); each is fully independent (see module
+    note above on distinct paths).
+
+    Backs off rather than retrying aggressively if a CDS response looks
+    like a rate-limit/too-many-concurrent-requests error: the in-flight
+    concurrency target is halved (floor 1, never fully serial-only unless
+    forced there) the first time a failure's reason string matches
+    ``_RATE_LIMIT_MARKERS`` (a best-effort substring check -- CDS's exact
+    wording for this is not guaranteed, so this is a heuristic, not a
+    guaranteed detector). A backed-off year is reported as a normal
+    failure in the returned dict, same as any other failure -- it is NOT
+    automatically retried within this call; retrying is a separate,
+    explicit follow-up call, never a tight loop here.
+
+    Returns ``{(country, year): status}``.
+    """
+    if max_workers < 1:
+        raise ValueError(f"max_workers must be >= 1, got {max_workers}")
+
+    import concurrent.futures
+
+    results: dict[tuple[str, int], dict] = {}
+    pending = list(country_years)
+    target_workers = max_workers
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures: dict[concurrent.futures.Future, tuple[str, int]] = {}
+
+        def _submit_next() -> None:
+            if pending and len(futures) < target_workers:
+                country, year = pending.pop(0)
+                fut = executor.submit(ensure_year_annual_max, country, year, overwrite)
+                futures[fut] = (country, year)
+
+        for _ in range(min(target_workers, len(pending))):
+            _submit_next()
+
+        while futures:
+            done, _ = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_COMPLETED)
+            for fut in done:
+                country_year = futures.pop(fut)
+                result = fut.result()
+                results[country_year] = result
+
+                if not result["success"]:
+                    reason = str(result.get("reason", "")).lower()
+                    if any(marker in reason for marker in _RATE_LIMIT_MARKERS) and target_workers > 1:
+                        target_workers -= 1
+                        logger.warning(
+                            "CDS response for %s looks like a rate-limit/concurrent-request "
+                            "error (reason: %s) -- backing off, concurrency reduced to %d.",
+                            country_year, result["reason"], target_workers,
+                        )
+
+                _submit_next()
+
+    return results
 
 
 # --------------------------------------------------------------------------
@@ -256,6 +433,13 @@ def compute_mean_annual_max_gust(gust_da: xr.DataArray) -> xr.DataArray:
     threshold comparison is deferred to the two downstream consumers (see
     ``classify_extreme_wind``), so the raw layer must stay in the same
     physical unit (m/s) both thresholds are expressed in.
+
+    Takes a single multi-year-concatenated ``gust_da`` (this module's own
+    tests exercise it this way, with synthetic data); the production path
+    (``_compute_native``) instead builds the equivalent mean directly from
+    the per-year ``annual_max_path`` cache and does not call this function,
+    since the whole point of the disk-footprint fix is to never hold more
+    than one year's hourly data in memory/on disk at once.
     """
     time_index = gust_da["time"].to_index()
     years = np.asarray(time_index.year)
@@ -264,7 +448,7 @@ def compute_mean_annual_max_gust(gust_da: xr.DataArray) -> xr.DataArray:
     annual_maxima = []
     for year in unique_years:
         year_slice = gust_da.isel(time=np.where(years == year)[0])
-        annual_maxima.append(year_slice.max(dim="time", skipna=True))
+        annual_maxima.append(compute_annual_max_for_year(year_slice))
 
     stacked = xr.concat(annual_maxima, dim="year")
     mean_max = stacked.mean(dim="year", skipna=True).astype("float32")
@@ -289,18 +473,61 @@ def compute_mean_annual_max_gust(gust_da: xr.DataArray) -> xr.DataArray:
 
 
 def _compute_native(country: str) -> xr.DataArray:
-    gust_da = _load_hourly_gust(country)
-    da = compute_mean_annual_max_gust(gust_da)
-    da.attrs.update(country=country)
-    return da
+    """Builds the native mean-annual-max-gust raster from the per-year
+    ``annual_max_path`` cache -- never bulk-loads every year's raw hourly
+    file at once. ``ensure_raw_raster`` guarantees every year is cached
+    (downloaded, reduced, raw file deleted) before this runs."""
+    missing = [y for y in BASELINE_YEARS if not annual_max_path(country, y).exists()]
+    if missing:
+        raise FileNotFoundError(
+            f"annual_max cache missing for {country}, year(s) {missing} -- "
+            f"run ensure_all_years_annual_max({country!r}) first."
+        )
+
+    yearly = [xr.open_dataarray(annual_max_path(country, y)) for y in BASELINE_YEARS]
+    # Drop every coord except lat/lon (GRIB sources attach scalar coords
+    # such as `number`/`surface` that carry no information here but can
+    # make xr.concat's default coords="different" check needlessly picky
+    # across 30 independently-written files) -- keep only what the raster
+    # actually needs.
+    yearly = [da.reset_coords(drop=True) if set(da.coords) - {"lat", "lon"} else da for da in yearly]
+    stacked = xr.concat(yearly, dim="year", coords="minimal", compat="override")
+    mean_max = stacked.mean(dim="year", skipna=True).astype("float32")
+    for da in yearly:
+        da.close()
+
+    mean_max.name = "extreme_wind_gust_raw"
+    mean_max.attrs.update(
+        country=country,
+        method="Mean of each calendar year's maximum instantaneous 10 m gust "
+               "over the baseline period (characteristic extreme-gust metric); "
+               "each year downloaded, reduced, and its raw file deleted one "
+               "at a time (disk-footprint fix, 2026-09-12) rather than all "
+               "years held on disk simultaneously.",
+        units=RAW_UNITS,
+        n_years=int(len(BASELINE_YEARS)),
+        period=f"{ERA5_WIND_BASELINE_PERIOD[0]}/{ERA5_WIND_BASELINE_PERIOD[1]}",
+        note=(
+            "Threshold-agnostic raw layer -- neither the Wind-bucket Tier 1 "
+            "IEC cut-out constant nor the Solar-bucket Tier 3 gust "
+            "percentiles are applied here (see WIND_BUCKET_THRESHOLD_SPEC / "
+            "SOLAR_BUCKET_THRESHOLD_SPEC / classify_extreme_wind). Not yet "
+            "wired into src/index/risk_calculator.py's Risk_i,h -- pending "
+            "Phase 3.1. Extreme Wind is NOT a Phase 2.5 correlation-gate "
+            "candidate (see module docstring)."
+        ),
+    )
+    return mean_max
 
 
 # --------------------------------------------------------------------------
 # Raw layer -- compute once, cache to disk
 # --------------------------------------------------------------------------
 def ensure_raw_raster(country: str, overwrite: bool = False) -> dict:
-    """Compute (if not cached) and write the native + 1 km raw Extreme Wind
-    raster for one country. Idempotent."""
+    """Ensure every baseline year is downloaded+reduced+deleted (``ensure_
+    all_years_annual_max``, one year on disk at a time), then compute and
+    write the native + 1 km raw Extreme Wind raster for one country from
+    that per-year cache. Idempotent."""
     CLIMATE_PROCESSED.mkdir(parents=True, exist_ok=True)
     native_path = native_raster_path(country)
     raw_path = raw_raster_path(country)
@@ -308,6 +535,12 @@ def ensure_raw_raster(country: str, overwrite: bool = False) -> dict:
     if raw_path.exists() and not overwrite:
         logger.info("%s: extreme-wind raw raster cached, skipping.", country)
         return {"success": True, "path": str(raw_path), "reason": "cached"}
+
+    year_reports = ensure_all_years_annual_max(country, overwrite=overwrite)
+    failed_years = {y: r for y, r in year_reports.items() if not r["success"]}
+    if failed_years:
+        logger.error("%s: %d year(s) failed to download/reduce: %s", country, len(failed_years), failed_years)
+        return {"success": False, "path": None, "reason": f"missing_years: {failed_years}"}
 
     try:
         native = _compute_native(country)
