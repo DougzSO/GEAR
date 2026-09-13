@@ -35,7 +35,10 @@ Per-technology ``retention(age)``  (age = ``REFERENCE_YEAR - commissioning_year`
     Wind          1 - 0.004  * age                    linear (0.4%/yr relative)
     Hydro         1 - 0.0055 * age                    linear (0.55%/yr)
     Solar         (1 - 0.007) ** age                  compound
-    Gas / oil-gas 1.0  (age_factor 1.0)   PROVISIONAL -- no literature rate exists
+    Gas / oil-gas 1.0  (age_factor 1.0)   FINAL -- no literature-backed curve
+                                           exists, confirmed by a bounded
+                                           search (docs/DECISIONS.md,
+                                           2026-09-11)
     Nuclear       1.0  (age_factor 1.0)   licensing-governed, not gradual decay
     Bioenergy     1.0  (age_factor 1.0)   coal proxy dropped in the V1 revision
     Mixed fuel    simple average of the component fuels' age_factor
