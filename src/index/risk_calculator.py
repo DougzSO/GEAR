@@ -66,14 +66,37 @@ Risk_i,h integration: empirical transform result, PENDING_RISK_I_H_HAZARDS
 closed" (2026-09-14). Wildfire remains the only deferred core hazard (data
 unavailable, ``docs/LIMITATIONS.md``).
 
-``wind``'s transform was decided the same way ``precip``'s was: a real
-``normality_check`` (``src/index/normalization.py``) on the pooled sample
-over actual plant locations, never assumed in advance. ``wind``'s measured
-skewness came back +0.622 (right-skewed, ``|skew| > 0.5``) -- the shape
-``Tlog`` (log1p) is actually designed to compress -- so ``wind`` joins
-``LOG_TERMS``, unlike ``precip`` (whose skew was not right-skewed and which
-therefore stayed in ``LIN_TERMS``). Same rule, different outcome; neither
-was assumed from the other.
+``wind``'s membership in ``LOG_TERMS`` (vs. ``LIN_TERMS``) was decided the
+same way ``precip``'s was: a real ``normality_check`` (``src/index/
+normalization.py``) on the pooled sample over actual plant locations, never
+assumed in advance. ``wind``'s measured skewness came back +0.6215
+(right-skewed, ``|skew| > 0.5``) -- the shape ``Tlog`` is designed to act
+on -- so ``wind`` joins ``LOG_TERMS``, unlike ``precip`` (whose skew was not
+right-skewed and which therefore stayed in ``LIN_TERMS``). Same rule,
+different outcome; neither was assumed from the other. As of this entry,
+``LOG_TERMS`` is entirely ``-ln(1-x)`` (``Tlog``), not ``log1p`` -- see the
+Phase 3.3 entry below.
+
+--------------------------------------------------------------------------
+Phase 3.3: ``LOG_TERMS`` transform is ``-ln(1-x)``, not ``log1p``
+--------------------------------------------------------------------------
+Closed 2026-09-14 (``docs/DECISIONS.md``, "Phase 3.3 scope over `wind`:
+closed -- `-ln(1-x)` applied to all of `LOG_TERMS`"). ``Tlog`` for every
+term in ``LOG_TERMS`` (``ws``, ``heat``, ``spei``, ``wind``) is now
+``normalization.transform_neg_log_minmax``'s mechanism, reproduced in
+``transform_term`` below rather than imported (``normalization.py`` imports
+this module, so the reverse import would be circular): the raw value is
+Min-Maxed onto a padded ``[0, 1]`` domain (the padding keeps the pooled
+maximum strictly below the ``x = 1`` singularity), ``-ln(1-x)`` is applied,
+then the result is Min-Maxed a second time. This replaces the retired
+``log1p``-then-Min-Max mechanism for every ``LOG_TERMS`` member -- author
+confirmed (2026-09-14, Option B of the two scoped alternatives) that the
+swap applies to the full current ``LOG_TERMS`` set, including ``wind``, not
+only the three terms (``ws``/``heat``/``spei``) that predate ``wind``'s
+2026-09-14 wiring. ``log1p`` is no longer used anywhere in this module's
+real ``Risk_{i,h}`` computation; it survives only as ``transform_log1p_
+minmax`` in ``normalization.py``, retired and kept there solely for the
+origin-table before/after record.
 
 --------------------------------------------------------------------------
 Extreme Precipitation (``precip``) -- transform choice, stated plainly
@@ -81,20 +104,18 @@ Extreme Precipitation (``precip``) -- transform choice, stated plainly
 ``precip`` is GCM-dependent (CMIP6 ``pr``-derived, like ``heat``/``spei``),
 so its ``FROZEN_BOUNDS`` entry is per-GCM. Its LOG_TERMS/LIN_TERMS
 assignment is decided by the same empirical skewness check
-``normalization.py`` (Phase 2.4) already runs for every candidate, but
-applied here only to choose between this module's two PRE-EXISTING
-transforms (``Tlog``=log1p+Min-Max, ``Tlin``=direct Min-Max) -- **not** an
-adoption of ``normalization.py``'s new ``neg_log_minmax`` recommendation,
-which is Phase 3.3's separate, still-pending transform swap and is not
-touched by this change. The pooled skewness came back GCM-dependent and, in
-either case, not a case for ``Tlog``: GFDL-ESM4's pooled sample skew is
--0.125 (already within the |skew|<=0.5 "fairly symmetrical" band), and
-MIROC6's is -0.586 (mildly skewed, but LEFT, not right) -- ``Tlog``
-(log1p) is designed to compress a long RIGHT tail, which is not what either
-GCM's distribution has here, so applying it would misuse the transform's
-own rationale rather than correct a real right-skew. ``precip`` is therefore
-placed in ``LIN_TERMS`` (direct Min-Max), the same treatment as ``sv``/
-``iv``, on the data's own shape -- not a default or an oversight.
+``normalization.py`` (Phase 2.4) already runs for every candidate. The
+pooled skewness came back GCM-dependent and, in either case, not a case for
+``Tlog``: GFDL-ESM4's pooled sample skew is -0.125 (already within the
+|skew|<=0.5 "fairly symmetrical" band), and MIROC6's is -0.586 (mildly
+skewed, but LEFT, not right) -- ``Tlog`` (whether the retired ``log1p`` form
+or the current ``-ln(1-x)`` form) is designed to act on a long RIGHT tail,
+which is not what either GCM's distribution has here, so applying it would
+misuse the transform's own rationale rather than correct a real right-skew.
+``precip`` is therefore placed in ``LIN_TERMS`` (direct Min-Max), the same
+treatment as ``sv``/``iv``, on the data's own shape -- not a default or an
+oversight. The Phase 3.3 ``Tlog`` swap above does not touch ``precip``: it
+was never in ``LOG_TERMS`` and this decision does not reopen that.
 
 **Flagged, not silently resolved**: the pre-v3 codebase also computed two
 further Aqueduct indicators, seasonal variability (``sv``) and interannual
@@ -130,13 +151,15 @@ code, so a future audit of data-window alignment does not require reading
 every processor line by line.
 
 --------------------------------------------------------------------------
-Transforms, bounds, plant identity, GCM handling -- unchanged from the
-retired ``ccrs_calculator.py``
+Bounds, plant identity, GCM handling -- unchanged from the retired
+``ccrs_calculator.py``; ``Tlog`` itself changed under Phase 3.3 (above)
 --------------------------------------------------------------------------
-The per-term normalization (``Tlog``/``Tlin``, ``FROZEN_BOUNDS``, the
-frozen-bounds regression guard), the ``plant_uid`` content-hash identity, and
-the GFDL-ESM4-primary / MIROC6-sensitivity-panel GCM rule are methodology
-that Phase 1 does not revisit -- carried over verbatim. This module is
+``FROZEN_BOUNDS`` (raw, pre-transform bounds -- unaffected by which
+transform is later applied to them), the frozen-bounds regression guard,
+the ``plant_uid`` content-hash identity, and the GFDL-ESM4-primary /
+MIROC6-sensitivity-panel GCM rule are methodology that Phase 1 does not
+revisit -- carried over verbatim. ``Tlin`` is likewise unchanged. Only
+``Tlog``'s formula changed, under Phase 3.3, not Phase 1. This module is
 deliberately kept import-light and free of any correlation-gate or
 threshold-tier logic: Phase 2.4 (normalization as its own isolated module)
 and Phase 2.5 (the correlation gate as its own class) are separate,
@@ -152,6 +175,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
+import math
 from pathlib import Path
 
 import numpy as np
@@ -188,13 +212,16 @@ logger = logging.getLogger(__name__)
 # wind Risk_i,h integration: empirical transform result, PENDING_RISK_I_H_HAZARDS
 # closed".
 HAZARD_TERMS = ("ws", "heat", "sv", "iv", "spei", "precip", "wind")
-# `wind` -> LOG_TERMS on its OWN measured skew (+0.622, right-skewed,
+# `wind` -> LOG_TERMS on its OWN measured skew (+0.6215, right-skewed,
 # |skew| > 0.5), not by assumed parity with ws/heat/spei: the same empirical
 # normality_check rule that put `precip` in LIN_TERMS (its measured skew was
 # not right-skewed) puts `wind` in LOG_TERMS because its measured skew IS
 # right-skewed and significant -- see docs/DECISIONS.md for the full
 # skewness/Shapiro readout this classification is based on.
-LOG_TERMS = frozenset({"ws", "heat", "spei", "wind"})   # log1p -> Min-Max
+# `Tlog` is `-ln(1-x)` (not `log1p`) for every member as of Phase 3.3,
+# closed 2026-09-14 -- see the module docstring's "Phase 3.3" section and
+# docs/DECISIONS.md, "Phase 3.3 scope over `wind`: closed".
+LOG_TERMS = frozenset({"ws", "heat", "spei", "wind"})   # -ln(1-x) -> Min-Max
 LIN_TERMS = frozenset({"sv", "iv", "precip"})           # linear Min-Max
 # Terms whose global bound is per-GCM (magnitudes are not model-comparable);
 # every other term's bound is a single flat pair pooling all GCMs. `wind` has
@@ -300,8 +327,9 @@ _UID_DIGEST_BYTES = 6   # 48-bit hash; collision-checked at load time
 #
 # Do NOT edit by hand without explicit manual review: the regression test in
 # tests/test_risk_calculator.py recomputes and compares, and fails on drift.
-# Format: RAW bounds (pre-log1p) (min, max). Tlog applies log1p to both the
-# data and the bound.
+# Format: RAW bounds (pre-transform) (min, max) -- these are raw sample
+# min/max, unaffected by which Tlog formula is applied to them downstream
+# (log1p historically, -ln(1-x) since Phase 3.3, 2026-09-14).
 #   - ws/sv/iv: one pair per term (water rasters are GCM-independent).
 #   - heat/spei/precip: one pair per GCM each (MIROC6 ~10-100x GFDL for heat;
 #     never in the same pool).
@@ -477,15 +505,42 @@ def sample_terms(model: str) -> pd.DataFrame:
 # --------------------------------------------------------------------------
 # Transforms and bounds
 # --------------------------------------------------------------------------
+# Padding fraction for Tlog's preliminary Min-Max scaling -- keeps the
+# pooled maximum's x_scaled strictly below 1 so -ln(1 - x_scaled) never
+# evaluates ln(0). Same value and role as
+# normalization.UPPER_TAIL_PADDING_FRACTION; kept as an independent
+# constant here (not imported) because normalization.py imports this
+# module, so the reverse import would be circular.
+TLOG_UPPER_TAIL_PADDING_FRACTION = 0.05
+
+
 def transform_term(term: str, raw: np.ndarray, lo: float, hi: float) -> np.ndarray:
-    """``Tlog`` for ws/heat/spei, ``Tlin`` for sv/iv -- this IS ``Hazard_{i,h}``
-    for the term: a per-hazard [0, 1] normalization, never combined with any
-    other term's transformed value. ``lo``/``hi`` are RAW bounds; for
-    ``Tlog`` the log1p is applied to both data and bound before the Min-Max.
-    Degenerate domain (``hi <= lo``) -> zeros."""
+    """``Tlog`` for ws/heat/spei/wind, ``Tlin`` for sv/iv/precip -- this IS
+    ``Hazard_{i,h}`` for the term: a per-hazard [0, 1] normalization, never
+    combined with any other term's transformed value. ``lo``/``hi`` are RAW
+    bounds.
+
+    ``Tlog`` (Phase 3.3, closed 2026-09-14 -- see module docstring) is
+    ``-ln(1-x)`` on a padded preliminary Min-Max, then Min-Maxed again onto
+    ``[0, 1]`` -- identical mechanism to
+    ``normalization.transform_neg_log_minmax``, reproduced here rather than
+    imported to avoid a circular import. It replaces the retired
+    ``log1p``-then-Min-Max mechanism for every ``LOG_TERMS`` member.
+
+    Degenerate domain (``hi <= lo``) -> zeros for both branches.
+    """
     raw = np.asarray(raw, "float64")
     if term in LOG_TERMS:
-        x, a, b = np.log1p(raw), np.log1p(lo), np.log1p(hi)
+        span = hi - lo
+        if span <= 0:
+            return np.zeros_like(raw)
+        pad = TLOG_UPPER_TAIL_PADDING_FRACTION
+        padded_hi = hi + pad * span
+        x_scaled = (raw - lo) / (padded_hi - lo)
+        x_scaled = np.clip(x_scaled, 0.0, 1.0 - 1e-9)
+        transformed = -np.log1p(-x_scaled)
+        transformed_max = math.log1p(1.0 / pad)
+        return np.clip(transformed / transformed_max, 0.0, 1.0)
     elif term in LIN_TERMS:
         x, a, b = raw, float(lo), float(hi)
     else:

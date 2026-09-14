@@ -2862,3 +2862,125 @@ protocol-only draft (never committed as such).
   names any hazard. Etapa 9 (manuscript status phrase) has no concrete
   action identified -- see above, author input welcome if a specific
   sentence was intended that this review missed.
+
+## [2026-09-14] Phase 3.3 scope over `wind`: CLOSED -- Option B, `-ln(1-x)` applied to all of `LOG_TERMS`
+
+- Scope: originally logged the same day as an open question while mapping
+  where `-ln(1-x)` (`normalization.py`'s `neg_log_minmax`) was only a
+  recommendation versus where `risk_calculator.py`'s real `Risk_i,h`
+  computation still ran `log1p`, per the binding convention that a decision
+  this file cannot make on its own must be logged as open, not assumed
+  (`CLAUDE.md` Section 3/16). The author has now returned a verdict,
+  closing that question -- see "Decision" below.
+- State prior to this change (mapped, unchanged until this closing entry):
+  - `src/index/risk_calculator.py:487-488` (`transform_term`, `LOG_TERMS`
+    branch) is the only place a real `Risk_i,h` value is computed with
+    `log1p`: `x, a, b = np.log1p(raw), np.log1p(lo), np.log1p(hi)`.
+    `LOG_TERMS` (`risk_calculator.py:197`) = `{"ws", "heat", "spei",
+    "wind"}` -- `wind` joined this set on 2026-09-14 (see "GEAR v3 wind
+    Risk_i,h integration" above), on its own measured skew (+0.6215,
+    right-skewed, `risk_calculator.py:191-196`; full readout at line 2792
+    of this file). `LIN_TERMS` (`risk_calculator.py:198`) = `{"sv", "iv",
+    "precip"}` -- direct Min-Max, never log1p.
+  - `src/index/normalization.py` computes an independent recommendation
+    per hazard, never applied to `risk_calculator.py`
+    (`normalization.py:12-17`, `:65-73`). `select_transform`
+    (`normalization.py:202-205`) returns `neg_log_minmax` for every term
+    `normality_check` finds skewed and never returns the retired
+    `log1p_minmax`. `NORMALIZATION_CANDIDATE_TERMS`
+    (`normalization.py:130`) is `risk_calculator.HAZARD_TERMS` in full,
+    so `wind` is already run through this check today and would today
+    receive a `neg_log_minmax` recommendation on the same +0.6215 skew --
+    but that recommendation is not wired into `risk_calculator.py` and
+    changes nothing about `wind`'s actual `Risk_i,h` value.
+  - Net: for `wind` specifically, both modules currently agree the
+    variable is right-skewed and both currently apply/recommend a
+    log-family compression -- but `risk_calculator.py`'s live computation
+    uses `log1p` (tail-compressing, arguably the wrong direction for a
+    right-skewed extremal hazard per `normalization.py:65-73`'s own
+    stated rationale) while `normalization.py`'s recommendation is
+    `neg_log_minmax` (tail-expanding). Phase 3.3 (`docs/rework/
+    GEAR_v3_work_plan.md`) is the still-pending step that would apply any
+    `neg_log_minmax` swap to `risk_calculator.py`'s real computation.
+  - `wind` was not present in the codebase the last time Phase 3.3's own
+    scope was framed (`normalization.py:32-34` names only `heat`'s
+    tail-compression complaint as Phase 3.3's stated trigger); `wind` is a
+    later, 2026-09-14 addition to `HAZARD_TERMS`/`LOG_TERMS`, arriving
+    after that framing existed.
+- Two options were put to the author, neither decided by the assistant:
+  - **Option A -- Phase 3.3 swaps only the hazards already in `LOG_TERMS`
+    before `wind` joined it** (i.e. `ws`, `heat`, `spei`). `wind` would
+    keep `log1p` in `risk_calculator.py` unless and until a separate,
+    later decision explicitly extends Phase 3.3 to cover it.
+  - **Option B -- Phase 3.3 swaps every hazard currently in `LOG_TERMS`
+    as of today, including `wind`** (i.e. `ws`, `heat`, `spei`, `wind`),
+    on the grounds that `wind`'s own measured skew (+0.6215) already puts
+    it through the identical `normality_check` -> `is_skewed` ->
+    log-family-transform path as the original three, with no
+    methodological difference in how it qualified.
+- **Decision: Option B.** The author confirmed (2026-09-14) that Phase 3.3
+  applies `-ln(1-x)` to the full current `LOG_TERMS` set -- `ws`, `heat`,
+  `spei`, `wind` -- not only the three terms that predated `wind`'s wiring.
+  `wind` is treated as any other `LOG_TERMS` member: its inclusion follows
+  from its own measured skew via the same uniform `normality_check`, with
+  no special-casing either way.
+- Reason: `wind` qualified for `LOG_TERMS` through the identical empirical
+  procedure as `ws`/`heat`/`spei` (skew +0.6215, `|skew| > 0.5`) --
+  carving it out into a permanent `log1p` exception would need its own
+  justification for treating `wind` differently from every other
+  `LOG_TERMS` member, and none was identified; `normalization.py:65-73`'s
+  own stated rationale (log1p compresses exactly where a right-skewed
+  hazard's most extreme plants should be most separated) applies to
+  `wind`'s distribution the same as to `heat`'s.
+- Consequence (declared, not incidental): `wind`'s `Risk_i,h` numerically
+  changes for every plant/country/scenario row -- it switches from
+  `log1p` (tail-compressing) to `-ln(1-x)` (tail-expanding), changing
+  which plants land near the top of `wind`'s normalized [0, 1] range and
+  therefore `wind`'s contribution to the Wind and Solar buckets'
+  `RiskBand_{i,h}`/PSAE downstream. This is a real change to
+  already-published-shape `wind` results, not only to `ws`/`heat`/`spei`,
+  and is the expected, intended effect of this decision, not a side
+  effect to be minimized.
+- Implementation: `risk_calculator.transform_term`'s `LOG_TERMS` branch no
+  longer computes `np.log1p(raw)`/`np.log1p(lo)`/`np.log1p(hi)`. It now
+  reproduces `normalization.transform_neg_log_minmax`'s mechanism directly
+  (padded preliminary Min-Max -> `-ln(1-x)` -> second Min-Max), not
+  imported from `normalization.py` (which imports `risk_calculator.py`,
+  so the reverse import would be circular) -- new constant
+  `TLOG_UPPER_TAIL_PADDING_FRACTION = 0.05`, matching `normalization.
+  UPPER_TAIL_PADDING_FRACTION`. `FROZEN_BOUNDS` (raw, pre-transform
+  min/max) is unchanged -- only the transform formula applied to those
+  bounds changed, so no bounds recompute or regression-lock update was
+  needed. `LIN_TERMS` (`sv`/`iv`/`precip`) is untouched. A cross-module
+  parity test (`tests/test_risk_calculator.py::
+  test_tlog_matches_normalization_neg_log_minmax`) asserts the two
+  modules' implementations stay numerically identical.
+- Tests updated: `tests/test_risk_calculator.py`'s
+  `test_tlog_is_log1p_then_minmax` renamed to `test_tlog_is_neg_log_minmax`
+  (same endpoint assertions, now documented as `-ln(1-x)`); added
+  `test_tlog_matches_normalization_neg_log_minmax` (numeric parity with
+  `normalization.transform_neg_log_minmax`), `test_tlog_no_longer_uses_
+  log1p_directly_on_raw_and_bounds`, and `test_tlog_expands_upper_tail_
+  relative_to_retired_log1p` (mirrors `normalization.py`'s own
+  `test_neg_log_minmax_expands_upper_tail_relative_to_log1p`). Module
+  docstring and section-header comments in both `tests/
+  test_risk_calculator.py` and `src/index/risk_calculator.py`/`src/index/
+  normalization.py` updated to stop stating `risk_calculator.py` still
+  uses `log1p` in its live computation.
+- Full suite: 336/336 passing (`python -m pytest -q`, 3 pre-existing
+  collection errors excluded -- `tests/test_main.py`,
+  `tests/test_monte_carlo.py`, `tests/test_visualization.py`, all broken
+  on the retired `ccrs_calculator` import, confirmed already broken before
+  this task per "GEAR v3 wind Risk_i,h integration" above, unrelated to
+  this change). `tests/test_risk_calculator.py` +
+  `tests/test_normalization.py` alone: 47/47 passing.
+- References: `src/index/risk_calculator.py` (`transform_term`,
+  `TLOG_UPPER_TAIL_PADDING_FRACTION`, module docstring "Phase 3.3"
+  section); `src/index/normalization.py` (`transform_neg_log_minmax`,
+  module docstring); `tests/test_risk_calculator.py`; this file, "GEAR v3
+  wind Risk_i,h integration: empirical transform result,
+  PENDING_RISK_I_H_HAZARDS closed" (2026-09-14, skew readout).
+- Status: **Closed (2026-09-14).** `risk_calculator.py`'s `Tlog` branch is
+  `-ln(1-x)` for `ws`/`heat`/`spei`/`wind`; `log1p` no longer appears in
+  this module's real `Risk_{i,h}` computation. Not reopened without new
+  data or an explicit author request.

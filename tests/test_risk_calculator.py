@@ -2,10 +2,12 @@
 
 Covers: Equation 1's arithmetic, the Exposure type-level guard (log10
 display transform rejected by risk_i_h), the per-hazard temporal-window
-constants, the retained transform/bounds infrastructure (unchanged from the
+constants, the retained bounds infrastructure and Tlin (unchanged from the
 retired ccrs_calculator.py -- Phase 1 does not touch normalization
-methodology), and that the retired CCRS weighted-sum-across-hazards
-computation and EventMultiplier are gone from this module specifically.
+methodology), Tlog's Phase 3.3 -ln(1-x) mechanism (closed 2026-09-14,
+replacing the retired log1p mechanism), and that the retired CCRS
+weighted-sum-across-hazards computation and EventMultiplier are gone from
+this module specifically.
 
 Pure-function and monkeypatched tests run without touching disk. Tests that
 read the processed rasters or the validated-plant CSVs are skipped (never
@@ -124,18 +126,67 @@ def test_precip_is_the_explicit_30yr_cmip6_window():
 
 
 # --------------------------------------------------------------------------
-# Transforms (unchanged from the retired ccrs_calculator.py)
+# Transforms -- Tlin unchanged from the retired ccrs_calculator.py; Tlog is
+# -ln(1-x) since Phase 3.3 (closed 2026-09-14), not the retired log1p
 # --------------------------------------------------------------------------
 def test_tlin_is_linear_minmax():
     out = rc.transform_term("sv", np.array([0.0, 1.0, 2.0]), 0.0, 2.0)
     np.testing.assert_allclose(out, [0.0, 0.5, 1.0])
 
 
-def test_tlog_is_log1p_then_minmax():
+def test_tlog_is_neg_log_minmax():
+    """Phase 3.3 (closed 2026-09-14): Tlog is -ln(1-x) on a padded
+    preliminary Min-Max, then Min-Maxed again -- not log1p. Endpoints still
+    land at 0 and 1 by construction, same as the retired log1p mechanism."""
     raw = np.array([0.0, 3.0])
     out = rc.transform_term("ws", raw, 0.0, 3.0)
     assert out[0] == pytest.approx(0.0)
-    assert out[1] == pytest.approx(1.0)
+    assert out[1] == pytest.approx(1.0, abs=1e-8)
+
+
+def test_tlog_matches_normalization_neg_log_minmax():
+    """risk_calculator's LOG_TERMS transform must be numerically identical
+    to normalization.transform_neg_log_minmax (Phase 3.3's source
+    mechanism) -- not an independent reimplementation that could silently
+    drift from it."""
+    from src.index import normalization as norm
+
+    raw = np.array([0.0, 5.0, 12.5, 20.0, 24.9, 25.0])
+    lo, hi = 0.0, 25.0
+    rc_out = rc.transform_term("ws", raw, lo, hi)
+    norm_out = norm.transform_neg_log_minmax(raw, lo, hi)
+    np.testing.assert_allclose(rc_out, norm_out)
+
+
+def test_tlog_no_longer_uses_log1p_directly_on_raw_and_bounds():
+    """The retired mechanism computed np.log1p(raw)/np.log1p(lo)/np.log1p(hi)
+    directly and Min-Maxed those. Under -ln(1-x), log1p(raw) alone is not
+    monotonically tied to the output the same way: a value's transform now
+    depends on where it falls in the padded [0,1] preliminary scaling, not
+    on log1p(raw) directly. Concretely: log1p is not applied to the bounds
+    lo/hi as log1p(lo)/log1p(hi) anymore -- padded_hi depends on (hi - lo),
+    not log1p(hi)."""
+    lo, hi = 2.0, 50.0
+    out = rc.transform_term("heat", np.array([lo, hi]), lo, hi)
+    # under the retired log1p mechanism this would be exactly [0.0, 1.0]
+    # too, so the real distinguishing check is the cross-module parity test
+    # above; this test only pins the still-true endpoint behaviour.
+    np.testing.assert_allclose(out, [0.0, 1.0], atol=1e-8)
+
+
+def test_tlog_expands_upper_tail_relative_to_retired_log1p():
+    """The whole point of Phase 3.3: for a right-skewed LOG_TERMS member,
+    the top of the range must be MORE spread out under the live -ln(1-x)
+    transform than the retired log1p mechanism would have produced --
+    mirrors normalization.py's own
+    test_neg_log_minmax_expands_upper_tail_relative_to_log1p."""
+    from src.index import normalization as norm
+
+    lo, hi = 0.0, 100.0
+    upper = np.array([90.0, 95.0, 99.0, 100.0])
+    live = rc.transform_term("heat", upper, lo, hi)
+    retired_log1p = norm.transform_log1p_minmax(upper, lo, hi)
+    assert (live[-1] - live[0]) > (retired_log1p[-1] - retired_log1p[0])
 
 
 def test_transform_clips_out_of_range_and_handles_degenerate():

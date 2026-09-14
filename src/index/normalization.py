@@ -13,8 +13,16 @@ reimplementing it. This module does **not** modify ``risk_calculator.py``
 and does not feed its recommendation back into ``risk_calculator.
 HAZARD_TERMS`` or ``FROZEN_BOUNDS`` -- it produces an independent
 recommendation (selected transform + bounds + origin table) per hazard
-candidate, for Phase 3.3 to apply. ``risk_calculator.py`` keeps computing
-its own log1p-based bounds unchanged until that phase.
+candidate. Phase 3.3 (``docs/rework/GEAR_v3_work_plan.md``) applied that
+recommendation to ``risk_calculator.py``'s ``LOG_TERMS`` transform on
+2026-09-14 (``docs/DECISIONS.md``, "Phase 3.3 scope over `wind`: closed"):
+``risk_calculator.transform_term``'s ``Tlog`` branch now reproduces this
+module's ``transform_neg_log_minmax`` mechanism directly (not imported --
+this module imports ``risk_calculator``, so the reverse import would be
+circular), for every current ``LOG_TERMS`` member (``ws``, ``heat``,
+``spei``, ``wind``). ``FROZEN_BOUNDS`` itself (raw, pre-transform min/max)
+is unaffected -- only the transform formula applied to those bounds
+changed.
 
 --------------------------------------------------------------------------
 Candidate hazard set -- run uniformly, no special-casing
