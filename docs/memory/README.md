@@ -280,3 +280,17 @@ correlation gate já exclui `wind` estruturalmente, sem risco de reabertura
 ao integrar). Nenhuma decisão foi tomada nesta tarefa — registro em
 `docs/DECISIONS.md`, "GEAR v3 wind-into-risk_calculator pre-wiring audit:
 three decision points extracted, none decided here".
+
+2026-09-14: `wind` integrado em `risk_calculator.py` — protocolo aprovado
+executado. `ensure_raw_raster` rodado pros 3 países (verificado limpo:
+CRS, resolução, faixa física, grid idêntico ao de calor). `normality_check`
+real deu skew=+0.6215 (right-skewed) → `wind` foi pra `LOG_TERMS` (não
+`LIN_TERMS`, resultado oposto ao de `precip`, mesma regra empírica).
+`FROZEN_BOUNDS["wind"]` computado via `compute_global_bounds()`.
+`PENDING_RISK_I_H_HAZARDS` agora vazio. Bug lateral de import circular
+corrigido (mesma classe do fix de `precip`). 333/333 testes relevantes
+passando. Etapa de atualização do manuscrito não encontrou frase literal
+pra trocar — sinalizado, não inventado. Ver item 41 de
+[05-decisoes-tecnicas.md](05-decisoes-tecnicas.md) e `docs/DECISIONS.md`,
+"GEAR v3 wind Risk_i,h integration: empirical transform result,
+PENDING_RISK_I_H_HAZARDS closed".

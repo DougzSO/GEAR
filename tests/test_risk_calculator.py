@@ -95,7 +95,13 @@ def test_ccrs_calculator_and_ccrs_report_modules_no_longer_exist():
 def test_every_hazard_term_declares_a_temporal_window():
     assert set(rc.HAZARD_TEMPORAL_WINDOW) == set(rc.HAZARD_TERMS)
     for term, meta in rc.HAZARD_TEMPORAL_WINDOW.items():
-        assert meta["horizon_year"] == 2050
+        if term == "wind":
+            # ERA5 historical reanalysis, not a CMIP6 mid-century projection
+            # like every other term -- no 2050 horizon by design (see
+            # WIND_TEMPORAL_WINDOW, extreme_wind_processor.py).
+            assert meta["horizon_year"] is None
+        else:
+            assert meta["horizon_year"] == 2050
         assert isinstance(meta["is_explicit_30yr_window"], bool)
 
 
@@ -143,8 +149,8 @@ def test_transform_clips_out_of_range_and_handles_degenerate():
 
 def test_frozen_bounds_structure_unchanged_from_retired_module():
     fb = rc.FROZEN_BOUNDS
-    assert set(fb) == {"ws", "sv", "iv", "heat", "spei", "precip"}
-    for t in ("ws", "sv", "iv"):
+    assert set(fb) == {"ws", "sv", "iv", "heat", "spei", "precip", "wind"}
+    for t in ("ws", "sv", "iv", "wind"):
         lo, hi = fb[t]
         assert lo <= hi
     assert set(fb["heat"]) == set(rc.configured_models())
@@ -204,12 +210,12 @@ def test_compute_risk_by_hazard_end_to_end(monkeypatch):
         "bucket": ["thermal"],
         "water_scenario": "opt", "heat_scenario": "ssp126",
         "ws": [1.0], "sv": [0.5], "iv": [0.5], "heat": [4.0], "spei": [1.0],
-        "precip": [5.0],
+        "precip": [5.0], "wind": [20.0],
     })
     monkeypatch.setattr(rc, "sample_terms", lambda model: fake.copy())
     af = pd.DataFrame({rc.PLANT_UID: ["T-00000"], "age_factor": [1.2]})
     bounds = {
-        "ws": (0.0, 1.0), "sv": (0.0, 1.0), "iv": (0.0, 1.0),
+        "ws": (0.0, 1.0), "sv": (0.0, 1.0), "iv": (0.0, 1.0), "wind": (10.0, 30.0),
         "heat": {"gfdl_esm4": (0.0, 4.0)},
         "spei": {"gfdl_esm4": (0.0, 1.0)},
         "precip": {"gfdl_esm4": (0.0, 10.0)},

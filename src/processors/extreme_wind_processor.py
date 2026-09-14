@@ -64,17 +64,23 @@ never by inter-hazard correlation. This module is therefore NOT wired into
 any Phase 2.5 gate list.
 
 --------------------------------------------------------------------------
-Not yet wired into risk_calculator -- Phase 3, not this phase
+Wired into risk_calculator -- Phase 3 integration closed, 2026-09-14
 --------------------------------------------------------------------------
 This processor produces the raster layer (+ the standalone classification
-utility) only. It is NOT wired into ``src/index/risk_calculator.py``'s
-``HAZARD_TERMS``/``Risk_i,h`` computation, and it is NOT added to any
-bucket's applicable-hazard table -- both are Phase 3.1 decisions.
-``WIND_TEMPORAL_WINDOW`` mirrors the shape of
-``src.index.risk_calculator.HAZARD_TEMPORAL_WINDOW`` (same schema keys,
-asserted at import time) but is a standalone constant, not merged into that
-dict, matching the pattern already used for
-``extreme_precipitation_processor.PRECIP_TEMPORAL_WINDOW``.
+utility). ``wind`` is wired into ``src/index/risk_calculator.py``'s
+``HAZARD_TERMS``/``Risk_i,h`` computation (``docs/DECISIONS.md``, "GEAR v3
+wind Risk_i,h integration: empirical transform result,
+PENDING_RISK_I_H_HAZARDS closed"): its empirically-measured pooled skew
+(+0.622, right-skewed, ``|skew| > 0.5``) classified it into ``LOG_TERMS``
+(``Tlog``/log1p), by the same ``normality_check`` procedure that classified
+``precip`` into ``LIN_TERMS`` -- the rule is shared, the outcome is not.
+Per-bucket applicable-hazard table membership (H_b) was already closed
+earlier (``src/index/hazard_scope.py``, ``WIND_APPLICABLE_BUCKETS``) and is
+unaffected by this Risk_i,h wiring. ``WIND_TEMPORAL_WINDOW`` mirrors the
+shape of ``src.index.risk_calculator.HAZARD_TEMPORAL_WINDOW`` (same schema
+keys, asserted at import time) and IS that module's ``"wind"`` entry
+directly (imported there, not copied), matching the pattern already used
+for ``extreme_precipitation_processor.PRECIP_TEMPORAL_WINDOW``.
 """
 
 from __future__ import annotations
@@ -99,7 +105,6 @@ from src.downloaders.era5_wind_downloader import (
     open_gust_dataset,
 )
 from src.downloaders.era5_wind_downloader import raw_dir as era5_raw_dir
-from src.index.risk_calculator import HAZARD_TEMPORAL_WINDOW as _CORE_HAZARD_TEMPORAL_WINDOW
 from src.processors._common import GridMismatchError  # noqa: F401 - re-exported for callers/tests
 
 logger = logging.getLogger(__name__)
@@ -130,10 +135,19 @@ WIND_TEMPORAL_WINDOW = {
             "author confirmation (docs/DECISIONS.md).",
 }
 WIND_TEMPORAL_WINDOW_IS_PROJECTED = False
-_CORE_SCHEMA_KEYS = set(next(iter(_CORE_HAZARD_TEMPORAL_WINDOW.values())))
-assert set(WIND_TEMPORAL_WINDOW) == _CORE_SCHEMA_KEYS, (
-    "WIND_TEMPORAL_WINDOW must use the identical schema as "
-    "risk_calculator.HAZARD_TEMPORAL_WINDOW entries -- extend the pattern, "
+
+# The expected-keys literal below is intentionally not imported from
+# risk_calculator: that module imports THIS one (WIND_TEMPORAL_WINDOW is
+# risk_calculator.HAZARD_TEMPORAL_WINDOW's "wind" entry, directly, not a
+# copy -- see risk_calculator.py), so importing back would recreate the
+# circular dependency the wiring change removed. Mirrors
+# extreme_precipitation_processor.PRECIP_TEMPORAL_WINDOW's identical fix.
+_TEMPORAL_WINDOW_SCHEMA_KEYS = frozenset({
+    "source", "horizon_year", "window", "is_explicit_30yr_window", "note",
+})
+assert set(WIND_TEMPORAL_WINDOW) == _TEMPORAL_WINDOW_SCHEMA_KEYS, (
+    "WIND_TEMPORAL_WINDOW must use the identical schema as every "
+    "risk_calculator.HAZARD_TEMPORAL_WINDOW entry -- extend the pattern, "
     "don't diverge from it."
 )
 

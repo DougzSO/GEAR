@@ -57,23 +57,23 @@ Hazard terms currently computable, and an open methodology question
 The v3 methodology's six-hazard core checklist (Section 2) lists exactly:
 Water Stress, Extreme Heat, Drought, Extreme Precipitation, Wildfire, Extreme
 Wind. Water Stress (``ws``), Extreme Heat (``heat``), Drought (``spei``) were
-wired in at Phase 1. Extreme Precipitation (``precip``) is wired in here as
-of the integration-gap closure below. Wildfire remains deferred (data
-unavailable, ``docs/LIMITATIONS.md``); Extreme Wind remains NOT computed
-here -- its RiskBand classification exists (``src/index/risk_bands.py``,
-Phase 3.2), and the ERA5 gust acquisition is now complete for all three
-countries (Brazil, Portugal, India all 30/30 years cached), but no country
-yet has a processed ``extreme_wind_gust_raw_*.tif`` --
-``compute_mean_annual_max_gust()`` has not been run -- so there is still no
-real per-plant value to compute ``Risk_{i,h}`` from. Wiring Extreme Wind
-into ``HAZARD_TERMS`` before that raster exists would require the same
-silent-NaN-tolerant sampling ``risk_bands.py`` uses for its classification
-pass; this module intentionally does not adopt that tolerance
-(``sample_raster`` raises loudly on a missing raster) because
-``Risk_{i,h}``, unlike a RiskBand, is a real published number, not a
-classification label -- see ``docs/DECISIONS.md``, "GEAR v3 Risk_i,h
-integration gap: precip wired in, wind still blocked on ERA5 acquisition"
-and its 2026-09-14 follow-up for the full account.
+wired in at Phase 1. Extreme Precipitation (``precip``) was wired in per the
+integration-gap closure below; Extreme Wind (``wind``) followed once ERA5
+gust acquisition completed for all three countries (Brazil/Portugal/India,
+30/30 years each) and ``compute_mean_annual_max_gust()``/``ensure_raw_
+raster`` was run for all three -- see ``docs/DECISIONS.md``, "GEAR v3 wind
+Risk_i,h integration: empirical transform result, PENDING_RISK_I_H_HAZARDS
+closed" (2026-09-14). Wildfire remains the only deferred core hazard (data
+unavailable, ``docs/LIMITATIONS.md``).
+
+``wind``'s transform was decided the same way ``precip``'s was: a real
+``normality_check`` (``src/index/normalization.py``) on the pooled sample
+over actual plant locations, never assumed in advance. ``wind``'s measured
+skewness came back +0.622 (right-skewed, ``|skew| > 0.5``) -- the shape
+``Tlog`` (log1p) is actually designed to compress -- so ``wind`` joins
+``LOG_TERMS``, unlike ``precip`` (whose skew was not right-skewed and which
+therefore stayed in ``LIN_TERMS``). Same rule, different outcome; neither
+was assumed from the other.
 
 --------------------------------------------------------------------------
 Extreme Precipitation (``precip``) -- transform choice, stated plainly
@@ -169,6 +169,8 @@ from src.config import (
 from src.downloaders.cds_tasmax_downloader import configured_models
 from src.processors.extreme_precipitation_processor import PRECIP_TEMPORAL_WINDOW
 from src.processors.extreme_precipitation_processor import raw_raster_path as precip_raw_path
+from src.processors.extreme_wind_processor import WIND_TEMPORAL_WINDOW
+from src.processors.extreme_wind_processor import raw_raster_path as wind_raw_path
 from src.processors.heat_stress_processor import raw_raster_path as heat_raw_path
 from src.processors.spei_processor import raw_raster_path as spei_raw_path
 from src.processors.water_stress_processor import raw_raster_path as ws_raw_path
@@ -180,14 +182,25 @@ logger = logging.getLogger(__name__)
 # Terms and transforms
 # --------------------------------------------------------------------------
 # NOT the final v3 applicable-hazard set -- see the module docstring section
-# "Hazard terms currently computable". Wildfire / Extreme Wind are absent
-# (Wildfire deferred for data unavailability; Extreme Wind blocked on
-# incomplete ERA5 acquisition); sv/iv are present but flagged pending Phase 3.
-HAZARD_TERMS = ("ws", "heat", "sv", "iv", "spei", "precip")
-LOG_TERMS = frozenset({"ws", "heat", "spei"})   # log1p -> Min-Max
-LIN_TERMS = frozenset({"sv", "iv", "precip"})   # linear Min-Max
+# "Hazard terms currently computable". Wildfire is absent (deferred for data
+# unavailability); sv/iv are present but flagged pending Phase 3. Extreme
+# Wind (`wind`) was wired in 2026-09-14 -- see docs/DECISIONS.md, "GEAR v3
+# wind Risk_i,h integration: empirical transform result, PENDING_RISK_I_H_HAZARDS
+# closed".
+HAZARD_TERMS = ("ws", "heat", "sv", "iv", "spei", "precip", "wind")
+# `wind` -> LOG_TERMS on its OWN measured skew (+0.622, right-skewed,
+# |skew| > 0.5), not by assumed parity with ws/heat/spei: the same empirical
+# normality_check rule that put `precip` in LIN_TERMS (its measured skew was
+# not right-skewed) puts `wind` in LOG_TERMS because its measured skew IS
+# right-skewed and significant -- see docs/DECISIONS.md for the full
+# skewness/Shapiro readout this classification is based on.
+LOG_TERMS = frozenset({"ws", "heat", "spei", "wind"})   # log1p -> Min-Max
+LIN_TERMS = frozenset({"sv", "iv", "precip"})           # linear Min-Max
 # Terms whose global bound is per-GCM (magnitudes are not model-comparable);
-# every other term's bound is a single flat pair pooling all GCMs.
+# every other term's bound is a single flat pair pooling all GCMs. `wind` has
+# no GCM axis at all (single ERA5 product, no CMIP6 model/scenario) -- it
+# belongs here by construction (falls into FLAT_BOUND_TERMS below), the same
+# reason ws/sv/iv (Aqueduct, also model-independent) do.
 GCM_DEPENDENT_TERMS = frozenset({"heat", "spei", "precip"})
 FLAT_BOUND_TERMS = tuple(t for t in HAZARD_TERMS if t not in GCM_DEPENDENT_TERMS)
 
@@ -204,10 +217,11 @@ HAZARD_LABELS = {
     "heat": "Extreme Heat",
     "spei": "Drought",
     "precip": "Extreme Precipitation",
+    "wind": "Extreme Wind",
     "sv": "Water Seasonal Variability (not a v3 Section 2 hazard -- Phase 3 pending)",
     "iv": "Water Interannual Variability (not a v3 Section 2 hazard -- Phase 3 pending)",
 }
-V3_CORE_HAZARD_TERMS = frozenset({"ws", "heat", "spei", "precip"})
+V3_CORE_HAZARD_TERMS = frozenset({"ws", "heat", "spei", "precip", "wind"})
 
 # --------------------------------------------------------------------------
 # Temporal-window assumption per hazard term -- explicit, named, not buried
@@ -250,6 +264,13 @@ HAZARD_TEMPORAL_WINDOW: dict[str, dict[str, object]] = {
     # now does, so the two dicts are merged here rather than kept as two
     # sources of truth.
     "precip": PRECIP_TEMPORAL_WINDOW,
+    # Reused, not duplicated freehand: extreme_wind_processor defines this
+    # against the exact same schema (asserted there), with
+    # is_explicit_30yr_window=True but horizon_year=None -- ERA5 historical
+    # reanalysis, not a CMIP6 mid-century projection like every other term
+    # (see docs/LIMITATIONS.md, "Extreme Wind: ERA5 historical baseline,
+    # scenario-invariant by design").
+    "wind": WIND_TEMPORAL_WINDOW,
 }
 assert set(HAZARD_TEMPORAL_WINDOW) == set(HAZARD_TERMS), (
     "HAZARD_TEMPORAL_WINDOW must declare a temporal-window entry for every "
@@ -285,13 +306,13 @@ _UID_DIGEST_BYTES = 6   # 48-bit hash; collision-checked at load time
 #   - heat/spei/precip: one pair per GCM each (MIROC6 ~10-100x GFDL for heat;
 #     never in the same pool).
 #
-# precip's bounds were added on 2026-09-13 (the ws/sv/iv/heat/spei bounds
-# below are unchanged from the original 2026-09-04 snapshot -- this is a
-# mixed-date snapshot, not a full recompute; see docs/DECISIONS.md, "GEAR v3
-# Risk_i,h integration gap: precip wired in, wind still blocked on ERA5
-# acquisition").
+# precip's bounds were added on 2026-09-13, wind's on 2026-09-14 (the
+# ws/sv/iv/heat/spei bounds below are unchanged from the original 2026-09-04
+# snapshot -- this is a mixed-date snapshot, not a full recompute; see
+# docs/DECISIONS.md, "GEAR v3 wind Risk_i,h integration: empirical transform
+# result, PENDING_RISK_I_H_HAZARDS closed").
 # --------------------------------------------------------------------------
-BOUNDS_DATA_SNAPSHOT = "2026-09-04 (ws/sv/iv/heat/spei), 2026-09-13 (precip)"
+BOUNDS_DATA_SNAPSHOT = "2026-09-04 (ws/sv/iv/heat/spei), 2026-09-13 (precip), 2026-09-14 (wind)"
 FROZEN_BOUNDS: dict[str, object] = {
     "ws": (3.3699998880365456e-07, 29.883182525634766),
     "sv": (0.060949064791202545, 1.6313080787658691),
@@ -308,6 +329,9 @@ FROZEN_BOUNDS: dict[str, object] = {
         "gfdl_esm4": (0.36666667461395264, 13.800000190734863),
         "miroc6": (0.7666666507720947, 12.566666603088379),
     },
+    # FLAT_BOUND_TERMS (no GCM axis, ERA5-only) -- pooled over plant
+    # locations in all 3 countries, same procedure as ws/sv/iv.
+    "wind": (9.123578071594238, 31.070894241333008),
 }
 
 
@@ -327,7 +351,15 @@ class BoundsRegressionError(RuntimeError):
 def raster_path(term: str, country: str, water_scenario: str, model: str) -> Path:
     """Path to the processed RAW raster for a term/country/scenario(/GCM).
 
-    ``model`` is only used by ``heat``/``spei``; the water rasters ignore it.
+    ``model`` is only used by ``heat``/``spei``/``precip``; the water rasters
+    ignore it. ``wind`` ignores BOTH ``water_scenario`` and ``model`` -- ERA5
+    is a single reanalysis product with no SSP/GCM axis (docs/LIMITATIONS.md,
+    "Extreme Wind: ERA5 historical baseline, scenario-invariant by design"),
+    so the same raster is sampled and duplicated across every
+    water_scenario/model row `sample_terms` generates. This is the approved,
+    already-closed comparability rule, not an oversight -- see
+    docs/rework/GEAR_v3_methodology_nature_format.md Section 9, "Scenario
+    comparability, Extreme Wind excepted, declared not silent".
     """
     if term == "ws":
         return ws_raw_path(country, water_scenario)
@@ -341,6 +373,8 @@ def raster_path(term: str, country: str, water_scenario: str, model: str) -> Pat
         return spei_raw_path(country, model, WATER_TO_HEAT[water_scenario])
     if term == "precip":
         return precip_raw_path(country, model, WATER_TO_HEAT[water_scenario])
+    if term == "wind":
+        return wind_raw_path(country)
     raise ValueError(
         f"unknown term {term!r} (expected one of {HAZARD_TERMS}; "
         f"{EXCLUDED_INDICATORS} is excluded from GEAR by design)"

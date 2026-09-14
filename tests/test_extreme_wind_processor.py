@@ -147,21 +147,26 @@ def test_wind_temporal_window_flags_historical_not_projected():
     assert "reanalysis" in ew.WIND_TEMPORAL_WINDOW["note"].lower()
 
 
-def test_wind_not_merged_into_the_core_hazard_temporal_window_dict():
-    assert "wind" not in rc.HAZARD_TEMPORAL_WINDOW
-    assert "wind" not in rc.HAZARD_TERMS
+def test_wind_temporal_window_is_risk_calculators_wind_entry():
+    """ERA5 gust acquisition completed for all three countries (2026-09-14)
+    and this task wired wind into Risk_i,h --
+    risk_calculator.HAZARD_TEMPORAL_WINDOW['wind'] IS this module's
+    WIND_TEMPORAL_WINDOW object (imported, not copied), not merely equal to
+    it, so the two can never silently drift apart."""
+    assert rc.HAZARD_TEMPORAL_WINDOW["wind"] is ew.WIND_TEMPORAL_WINDOW
+    assert "wind" in rc.HAZARD_TERMS
 
 
-def test_not_wired_into_risk_calculator_hazard_terms_yet():
-    """precip was wired in (correlation gate passed, real data for all three
-    countries); wind is not -- ERA5 gust acquisition is still incomplete
-    (Brazil 30/30 years cached, Portugal 12/30, India 2/30; no country has a
-    processed extreme_wind_gust_raw_*.tif), so there is no real per-plant
-    value to compute Risk_i,h from yet. See docs/DECISIONS.md, "GEAR v3
-    Risk_i,h integration gap: precip wired in, wind still blocked on ERA5
-    acquisition"."""
-    assert set(rc.HAZARD_TERMS) == {"ws", "heat", "sv", "iv", "spei", "precip"}
-    assert "wind" not in rc.HAZARD_TERMS
+def test_wired_into_risk_calculator_hazard_terms():
+    """precip was wired in first (correlation gate passed, real data for all
+    three countries); wind followed once ERA5 gust acquisition completed
+    (Brazil/Portugal/India all 30/30) and its empirically-measured skew
+    (+0.622, right-skewed, |skew| > 0.5) classified it into LOG_TERMS -- see
+    docs/DECISIONS.md, "GEAR v3 wind Risk_i,h integration: empirical
+    transform result, PENDING_RISK_I_H_HAZARDS closed"."""
+    assert set(rc.HAZARD_TERMS) == {"ws", "heat", "sv", "iv", "spei", "precip", "wind"}
+    assert "wind" in rc.LOG_TERMS
+    assert "wind" not in rc.LIN_TERMS
 
 
 # --------------------------------------------------------------------------

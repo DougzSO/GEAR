@@ -2151,3 +2151,60 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   `docs/LIMITATIONS.md`; `docs/DECISIONS.md`; `docs/memory/README.md`.
 - **Status:** Ativa. Sub-bloqueio de aquisição fechado. Gap de `Risk_i,h`
   (item 39) permanece aberto, inalterado por esta tarefa.
+
+## 41. `wind` integrado em `risk_calculator.py` — skew real medido, LOG_TERMS, PENDING_RISK_I_H_HAZARDS fechado (2026-09-14)
+
+- **Contexto:** Itens 39/40 deixaram o gap de `Risk_i,h` de `wind` aberto,
+  bloqueado só na aquisição ERA5 (fechada no item 40). Auditoria de
+  pre-wiring (registrada em `docs/DECISIONS.md`, "GEAR v3
+  wind-into-risk_calculator pre-wiring audit") extraiu 3 pontos de decisão:
+  transform (aberto, protocolo empírico aprovado), `FROZEN_BOUNDS`
+  (fechado, convenção existente) e correlation gate (fechado, `wind` nunca
+  esteve lá). Esta tarefa executa o protocolo aprovado e fecha o gap.
+- **Decisão:** Rodado `ensure_raw_raster` para os 3 países (consolidação
+  dos 90 `annual_max.nc` + regrid 1km), verificado individualmente (CRS,
+  resolução, faixa física, grid idêntico ao raster de calor) antes de
+  prosseguir. `normality_check` real sobre a amostra pooled (n=39.026.222)
+  deu skew = +0.6215 (right-skewed, significativo) — por isso `wind` foi
+  classificado em `LOG_TERMS`, não `LIN_TERMS` (resultado oposto ao de
+  `precip`, mesma regra). `wind` adicionado a `HAZARD_TERMS`;
+  `FROZEN_BOUNDS["wind"]` computado via `compute_global_bounds()` =
+  `(9.1236, 31.0709)`, em `FLAT_BOUND_TERMS`. `PENDING_RISK_I_H_HAZARDS`
+  virou `{}` (mantido como dict vazio nomeado, não apagado — guarda de
+  regressão pra futuro hazard).
+- **Bug lateral corrigido:** import circular entre `risk_calculator.py` e
+  `extreme_wind_processor.py` (mesma classe de problema que `precip` já
+  teve) — o processor importava `HAZARD_TEMPORAL_WINDOW` de
+  `risk_calculator` só pra validar o próprio schema; agora usa um literal
+  de schema autônomo (`_TEMPORAL_WINDOW_SCHEMA_KEYS`), mesma direção de
+  dependência (`risk_calculator` -> processor, nunca o contrário) já
+  estabelecida pelo fix de `precip`.
+- **`normalization.py`:** `NEW_CANDIDATE_TERMS` esvaziado (`()`), já que
+  `precip` e `wind` agora estão ambos em `rc.HAZARD_TERMS`; `wind` removido
+  do union redundante em `GCM_DEPENDENT_TERMS` (já herdado de
+  `rc.GCM_DEPENDENT_TERMS`).
+- **Testes:** 2 guards de "wind ainda não wired" em
+  `test_extreme_wind_processor.py` invertidos pro padrão espelho já usado
+  quando `precip` foi wired. 3 testes com snapshot fixo desatualizado
+  corrigidos (`test_frozen_bounds_structure_unchanged_from_retired_module`,
+  `test_wired_into_risk_calculator_hazard_terms` em
+  `test_extreme_precipitation_processor.py`,
+  `test_every_hazard_term_declares_a_temporal_window` com exceção
+  explícita pro `horizon_year=None` de `wind`), 1 fixture de teste
+  end-to-end ganhou coluna/bound sintético de `wind`. 333/333 testes
+  relevantes passando (os 3 arquivos quebrados por `ccrs_calculator`
+  retirado — `test_main.py`, `test_monte_carlo.py`, `test_visualization.py`
+  — já quebravam antes desta tarefa, confirmado, não é regressão nova).
+- **Etapa 9 (não feita):** `docs/rework/GEAR_v3_methodology_nature_format.md`
+  e `GEAR_v3_work_plan.md` foram lidos por inteiro — nenhum contém uma
+  frase literal de status "wind pendente" pra inverter. Ambos já descrevem
+  a metodologia de forma prospectiva, como se `wind` já funcionasse.
+  Sinalizado em `docs/DECISIONS.md`, não inventada uma edição pra
+  satisfazer o passo.
+- **Arquivos:** `src/index/risk_calculator.py`, `src/index/hazard_scope.py`,
+  `src/index/normalization.py`, `src/processors/extreme_wind_processor.py`,
+  `tests/test_risk_calculator.py`, `tests/test_extreme_wind_processor.py`,
+  `tests/test_extreme_precipitation_processor.py`, `docs/DECISIONS.md`.
+- **Status:** Ativa, fechada. `wind` é um termo `Risk_i,h` real e
+  computável nos 3 países. `PENDING_RISK_I_H_HAZARDS` vazio. Item 39
+  totalmente fechado (era o único bloqueio restante).

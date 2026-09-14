@@ -97,7 +97,7 @@ def test_precip_temporal_window_is_risk_calculators_precip_entry():
 
 
 def test_wired_into_risk_calculator_hazard_terms():
-    assert set(rc.HAZARD_TERMS) == {"ws", "heat", "sv", "iv", "spei", "precip"}
+    assert set(rc.HAZARD_TERMS) == {"ws", "heat", "sv", "iv", "spei", "precip", "wind"}
 
 
 # --------------------------------------------------------------------------

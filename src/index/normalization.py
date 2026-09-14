@@ -33,15 +33,20 @@ in advance, including the two terms with a documented prior assumption:
   same procedure as every other term, not special-cased to force a
   particular transform ahead of the check.
 
-``NORMALIZATION_CANDIDATE_TERMS`` is ``risk_calculator.HAZARD_TERMS``
-(``ws``, ``heat``, ``sv``, ``iv``, ``spei``) plus the two Phase 2.1/2.3
-additions not yet wired into that module: ``precip`` (Extreme
-Precipitation, ``extreme_precipitation_processor``) and ``wind`` (Extreme
-Wind, ``extreme_wind_processor`` -- the raw gust layer only; the Wind-bucket
-IEC cut-out vs. Solar-bucket percentile threshold split from Phase 2.3 is a
-Phase 3.2 classification concern, irrelevant to normalizing the raw
-distribution). Wildfire is excluded -- deferred, not part of the hazard set
-(``docs/DECISIONS.md``, "GEAR v3 Phase 2.2: Wildfire deferred").
+``NORMALIZATION_CANDIDATE_TERMS`` is ``risk_calculator.HAZARD_TERMS`` in
+full -- as of 2026-09-14 that already includes ``precip`` and ``wind``
+(both wired into ``risk_calculator.py``; see ``docs/DECISIONS.md``, "GEAR
+v3 wind Risk_i,h integration: empirical transform result,
+PENDING_RISK_I_H_HAZARDS closed"), so ``NEW_CANDIDATE_TERMS`` is now empty
+-- kept as a named, empty tuple rather than deleted, so a future hazard
+processor added ahead of its own ``risk_calculator`` wiring still has an
+obvious place to register as a normalization candidate before it is
+production-wired (the exact role ``precip``/``wind`` served here earlier).
+Extreme Wind's raw gust layer only is what is normalized here -- the
+Wind-bucket IEC cut-out vs. Solar-bucket percentile threshold split from
+Phase 2.3 is a Phase 3.2 classification concern, irrelevant to normalizing
+the raw distribution. Wildfire is excluded -- deferred, not part of the
+hazard set (``docs/DECISIONS.md``, "GEAR v3 Phase 2.2: Wildfire deferred").
 
 --------------------------------------------------------------------------
 Transform selection (Section 4.2) -- confirmed redesign, 2026-09-11
@@ -116,18 +121,20 @@ from src.processors.extreme_wind_processor import raw_raster_path as wind_raw_pa
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------
-# Candidate terms -- risk_calculator's five, plus the two Phase 2.1/2.3
-# additions. Wildfire is deliberately absent (deferred hazard, not part of
-# this or any hazard set).
+# Candidate terms -- all of risk_calculator.HAZARD_TERMS now (precip and
+# wind are both wired in as of 2026-09-14; NEW_CANDIDATE_TERMS is therefore
+# empty, kept as a named placeholder -- see module docstring). Wildfire is
+# deliberately absent (deferred hazard, not part of this or any hazard set).
 # --------------------------------------------------------------------------
-NEW_CANDIDATE_TERMS = ("precip", "wind")
+NEW_CANDIDATE_TERMS: tuple[str, ...] = ()
 NORMALIZATION_CANDIDATE_TERMS = tuple(rc.HAZARD_TERMS) + NEW_CANDIDATE_TERMS
 
 # Terms whose distribution depends on the GCM (temperature/precipitation-
-# derived, CMIP6-sourced): risk_calculator's existing heat/spei, plus the
-# new precip term (also CMIP6). ``wind`` is ERA5 reanalysis, no GCM axis --
-# pooled once, like the flat Aqueduct terms.
-GCM_DEPENDENT_TERMS = frozenset(rc.GCM_DEPENDENT_TERMS) | {"precip"}
+# derived, CMIP6-sourced): risk_calculator's existing heat/spei/precip.
+# ``wind`` is ERA5 reanalysis, no GCM axis -- pooled once, like the flat
+# Aqueduct terms (already reflected in rc.GCM_DEPENDENT_TERMS, no extra
+# term to union in here anymore).
+GCM_DEPENDENT_TERMS = frozenset(rc.GCM_DEPENDENT_TERMS)
 FLAT_BOUND_TERMS = tuple(t for t in NORMALIZATION_CANDIDATE_TERMS if t not in GCM_DEPENDENT_TERMS)
 
 HAZARD_LABELS = dict(rc.HAZARD_LABELS)

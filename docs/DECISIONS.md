@@ -2766,3 +2766,99 @@ stated per entry per the standing rule.
   separate follow-up task, gated on point 1's answer plus
   `compute_mean_annual_max_gust()` actually being run for all three
   countries.
+
+## [2026-09-14] GEAR v3 wind Risk_i,h integration: empirical transform result, PENDING_RISK_I_H_HAZARDS closed
+
+Executes the protocol approved for point 1 of the pre-wiring audit above
+(option (a): real measured skew decides, never assumed parity). Reports the
+actual result, not the protocol -- supersedes this entry's own prior
+protocol-only draft (never committed as such).
+
+- **Steps 1-3 (data pipeline, verified clean before touching code)**:
+  reconfirmed no background process was running (`tasklist`, not assumed
+  from a prior session's claim). `ensure_raw_raster` run for all three
+  countries in the same session -- `compute_mean_annual_max_gust`/
+  `_compute_native` (30-year mean-of-annual-max over the 90 already-
+  verified `annual_max.nc` files) then `_resample_to_1km`, all three
+  succeeded on the same pass. Verified individually before declaring this
+  closed: CRS `EPSG:4326`, resolution `0.008333 deg` matching
+  `config.RESOLUTION_TARGET_DEG` exactly, physically plausible gust range
+  (Brazil 8.6-36.9 m/s, Portugal 21.6-31.1 m/s, India 9.0-32.2 m/s, all
+  `>= 0`, all `< 150`), and grid shape/transform identical, per country, to
+  the corresponding `heat_stress_processor` raster (same `_target_grid`).
+- **Step 4 (the actual measurement)**: `normalization.normality_check` run
+  on the real pooled sample (all three countries' `extreme_wind_gust_raw_
+  {country}_1km.tif`, n=39,026,222 finite pixels). Result: **skewness =
+  +0.6215 (right-skewed), `|skew| > 0.5` -> `is_skewed = True`**
+  (Shapiro-Wilk subsampled, p < 1e-33, reported as a diagnostic only per
+  the module's own stated convention, not the deciding statistic).
+  `wind` moved from `normalization.NEW_CANDIDATE_TERMS` (now empty,
+  `()`) into `risk_calculator.LOG_TERMS` -- **not** `LIN_TERMS` -- because
+  the measured skew is significantly RIGHT-skewed, exactly the shape
+  `Tlog` (log1p) is designed to compress. This is the same
+  `normality_check` procedure that put `precip` in `LIN_TERMS` (`precip`'s
+  measured skew was not right-skewed); the rule carried over identically,
+  the outcome differs because the real data differs -- confirming this was
+  never "parity with ws/heat/spei by assumption" (rejected option (c) of
+  the pre-wiring audit) but the empirical result landing on the same side
+  as ws/heat/spei this time.
+- **Step 5**: `wind` added to `risk_calculator.HAZARD_TERMS` (now `ws,
+  heat, sv, iv, spei, precip, wind`) and to `LOG_TERMS`. Fixed a circular
+  import surfaced by this change: `extreme_wind_processor.py` previously
+  imported `risk_calculator.HAZARD_TEMPORAL_WINDOW` only to assert its own
+  `WIND_TEMPORAL_WINDOW` schema matched it; now that `risk_calculator.py`
+  imports `WIND_TEMPORAL_WINDOW` from the processor (the same direction
+  `precip`'s wiring already established), the processor asserts against a
+  standalone schema-keys literal instead -- identical fix to `precip`'s own
+  circular-import resolution, same direction (`risk_calculator` ->
+  processor, never the reverse).
+- **Step 6**: `FROZEN_BOUNDS["wind"] = (9.123578071594238,
+  31.070894241333008)`, computed via `compute_global_bounds()`, in
+  `FLAT_BOUND_TERMS` (no GCM axis -- confirmed already-closed, Comando 4
+  point 2). Pooled over real plant locations in all three countries, same
+  procedure as `ws`/`sv`/`iv`. `BOUNDS_DATA_SNAPSHOT` updated to record the
+  2026-09-14 addition alongside the existing 2026-09-04/2026-09-13 dates.
+- **Step 7**: `hazard_scope.PENDING_RISK_I_H_HAZARDS` is now `{}` --
+  `wind` was its only member. Left as a named empty dict, not deleted, so
+  the exception mechanism (`tests/test_hazard_scope.py`'s exhaustiveness
+  guard) still has somewhere to register a future hazard's gap.
+- **Tests**: `tests/test_extreme_wind_processor.py`'s "not wired in yet"
+  guards flipped to their positive form (mirrors `precip`'s own flip when
+  it was wired in). Three pre-existing `risk_calculator`/`precipitation`
+  tests had hardcoded `HAZARD_TERMS`/`FROZEN_BOUNDS` snapshots that
+  predated `wind` and needed the new member added (`test_frozen_bounds_
+  structure_unchanged_from_retired_module`, `test_wired_into_risk_
+  calculator_hazard_terms` in the precip test file) or an explicit
+  exemption for `wind`'s by-design `horizon_year=None`
+  (`test_every_hazard_term_declares_a_temporal_window`); one end-to-end
+  fixture test needed a synthetic `wind` column/bound added
+  (`test_compute_risk_by_hazard_end_to_end`). 333/333 relevant tests pass
+  (`tests/test_main.py`, `test_monte_carlo.py`, `test_visualization.py`
+  remain broken on collection for a pre-existing, unrelated reason --
+  `ccrs_calculator` retirement -- confirmed already broken before this
+  task, not caused by it).
+- **Explicitly not done in this task**: the Etapa 9 manuscript-status
+  update (`docs/rework/GEAR_v3_methodology_nature_format.md` and
+  `GEAR_v3_work_plan.md`) was checked in full and found to carry no
+  literal "wind not yet computed/pending acquisition" sentence to flip --
+  both documents describe the methodology prospectively/normatively, as if
+  `wind`'s `Risk_i,h` already existed, and track acquisition status
+  nowhere in their own text (that status lived only in `docs/DECISIONS.md`/
+  `docs/LIMITATIONS.md`, both already current). No manuscript edit was
+  invented to satisfy this step; flagged for author confirmation that no
+  action is actually needed there, rather than silently skipped.
+- References: `src/index/risk_calculator.py` (`HAZARD_TERMS`, `LOG_TERMS`,
+  `FROZEN_BOUNDS`, `BOUNDS_DATA_SNAPSHOT`, module docstring); `src/index/
+  hazard_scope.py` (`PENDING_RISK_I_H_HAZARDS`); `src/index/
+  normalization.py` (`NEW_CANDIDATE_TERMS`, `GCM_DEPENDENT_TERMS`);
+  `src/processors/extreme_wind_processor.py` (module docstring,
+  `_TEMPORAL_WINDOW_SCHEMA_KEYS`); `tests/test_risk_calculator.py`,
+  `tests/test_extreme_wind_processor.py`,
+  `tests/test_extreme_precipitation_processor.py`; this file, "GEAR v3
+  wind-into-risk_calculator pre-wiring audit: three decision points
+  extracted, none decided here" (the protocol this entry executes).
+- Status: **Closed.** `wind` is a real, computable `Risk_i,h` term in all
+  three countries as of this entry. `PENDING_RISK_I_H_HAZARDS` no longer
+  names any hazard. Etapa 9 (manuscript status phrase) has no concrete
+  action identified -- see above, author input welcome if a specific
+  sentence was intended that this review missed.

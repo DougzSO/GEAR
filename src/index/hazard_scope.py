@@ -130,19 +130,17 @@ WIND_APPLICABLE_BUCKETS: frozenset[str] = frozenset({"wind", "solar"})
 # absent from both with no record of why (tests/test_hazard_scope.py enforces
 # this exhaustively). Removing an entry here requires it to have gained a
 # real HAZARD_TERMS entry in the same change, never the other way around.
+#
+# Empty as of 2026-09-14: `wind` closed this exception set the same way
+# `precip` closed it earlier -- both H_b members now have a real
+# risk_calculator.HAZARD_TERMS entry. See docs/DECISIONS.md, "GEAR v3 wind
+# Risk_i,h integration: empirical transform result, PENDING_RISK_I_H_HAZARDS
+# closed". Left as an empty dict, not deleted, so a future hazard added to
+# APPLICABLE_HAZARDS without a HAZARD_TERMS entry still has somewhere to
+# register its exception -- tests/test_hazard_scope.py enforces this stays
+# exhaustive going forward.
 # --------------------------------------------------------------------------
-PENDING_RISK_I_H_HAZARDS: dict[str, str] = {
-    "wind": (
-        "RiskBand classification exists (src/index/risk_bands.py, Phase 3.2) "
-        "but Risk_i,h does not: ERA5 gust acquisition is now complete for "
-        "all three countries (Brazil 30/30, Portugal 30/30, India 30/30 "
-        "years cached), but no country yet has a processed "
-        "extreme_wind_gust_raw_*.tif -- compute_mean_annual_max_gust() has "
-        "not been run. See docs/DECISIONS.md, 'GEAR v3 Risk_i,h integration "
-        "gap: precip wired in, wind still blocked on ERA5 acquisition' and "
-        "its 2026-09-14 follow-up."
-    ),
-}
+PENDING_RISK_I_H_HAZARDS: dict[str, str] = {}
 
 
 def applicable_hazards(bucket: str) -> tuple[str, ...]:
