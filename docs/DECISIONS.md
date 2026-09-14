@@ -2984,3 +2984,244 @@ protocol-only draft (never committed as such).
   `-ln(1-x)` for `ws`/`heat`/`spei`/`wind`; `log1p` no longer appears in
   this module's real `Risk_{i,h}` computation. Not reopened without new
   data or an explicit author request.
+- **Correction (2026-09-14, found during Phase 4/PSAE mapping):** the
+  "Consequence" bullet above overstates this change's blast radius. It
+  says wind's `Risk_i,h` change affects "the Wind and Solar buckets'
+  `RiskBand_{i,h}`/PSAE downstream" -- that is **false**, confirmed by
+  direct code read. `src/index/risk_bands.py`'s own module docstring
+  states plainly that `RiskBand_{i,h}` classification "does **not** ...
+  touch `normalization.py`'s transform recommendation or
+  `risk_calculator.FROZEN_BOUNDS`/`transform_term` (Phase 3.3's job) ...
+  classification here runs on RAW physical values ... never the
+  Min-Max-normalized `Hazard_{i,h}` term" (`risk_bands.py:16-23`), and a
+  grep of the module confirms neither `transform_term` nor
+  `FROZEN_BOUNDS` is imported or called anywhere in it outside that prose.
+  `RiskBand_{i,h}` is classified from the same raw physical values
+  `correlation_gate.py` reads, independent of whichever `Tlog` formula
+  `risk_calculator.py` applies. This Phase 3.3 entry's actual, correct
+  blast radius is **`Risk_{i,h}` (Equation 1) only** -- `RiskBand_{i,h}`
+  (Equation, Section 4) and therefore PSAE (Equation 2, Phase 4, not yet
+  implemented) are unaffected by this change. Left as a correction rather
+  than a silent edit, per this file's own convention of not rewriting
+  closed entries. No code or test changed by this correction -- it is a
+  documentation-accuracy fix only.
+
+## [2026-09-14] Phase 4 (PSAE) input mapping; missing/NaN RiskBand handling in the PSAE denominator: CLOSED, complete-case
+
+- Scope: mapping only, ahead of any Phase 4 implementation, per instruction
+  not to write PSAE code before the input surface and any undocumented
+  methodological gap are both on record. No `src/index/psae.py` (or
+  equivalent) exists in this repository as of this entry (confirmed by
+  directory listing of `src/index/`).
+- **Six-hazard checklist, confirmed by direct code read, not by handoff**:
+  `docs/rework/GEAR_v3_methodology_nature_format.md` Section 2 names
+  exactly six core hazards: Water Stress, Extreme Heat, Drought, Extreme
+  Precipitation, Wildfire, Extreme Wind. Reading `risk_calculator.
+  HAZARD_TERMS` directly (`risk_calculator.py:214`, post Phase 3.3, commit
+  `74915ea`): `("ws", "heat", "sv", "iv", "spei", "precip", "wind")`.
+  Cross-referencing term to checklist name:
+  - `ws` (Water Stress) -- present.
+  - `heat` (Extreme Heat) -- present.
+  - `spei` (Drought) -- present.
+  - `precip` (Extreme Precipitation) -- present.
+  - `wind` (Extreme Wind) -- present (Phase 3.3's subject, wired in
+    2026-09-14).
+  - Wildfire -- **absent**. Confirmed on two independent sources: (1) no
+    `wildfire` term anywhere in `HAZARD_TERMS`; (2) `hazard_scope.
+    DEFERRED_OR_EXCLUDED_HAZARDS = ("wildfire", "slr")`
+    (`hazard_scope.py:117`) names it explicitly excluded, and
+    `hazard_scope._validate()` (`hazard_scope.py:152-177`) asserts at
+    import time that neither ever appears in any bucket's `H_b`.
+    `docs/LIMITATIONS.md`, "Wildfire (FWI/EFFIS) deferred, not
+    implemented" is the standing reference for why (CDS catalogue lacks
+    the daily-humidity input needed for FWI on either configured GCM).
+  - **Correction to this task's own premise**: the prompt states "os 6
+    hazards centrais estão integrados... (incluindo wind)". By direct code
+    read, that is 5 of the 6 named core hazards, not 6 -- Wildfire remains
+    deferred, unchanged by Phase 3.3 or any other recent work. This is
+    stated here rather than silently assumed, per the instruction not to
+    take the handoff's hazard count at face value.
+  - Two additional terms, `sv`/`iv` (water seasonal/interannual
+    variability), are also present in `HAZARD_TERMS` with real `Risk_i,h`
+    but are **not** among Section 2's six named hazards -- they are
+    extension terms, already resolved into Hydro's `H_b`
+    (`hazard_scope.APPLICABLE_HAZARDS["hydro"]`, author-confirmed
+    2026-09-12, see "GEAR v3 Phase 3.1: hazard_scope.py reconciliation").
+  - `hazard_scope.PENDING_RISK_I_H_HAZARDS` (`hazard_scope.py:143`) is
+    `{}` (empty) -- confirms every hazard named in any bucket's `H_b` has
+    a real `HAZARD_TERMS` entry; no hazard is silently missing a
+    `Risk_i,h` computation path.
+- **Where Phase 4 connects in the code, and what already exists**:
+  - `src/index/risk_bands.py::compute_risk_bands(model=...)` (Phase 3.2,
+    already closed for all hazards including `wind`) is the actual input
+    surface, not `risk_calculator.py` directly. It returns a
+    `RiskBandTable(frame, percentile_cuts, model)`; `frame` is long
+    format, one row per plant x water_scenario x hazard_term, with a
+    `band` column drawn from `BAND_LABELS = ("Low", "Medium", "High",
+    "Extreme")` (`risk_bands.py:165`) for every hazard/bucket pair except
+    Wind-bucket Extreme Wind, which uses `WIND_BUCKET_BAND_LABELS = ("Low",
+    "Extreme")` (`risk_bands.py:166`) -- the same string tokens, not a
+    parallel vocabulary, so `1[RiskBand_i,h >= High]` (Equation 2) is
+    already directly implementable as `band in ("High", "Extreme")` for
+    both schemes with no new mapping decision needed.
+  - `src/index/hazard_scope.py::APPLICABLE_HAZARDS` (Phase 3.1, closed) is
+    the `H_b` table Phase 4 groups by: `hydro` (`ws`, `spei`, `precip`,
+    `sv`, `iv`, `|H_b|`=5), `thermal` (`ws`, `heat`, `precip`, `|H_b|`=3),
+    `wind` (`wind`, `|H_b|`=1), `solar` (`heat`, `precip`, `wind`,
+    `|H_b|`=3). No bucket currently has `|H_b|`=2, so the boundary between
+    the four-band scheme (`|H_b|`>=3) and Wind's compressed scheme
+    (`|H_b|`=1) never has to handle an in-between case with today's H_b
+    table.
+  - Nothing beyond this exists: no `src/index/psae.py`, no aggregation
+    function, no classification dispatch (four-band vs. compressed), no
+    comparability guard (`docs/rework/GEAR_v3_work_plan.md` Phase 4.2's
+    "raises an explicit error rather than silently producing a misleading
+    [cross-bucket] comparison" requirement). All of Phase 4.1/4.2 is
+    unwritten.
+- **What is already fully specified (checked so as not to mis-flag it as
+  open)** -- confirmed sourced, not invented, so none of these are logged
+  as open decisions:
+  - Aggregation formula: unweighted count fraction, `Equation 2`
+    (`GEAR_v3_methodology_nature_format.md:633`), with weighting and a
+    continuous/ordinal alternative explicitly considered and rejected
+    (`:658-661`, "reopens the continuous-weighting problem PSAE was
+    designed to close").
+  - Classification cut points (1.0/0.5/0.0 -> EXTREME/HIGH/MEDIUM/LOW) and
+    Wind's compressed 2-label scheme: explicit, Tier 3 declared
+    (`:641-656`).
+  - Correlation between hazards: handled entirely upstream, by the
+    already-closed Phase 2.5 correlation gate, which determines `H_b`
+    membership itself (a hazard failing the gate is excluded from `H_b`
+    before Phase 4 ever runs) -- Phase 4 does not re-touch correlation.
+  - Cross-bucket comparability: explicit, Section 9 ("valid only within
+    the same technology bucket... not valid across buckets, because
+    `|H_b|` differs by bucket").
+  - Per-scenario computation: PSAE inherits the same implicit
+    per-scenario convention already established and consistently applied
+    to `Risk_i,h`/`RiskBand_i,h` throughout the methodology text (neither
+    carries an explicit `s` subscript in the document's own notation
+    despite being computed per SSP/water-scenario in the actual code and
+    output tables -- Section 9's "every hazard's `Risk_i,h`/RiskBand is
+    computed per SSP scenario except Extreme Wind" is the documented
+    source this extends by direct precedent, not a new PSAE-specific
+    assumption).
+  - Primary-GCM selection for buckets whose `H_b` mixes GCM-dependent
+    (`heat`/`precip`) and GCM-independent (`ws`/`sv`/`iv`/`wind`) hazards:
+    resolved by the already-established, repo-wide "GFDL-ESM4 primary,
+    MIROC6 sensitivity panel, never blended" convention (this file, "CCRS
+    replaces SCI/NAES as the unified risk architecture"), already
+    implemented as `compute_risk_bands(model=...)`'s single-model-at-a-time
+    signature -- not a new PSAE-specific decision to make.
+- Question closed by this entry, originally logged open (no documented
+  source found in `GEAR_v3_methodology_nature_format.md` Section 6,
+  Equation 2's own definition, or anywhere else): missing/`NaN`
+  `RiskBand_i,h` handling in the PSAE denominator. A plant can have a
+  `None`/`NaN` band for one hazard in its bucket's `H_b` today
+  (`risk_bands._bandize` maps `NaN` raw values to `None`,
+  `risk_bands.py:367`; real causes already on record elsewhere in this
+  file/`docs/LIMITATIONS.md` -- e.g. plants outside Aqueduct basin
+  coverage, ERA5/CMIP6 raster gaps at specific coordinates). Three
+  plausible readings were put on record, none decided at the time:
+  (a) available-case (`|H_b|` shrinks per-plant to the count of hazards
+  with a real band), (b) complete-case (`PSAE_i` undefined for that
+  plant, `|H_b|` stays the bucket's full nominal count), (c)
+  treat-as-not-High (missing hazard counts toward the denominator, never
+  toward the numerator).
+- **Decision: (b) complete-case.** When any hazard `h` in a plant's
+  bucket `H_b` has a missing/`NaN` `RiskBand_{i,h}`, `PSAE_i` for that
+  plant is **undefined** (`NaN`/null), not computed over a reduced
+  denominator and not silently treated as "not High". `|H_b|` for a
+  given bucket is always the bucket's full nominal count from
+  `hazard_scope.APPLICABLE_HAZARDS` -- it is never shrunk per-plant to
+  match whatever subset of hazards happens to have data for that
+  specific plant.
+- Reason:
+  - **Avoids an implicit, per-plant-varying denominator.** Equation 2
+    defines `|H_b|` as a property of the bucket (Section 3's H_b table),
+    not of the individual plant's data completeness. Option (a) would
+    make `|H_b|` silently plant-dependent -- two plants in the same
+    bucket, both reported as bucket `X`, would be answering a
+    structurally different question (one over 3 hazards, another over
+    2) with no marker in the output distinguishing them, undermining the
+    exact comparability property Section 9 relies on ("valid only within
+    the same technology bucket") and that this bucket-level `|H_b|` is
+    built to guarantee.
+  - **Avoids systematic bias toward LOW for the worst-covered plants.**
+    Option (c) would make every data gap silently read as "this hazard
+    is not severe here" -- for a physical-exposure screening index
+    specifically designed (Section 6) to flag severity, treating absence
+    of measurement as evidence of absence of risk is the one reading most
+    likely to understate `PSAE_i` exactly where the underlying data is
+    weakest, with no signal in the output that this happened. This
+    directly contradicts the standing "fail loud, not silently" project
+    convention (`CLAUDE.md` Section 8) and the pattern already used
+    throughout this pipeline for a missing/insufficient sample (e.g.
+    `risk_bands.py`'s own `HazardNotApplicableError`, `_sample_raster_or_
+    nan`'s explicit-NaN-plus-logged-warning convention, never a silent
+    substitute value).
+  - Complete-case is the only one of the three that neither invents a
+    per-plant-varying scope for `|H_b|` (a) nor manufactures a severity
+    judgment from an absence of data (c); it reports honestly that the
+    physical-exposure question cannot be fully answered for that plant
+    with the data on hand, which is consistent with how this project
+    already treats other missing-data cases (e.g. `age_factor`'s
+    "missing `commissioning_year`" rows: kept, flagged, never silently
+    dropped or defaulted to a value that manufactures a result).
+- Consequence for the output (binding on Phase 4's implementation, not
+  optional styling):
+  - A plant with `PSAE_i` = `NaN`/null under this rule is **never
+    silently omitted** from the PSAE output table -- the row exists with
+    an explicit null/`NaN` `psae` value, never dropped so the row count
+    quietly shrinks with no trace.
+  - The output must carry a non-strippable, explicit marker distinguishing
+    "`PSAE_i` = 0.0 (LOW, computed, no hazard reached High)" from
+    "`PSAE_i` = undefined (not computed, at least one hazard in `H_b` has
+    no `RiskBand`)" -- these are not the same statement and must never
+    collapse to the same value or the same blank cell. Concretely: a
+    boolean/flag column (e.g. `psae_complete: bool`, or an explicit
+    `missing_hazards: tuple[str, ...]` naming which member(s) of `H_b`
+    were unavailable for that plant) alongside the `psae` value itself,
+    not merely a `NaN` that a downstream reader could mistake for a
+    zero or a dropped row.
+  - A per-bucket, per-country coverage summary (count/fraction of plants
+    with `PSAE_i` undefined, out of that bucket's total) must be part of
+    Phase 4's report output, the same reporting posture already used
+    elsewhere in this pipeline for partial data coverage (e.g.
+    `age_factor_report.md`'s missing-`commissioning_year` counts per
+    country, `risk_bands_report.md`'s per-hazard/bucket row counts).
+    This is a reporting requirement, not merely a suggestion: a Phase 4
+    output with undefined-`PSAE_i` rows and no visible coverage summary
+    would satisfy "not silently omitted" at the row level while still
+    hiding the scale of the gap from a reader.
+  - This decision does not by itself specify the exact column names or
+    file schema -- that remains an implementation detail for the Phase 4
+    task that writes `psae.py`, constrained only by the two requirements
+    above (explicit flag, not a bare NaN; a coverage summary in the
+    report).
+- Data: as of this entry, the real extent of missing-hazard plants per
+  bucket has not been measured (this entry closes the methodological
+  question, not a data audit) -- known contributing gaps already on
+  record elsewhere in this file/`docs/LIMITATIONS.md` include Aqueduct
+  basin non-matches for `ws`/`sv`/`iv` (India, Portugal) and any
+  plant-coordinate a processed ERA5/CMIP6 raster does not cover for
+  `heat`/`spei`/`precip`/`wind`. Quantifying how many plants per
+  bucket/country this rule will mark `PSAE_i` undefined for is Phase 4
+  implementation work, not this entry's scope.
+- Action taken here: methodological decision only, per instruction -- no
+  `psae.py` or other PSAE code was written by this entry.
+- References: `src/index/risk_calculator.py:214` (`HAZARD_TERMS`);
+  `src/index/hazard_scope.py:107-143` (`APPLICABLE_HAZARDS`,
+  `PENDING_RISK_I_H_HAZARDS`, `DEFERRED_OR_EXCLUDED_HAZARDS`);
+  `src/index/risk_bands.py:165-166`, `:353-420`, `:490-549` (`BAND_LABELS`,
+  `_bandize`, `classify_hazard`, `compute_risk_bands`);
+  `docs/rework/GEAR_v3_methodology_nature_format.md` Section 6 (Equation
+  2), Section 9 (comparability); `docs/rework/GEAR_v3_work_plan.md`,
+  "Phase 4: PSAE aggregation"; `docs/LIMITATIONS.md`, "Wildfire (FWI/EFFIS)
+  deferred, not implemented"; `CLAUDE.md` Section 8 ("fail loud, not
+  silently").
+- Status: **Closed (2026-09-14).** Missing/NaN `RiskBand_i,h` for any
+  hazard in a plant's `H_b` makes `PSAE_i` undefined for that plant
+  (complete-case), reported explicitly (flag/coverage summary, never a
+  silent drop or a bare NaN indistinguishable from a computed 0.0). Every
+  other PSAE mechanic already confirmed sourced in this entry's mapping
+  section above is unchanged and not reopened by this closure.
