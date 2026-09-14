@@ -252,3 +252,20 @@ parcial, confirmada reproduzível sem as mudanças desta tarefa). Ver item
 39 de [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md) e
 `docs/DECISIONS.md`, "GEAR v3 Risk_i,h integration gap: precip wired in,
 wind still blocked on ERA5 acquisition".
+
+2026-09-14: Aquisição ERA5 wind gust concluída para os 3 países — Brasil,
+Portugal e Índia agora 30/30 anos cada (`data/raw/climate/era5_wind/
+{country}/{year}/annual_max.nc`), 90/90 arquivos confirmados por checagem
+direta de filesystem e passe de integridade (abrem sem erro, sem grid
+100% NaN, sem valor fora de faixa física, forma de grid consistente por
+país, médias interanuais plausíveis). Dois incidentes operacionais
+resolvidos sem bug novo de aquisição: dois scripts de download rodando
+em paralelo estouraram o limite de fila do CDS (retomado com processo
+único no cap de 3 workers já documentado); suspensão de máquina deixou o
+processo travado pós-retomada (detectado por log parado, processo morto e
+reiniciado, retomou só os anos faltantes). Isso fecha só o bloqueio de
+*aquisição* — o gap de `Risk_i,h` do item 39 continua aberto,
+`compute_mean_annual_max_gust()` ainda não rodou pra nenhum país. Ver item
+40 de [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md) e
+`docs/DECISIONS.md`, "GEAR v3 Risk_i,h integration gap follow-up: ERA5
+wind acquisition complete, Risk_i,h wiring still pending".

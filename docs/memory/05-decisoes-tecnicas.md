@@ -2105,3 +2105,49 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   2/30) — agora também refletida em código (`PENDING_RISK_I_H_HAZARDS`),
   não só em `docs/LIMITATIONS.md`. Fase 3.3 (troca de transform) continua
   separada, não tocada por esta tarefa.
+
+## 40. Aquisição ERA5 wind gust concluída para os 3 países — gap de Risk_i,h do item 39 inalterado (2026-09-14)
+
+- **Contexto:** Item 39 registrou `wind` bloqueado por aquisição ERA5
+  incompleta (Portugal 12/30, Índia 2/30 anos). Sessão retomou o download
+  já autorizado, encerrado nas sessões anteriores por dois incidentes
+  operacionais (não bugs de aquisição novos): (1) dois scripts de download
+  rodando ao mesmo tempo (3 + 5 workers) estouraram o limite de fila do
+  CDS, causando rejeição transitória de alguns anos da Índia
+  (2017-2020) — retomado com processo único respeitando o cap de 3
+  workers já documentado em `ensure_years_concurrent`; (2) suspensão da
+  máquina deixou o processo Python travado pós-retomada (job aceito, sem
+  progresso no log por horas) — detectado checando timestamp do log
+  parado, processo morto (`taskkill`) e reiniciado, retomando
+  automaticamente só os anos ainda faltantes via
+  `annual_max_path(...).exists()` (comportamento já existente, não
+  alterado).
+- **Verificação de integridade:** checagem direta de filesystem (90/90
+  arquivos `annual_max.nc`: Brasil 30/30, Portugal 30/30, Índia 30/30) +
+  passe scriptado abrindo cada arquivo via `xarray.open_dataarray`:
+  nenhuma falha de abertura, nenhum grid 100% NaN, nenhum valor de rajada
+  fora de [0, 150] m/s, forma de grid (`shape`) consistente dentro de cada
+  país através dos 30 anos, e média interanual de rajada máxima por país
+  estável e fisicamente plausível (Brasil ~17.2 m/s, Índia ~19.8 m/s,
+  Portugal ~25.2 m/s com maior desvio-padrão interanual — coerente com
+  exposição a ciclones extratropicais atlânticos).
+- **Decisão:** Nenhuma decisão metodológica nova — apenas fechamento de
+  uma precondição de dado já autorizada. `PENDING_RISK_I_H_HAZARDS["wind"]`
+  em `hazard_scope.py` e o docstring correspondente em
+  `risk_calculator.py` tiveram as contagens desatualizadas (Portugal
+  12/30, Índia 2/30) corrigidas para refletir 30/30/30, mas a entrada em
+  si **não foi removida** — `compute_mean_annual_max_gust()` ainda não
+  rodou para nenhum país, então o gap de `Risk_i,h` do item 39 continua
+  aberto e sem alteração de mérito.
+- **Consequências:** Nenhum arquivo de código de produção mudou de
+  comportamento — apenas textos desatualizados (contagens por país) foram
+  corrigidos em `hazard_scope.py`, `risk_calculator.py`,
+  `docs/LIMITATIONS.md` e `docs/DECISIONS.md`. Próximo passo natural é
+  rodar `compute_mean_annual_max_gust()` para os 3 países, gerando
+  `extreme_wind_gust_raw_{country}_1km.tif` — esse é o real bloqueador
+  restante do item 39, não tocado nesta tarefa.
+- **Arquivos:** `data/raw/climate/era5_wind/{Brazil,Portugal,India}/`;
+  `src/index/hazard_scope.py`; `src/index/risk_calculator.py`;
+  `docs/LIMITATIONS.md`; `docs/DECISIONS.md`; `docs/memory/README.md`.
+- **Status:** Ativa. Sub-bloqueio de aquisição fechado. Gap de `Risk_i,h`
+  (item 39) permanece aberto, inalterado por esta tarefa.

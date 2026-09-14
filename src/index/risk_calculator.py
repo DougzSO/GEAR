@@ -61,17 +61,19 @@ wired in at Phase 1. Extreme Precipitation (``precip``) is wired in here as
 of the integration-gap closure below. Wildfire remains deferred (data
 unavailable, ``docs/LIMITATIONS.md``); Extreme Wind remains NOT computed
 here -- its RiskBand classification exists (``src/index/risk_bands.py``,
-Phase 3.2), but the ERA5 gust acquisition is still incomplete (Brazil has
-all 30 years cached, Portugal 12/30, India 2/30; no country has a processed
-``extreme_wind_gust_raw_*.tif``), so there is no real per-plant value to
-compute ``Risk_{i,h}`` from yet. Wiring Extreme Wind into ``HAZARD_TERMS``
-before that data exists would require the same silent-NaN-tolerant sampling
-``risk_bands.py`` uses for its classification pass; this module intentionally
-does not adopt that tolerance (``sample_raster`` raises loudly on a missing
-raster) because ``Risk_{i,h}``, unlike a RiskBand, is a real published
-number, not a classification label -- see ``docs/DECISIONS.md``, "GEAR v3
-Risk_i,h integration gap: precip wired in, wind still blocked on ERA5
-acquisition" for the full account.
+Phase 3.2), and the ERA5 gust acquisition is now complete for all three
+countries (Brazil, Portugal, India all 30/30 years cached), but no country
+yet has a processed ``extreme_wind_gust_raw_*.tif`` --
+``compute_mean_annual_max_gust()`` has not been run -- so there is still no
+real per-plant value to compute ``Risk_{i,h}`` from. Wiring Extreme Wind
+into ``HAZARD_TERMS`` before that raster exists would require the same
+silent-NaN-tolerant sampling ``risk_bands.py`` uses for its classification
+pass; this module intentionally does not adopt that tolerance
+(``sample_raster`` raises loudly on a missing raster) because
+``Risk_{i,h}``, unlike a RiskBand, is a real published number, not a
+classification label -- see ``docs/DECISIONS.md``, "GEAR v3 Risk_i,h
+integration gap: precip wired in, wind still blocked on ERA5 acquisition"
+and its 2026-09-14 follow-up for the full account.
 
 --------------------------------------------------------------------------
 Extreme Precipitation (``precip``) -- transform choice, stated plainly

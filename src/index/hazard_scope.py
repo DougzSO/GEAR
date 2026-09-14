@@ -134,11 +134,13 @@ WIND_APPLICABLE_BUCKETS: frozenset[str] = frozenset({"wind", "solar"})
 PENDING_RISK_I_H_HAZARDS: dict[str, str] = {
     "wind": (
         "RiskBand classification exists (src/index/risk_bands.py, Phase 3.2) "
-        "but Risk_i,h does not: ERA5 gust acquisition is incomplete (Brazil "
-        "30/30 years cached, Portugal 12/30, India 2/30; no country has a "
-        "processed extreme_wind_gust_raw_*.tif). See docs/DECISIONS.md, "
-        "'GEAR v3 Risk_i,h integration gap: precip wired in, wind still "
-        "blocked on ERA5 acquisition'."
+        "but Risk_i,h does not: ERA5 gust acquisition is now complete for "
+        "all three countries (Brazil 30/30, Portugal 30/30, India 30/30 "
+        "years cached), but no country yet has a processed "
+        "extreme_wind_gust_raw_*.tif -- compute_mean_annual_max_gust() has "
+        "not been run. See docs/DECISIONS.md, 'GEAR v3 Risk_i,h integration "
+        "gap: precip wired in, wind still blocked on ERA5 acquisition' and "
+        "its 2026-09-14 follow-up."
     ),
 }
 

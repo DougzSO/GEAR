@@ -2618,3 +2618,45 @@ stated per entry per the standing rule.
   record, now also reflected in `risk_calculator.py`/`hazard_scope.py`
   directly rather than only in `docs/LIMITATIONS.md`. Phase 3.3 (transform
   swap) remains separately open, untouched by this task.
+
+## [2026-09-14] GEAR v3 Risk_i,h integration gap follow-up: ERA5 wind acquisition complete, Risk_i,h wiring still pending
+
+- **What changed**: the ERA5 gust acquisition blocker named in the entry
+  above is closed. Brazil (already 30/30), Portugal (was 12/30), and India
+  (was 2/30) are now all 30/30 years cached at
+  `data/raw/climate/era5_wind/{country}/{year}/annual_max.nc`, using the
+  disk-safe one-year-at-a-time pipeline from the 2026-09-12 restructuring.
+  Verified by direct filesystem count (90/90 files) and a scripted
+  integrity pass: every file opens cleanly via `xarray.open_dataarray`, no
+  all-NaN grids, no out-of-range gust values, grid shape consistent within
+  each country across all 30 years, and inter-annual mean gust per country
+  is stable and physically plausible (Brazil ~17.2 m/s, India ~19.8 m/s,
+  Portugal ~25.2 m/s with visibly higher interannual spread, consistent
+  with Atlantic extratropical storm exposure).
+- **Incidents handled en route, no new acquisition bug found**: (1)
+  running two download scripts concurrently briefly exceeded the CDS
+  per-account queued-request limit, producing transient job rejections for
+  a handful of India years (2017-2020) -- resolved by keeping to a single
+  process at the already-documented 3-worker cap; (2) a machine suspend
+  left the download process hung after resume (job accepted, no further
+  log progress for several hours) -- caught via a stalled-log check,
+  process killed and restarted, which resumed only the still-missing
+  years without re-downloading completed ones (`ensure_years_concurrent`'s
+  existing skip-if-exists behavior, unchanged).
+- **Explicitly not done in this task**: `compute_mean_annual_max_gust()`
+  has not been run for any country -- no `extreme_wind_gust_raw_{country}_
+  1km.tif` exists yet. This is the actual remaining blocker for wiring
+  `wind` into `risk_calculator.HAZARD_TERMS`/`FROZEN_BOUNDS`; it is a
+  separate step from acquisition and was not attempted here.
+- References: `data/raw/climate/era5_wind/{Brazil,Portugal,India}/`;
+  `src/processors/extreme_wind_processor.py` (`ensure_years_concurrent`,
+  `compute_mean_annual_max_gust`); `src/index/hazard_scope.py`,
+  `PENDING_RISK_I_H_HAZARDS["wind"]` (counts updated to match this entry);
+  `docs/LIMITATIONS.md`, "2026-09-14 -- Extreme Wind: ERA5 gust
+  acquisition complete for all three countries (Risk_i,h gap unchanged,
+  still open)".
+- Status: **Acquisition sub-blocker closed.** The broader Risk_i,h
+  integration gap (this entry's parent, above) remains **open** --
+  `compute_mean_annual_max_gust()` has not been run and `wind` is still
+  absent from `risk_calculator.HAZARD_TERMS`. Not to be read as "wind
+  closed"; only the data-availability precondition changed.
