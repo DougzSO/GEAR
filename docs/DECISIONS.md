@@ -2660,3 +2660,109 @@ stated per entry per the standing rule.
   `compute_mean_annual_max_gust()` has not been run and `wind` is still
   absent from `risk_calculator.HAZARD_TERMS`. Not to be read as "wind
   closed"; only the data-availability precondition changed.
+
+## [2026-09-14] GEAR v3 wind-into-risk_calculator pre-wiring audit: three decision points extracted, none decided here
+
+- **Purpose**: before `compute_mean_annual_max_gust()`/`ensure_raw_raster`
+  is actually run and `wind` is wired into `risk_calculator.HAZARD_TERMS`,
+  extract every choice that needs an author decision on record first --
+  per standing instruction, an OPEN item is a stop point, not something
+  this session resolves unilaterally. Three points were checked against
+  `risk_calculator.py`/`normalization.py`/`correlation_gate.py` as they
+  exist today; two turn out already closed by existing convention, one is
+  genuinely open.
+
+- **1. Normalization transform for `wind` -- OPEN, author decision needed.**
+  Correction to the task's own premise: "parity with the hazards already
+  integrated" is not one answer. Of the three real hazards currently in
+  `HAZARD_TERMS`, `ws`/`heat`/`spei` use `Tlog` (log1p + Min-Max,
+  `LOG_TERMS`), but `precip` -- the most recently integrated, same task
+  that closed the "Risk_i,h integration gap" entry above -- was placed in
+  `LIN_TERMS` (direct Min-Max, no log at all), because its *actual*
+  empirical pooled skew (GFDL-ESM4 -0.125, MIROC6 -0.586) came back
+  fairly-symmetrical-or-left-skewed, not the right-skew `Tlog` is designed
+  to compress. So the precedent `precip` actually set is "run the same
+  empirical `|skew| <= 0.5` check `normalization.py`'s `normality_check`
+  already performs for every candidate, then classify into `LOG_TERMS` or
+  `LIN_TERMS` on the *result*" -- never a preset transform chosen before
+  the real distribution is seen. `wind`'s real skew is not yet known: it
+  is `NEW_CANDIDATE_TERMS` in `normalization.py` already (line 123), but
+  its sample is currently all-NaN there (`_sample_raster_or_nan` tolerant
+  path, since `extreme_wind_gust_raw_*.tif` does not exist yet -- same gap
+  Comando 2 found). `normalization.py`'s own newer `neg_log_minmax`
+  recommendation (Phase 3.3) is a separate, still-not-adopted-into-
+  production transform and is not a third option for this decision;
+  `risk_calculator.py` only has `Tlog`/`Tlin` in production today.
+  - **Option (a)** -- same procedure as `precip`: once the real raster
+    exists, run `normality_check` on `wind`'s pooled sample, classify into
+    `LOG_TERMS`/`LIN_TERMS` on the actual skewness, wire in with whichever
+    result that gives. Matches the actual (not assumed) precedent; no
+    change to Phase 3.3's separate, still-pending scope.
+  - **Option (b)** -- wait for Phase 3.3 (the `neg_log_minmax` swap) to
+    close first, and wire `wind` directly under whatever universal
+    skewed-variable transform Phase 3.3 settles on, skipping `Tlog`/
+    `Tlin` for this one term. Ties `wind`'s integration to a separately-
+    scoped, not-yet-timed decision with no author-set deadline.
+  - **Option (c)** -- force `Tlog` (log1p) regardless of `wind`'s measured
+    skew, to match `ws`/`heat`/`spei` specifically (the literal reading of
+    the task's original premise). Would apply `Tlog` without checking
+    whether `wind`'s gust distribution actually has the right-skew shape
+    `Tlog` exists to correct -- the same misuse `precip`'s closure
+    explicitly rejected for itself.
+  - **Recommendation**: **(a)**. It is not a new rule -- it is simply
+    applying the rule `precip`'s own closure already established,
+    consistently, to the next term. (b) blocks wind on an unrelated
+    open-ended item; (c) repeats the exact reasoning error `precip`'s
+    entry already flagged and rejected.
+
+- **2. `FROZEN_BOUNDS` source for `wind` -- CONFIRMED by existing
+  convention, not an open decision.** Every `FROZEN_BOUNDS` entry today is
+  computed from real processed rasters via `compute_global_bounds()`,
+  never a fixed/manually-chosen value without a data source (`precip`'s
+  own bounds were added 2026-09-13 this same way, with the
+  `BoundsRegressionError` guard enforcing deliberate, recorded updates --
+  never a silent drift-and-accept). `wind` has no GCM/scenario axis
+  (confirmed Comando 2/3: single ERA5 product) -- the same shape as `ws`/
+  `sv`/`iv` (`FLAT_BOUND_TERMS`, one pooled bound across all countries),
+  not `heat`/`spei`/`precip` (`GCM_DEPENDENT_TERMS`, per-GCM, because GCM
+  magnitudes are not comparable to each other -- moot for `wind`, which
+  has no GCM axis to begin with). No fixed bound without a source is
+  needed or proposed: once `extreme_wind_gust_raw_{country}_1km.tif`
+  exists for all three countries, `wind`'s bound is computed the same way
+  as every `FLAT_BOUND_TERMS` entry already is. Not reopening how
+  `FROZEN_BOUNDS` works -- confirming `wind` fits the existing rule
+  without needing an exception.
+
+- **3. Correlation-gate scope for `wind` -- CONFIRMED closed, not
+  reopened.** `wind` does not appear anywhere in
+  `src/index/correlation_gate.py` -- not in `CANDIDATE_PAIRS`, not in
+  `WATER_BUCKETS`. Its exclusion is structural (a static tuple that would
+  need an explicit, deliberate edit to add `wind`), not a runtime
+  condition that wiring `wind` into `risk_calculator.HAZARD_TERMS` could
+  incidentally flip. This matches the already-closed decision (module
+  docstring, `extreme_wind_processor.py`: "Extreme Wind is not run through
+  the Phase 2.5 correlation gate... Methods Section 5's gate is scoped by
+  name to Extreme Precipitation only") and the v3 methodology's own
+  Section 2 statement that Extreme Wind is assigned per-bucket by
+  mechanistic rationale, never by inter-hazard correlation. Verified, not
+  reopened: wiring `wind` into `HAZARD_TERMS` touches
+  `risk_calculator.py`/`hazard_scope.py` only -- `correlation_gate.py` is
+  a separate module with no dependency in either direction.
+
+- References: `src/index/risk_calculator.py` (`LOG_TERMS`, `LIN_TERMS`,
+  `FROZEN_BOUNDS`, `GCM_DEPENDENT_TERMS`, `FLAT_BOUND_TERMS`,
+  `compute_global_bounds`); `src/index/normalization.py`
+  (`normality_check`, `select_transform`, `NEW_CANDIDATE_TERMS`,
+  `transform_neg_log_minmax`); `src/index/correlation_gate.py`
+  (`CANDIDATE_PAIRS`, `WATER_BUCKETS`); `src/processors/
+  extreme_wind_processor.py` module docstring ("Correlation gate: NOT a
+  candidate"); this file, "GEAR v3 Risk_i,h integration gap: precip wired
+  in, wind still blocked on ERA5 acquisition" (the `precip` Tlin
+  precedent cited in point 1).
+- Status: **Point 1 open, blocked on author decision (recommendation:
+  option (a) above). Points 2 and 3 confirmed against existing code and
+  not reopened -- no author input needed for those two.** None of this
+  wires `wind` into `risk_calculator.HAZARD_TERMS` yet; that remains a
+  separate follow-up task, gated on point 1's answer plus
+  `compute_mean_annual_max_gust()` actually being run for all three
+  countries.

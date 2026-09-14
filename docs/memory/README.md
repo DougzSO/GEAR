@@ -269,3 +269,14 @@ reiniciado, retomou só os anos faltantes). Isso fecha só o bloqueio de
 40 de [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md) e
 `docs/DECISIONS.md`, "GEAR v3 Risk_i,h integration gap follow-up: ERA5
 wind acquisition complete, Risk_i,h wiring still pending".
+
+2026-09-14: Auditoria pré-wiring de `wind` em `risk_calculator.py` extraiu
+3 pontos de decisão — 1 genuinamente aberto (qual transform de
+normalização `wind` deve usar: `precip` já estabeleceu que isso se decide
+pelo skew empírico real, não por um transform pré-escolhido, então essa é
+a recomendação), 2 já confirmados fechados pela convenção existente
+(`FROZEN_BOUNDS` sempre computado de dado real, nunca fixo sem fonte;
+correlation gate já exclui `wind` estruturalmente, sem risco de reabertura
+ao integrar). Nenhuma decisão foi tomada nesta tarefa — registro em
+`docs/DECISIONS.md`, "GEAR v3 wind-into-risk_calculator pre-wiring audit:
+three decision points extracted, none decided here".
