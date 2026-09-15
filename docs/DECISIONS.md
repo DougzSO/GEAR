@@ -488,6 +488,207 @@ Log of every methodological and data-source decision made during this project, i
   `tests/test_ccrs_calculator.py::test_frozen_bounds_match_recomputed_from_data`.
   Engineering detail in `docs/memory/05-decisoes-tecnicas.md` item 12.
 - Status: active
+- **Reopened (2026-09-14), appended, original entry above left verbatim --
+  not edited.** New reason, not present when this entry was written or
+  when it was last touched (the 2026-09-14 wind addition, "GEAR v3 wind
+  Risk_i,h integration"): `docs/rework/GEAR_v3_methodology_nature_format.md`
+  Section 8.1 names "FROZEN_BOUNDS percentile choices" as a Sobol
+  candidate parameter group (quoted exactly, `GEAR_v3_methodology_
+  nature_format.md:722-723`: "Applied only to genuinely continuous
+  parameters: FROZEN_BOUNDS percentile choices, age_factor decay rates,
+  and any other parameter that varies smoothly."). Read against what this
+  entry actually decided and what `risk_calculator.FROZEN_BOUNDS` actually
+  is today, that phrase does not match the implementation: this entry
+  froze **raw pooled sample min/max**, no percentile trimming anywhere in
+  its computation (`compute_global_bounds`/`_recommend_one`-style direct
+  `sample.min()`/`sample.max()`, confirmed by direct code read), and
+  `analysis/climate_risk_score_spec.md` item G -- the spec item this entry
+  itself cites as its source -- also never named a percentile, only "computed
+  once from a dated data snapshot and frozen." The methodology text's own
+  wording, taken literally, describes something this pipeline does not do
+  for `FROZEN_BOUNDS` and never has. This is not a new finding invalidating
+  the original decision (min/max is what was built, deliberately, for a
+  documented reason above) -- it is a discovered mismatch between what a
+  *later* methodology document's prose says and what the *earlier*, still
+  -active implementation actually is, surfaced while mapping Phase 6's
+  Sobol parameter inventory (this file, "Phase 6 (Sensitivity/uncertainty)
+  input mapping", open item 5).
+  - **Percentile value, if the source names one**: it does not. The exact
+    Section 8.1 quote above never specifies a percentile (no "p1/p99" or
+    equivalent anywhere in that sentence or its surrounding paragraph).
+    The only percentile value connected to *bounds* (as opposed to
+    `risk_bands.py`'s separately-named RiskBand classification cuts) found
+    anywhere in this repository's methodology/spec documents is
+    `analysis/climate_risk_score_spec.md`'s item I ("Outlier handling for
+    `Tlin` (sv/iv)"): "Whether a p99 clip precedes the linear Min-Max" --
+    explicitly logged there as **"Open"**, phrased as "a p99 clip... **may
+    be needed** -- flag for review," never adopted, and scoped only to
+    `sv`/`iv`'s linear (`Tlin`) transform, not to `FROZEN_BOUNDS` as a
+    whole or to any `Tlog` term. `p99` is therefore a **candidate
+    mentioned once in a different, older, still-open item about a
+    different subset of terms** -- not a value the current methodology
+    document assigns to "FROZEN_BOUNDS percentile choices." Registered as
+    a new open item below rather than assumed.
+  - **Consumers of `risk_calculator.FROZEN_BOUNDS` today, by grep (the
+    real blast radius of any future percentile-based recompute)**:
+    - `src/index/risk_calculator.py:698` (`compute_risk_by_hazard`):
+      `bounds = bounds or FROZEN_BOUNDS` -- the production default,
+      feeding every real `Risk_{i,h}` value via `transform_term`
+      (`:717-718`). The one consumer that actually changes computed
+      output if `FROZEN_BOUNDS` changes.
+    - `src/index/risk_calculator.py:593-604`
+      (`assert_frozen_bounds_current`): recomputes live bounds and raises
+      `BoundsRegressionError` on drift from the frozen snapshot -- a
+      guard, not a data consumer, but it would need its own recomputation
+      logic changed in lockstep with any percentile-based redefinition.
+    - `tests/test_risk_calculator.py:202-246`
+      (`test_frozen_bounds_structure_unchanged_from_retired_module`,
+      `test_frozen_bounds_match_recomputed_from_data`): reads
+      `rc.FROZEN_BOUNDS` directly for structural and regression checks.
+    - `tests/test_normalization.py:218`: asserts
+      `set(rc.FROZEN_BOUNDS) == set(rc.HAZARD_TERMS)` (1:1 key coverage,
+      not a value check).
+    - `tests/test_hazard_scope.py:86-110` (comments only): documents the
+      `HAZARD_TERMS`/`FROZEN_BOUNDS` pairing convention that
+      `PENDING_RISK_I_H_HAZARDS` enforces; no direct value read.
+  - **Confirmed NOT a consumer, direct or indirect, by grep and by direct
+    code read (the point this reopening was specifically asked to
+    check)**:
+    - `src/index/normalization.py`: every `FROZEN_BOUNDS` mention
+      (`:2,11,14,23,84`) is module-docstring prose explicitly stating this
+      module does **not** touch `risk_calculator.FROZEN_BOUNDS` -- no
+      executable line reads it. `normalization.py` computes its own,
+      independent empirical min/max per candidate term
+      (`_recommend_one`), never `risk_calculator.FROZEN_BOUNDS`.
+    - `src/index/risk_bands.py`: same pattern -- `:20,109` are docstring
+      prose stating RiskBand classification "does **not** ... touch ...
+      `risk_calculator.FROZEN_BOUNDS`/`transform_term`"; confirmed by
+      grep that neither name appears anywhere outside that prose in the
+      module.
+    - `src/index/psae.py`: consumes `risk_bands.RiskBandTable.frame` only
+      (commit `6b70a36`) -- does not import `risk_calculator` at all.
+      Since `risk_bands.py` itself never touches `FROZEN_BOUNDS`, `psae.py`
+      has **zero** exposure to it, direct or indirect through
+      `risk_bands.py` -- confirmed by tracing the actual import graph, not
+      assumed from `risk_bands.py`'s own "does not touch" claim alone.
+    - `src/index/monte_carlo.py:36,76,88,319,363,716-722` and
+      `tests/test_monte_carlo.py:136-155`: read `ccrs_calculator.
+      FROZEN_BOUNDS` -- the **retired** module's own constant, a
+      different object entirely, not `risk_calculator.FROZEN_BOUNDS`.
+      Both files are already confirmed non-importable/non-collectable
+      (`ImportError: cannot import name 'ccrs_calculator'`, this file's
+      Phase 3.3/Phase 4 entries above) -- dead code today, zero live
+      exposure regardless of what `risk_calculator.FROZEN_BOUNDS` is.
+    - `src/processors/spei_processor.py:20`, `src/visualization/
+      diagrams.py:165`: prose/label-string mentions only, no data read.
+  - **New open item (registered here, not resolved)**: whether
+    `risk_calculator.FROZEN_BOUNDS` should incorporate a percentile-based
+    trim at all (matching Section 8.1's literal wording), and if so, which
+    percentile, for which term(s) (all `FROZEN_BOUNDS` entries uniformly,
+    or only the `Tlog`/`Tlin` subset `climate_risk_score_spec.md` item I's
+    `p99` candidate was originally scoped to), is **not decided by this
+    entry**. No value is assumed. This sits alongside, and is narrower
+    than, this file's "Phase 6 (Sensitivity/uncertainty) input mapping"
+    entry's open item 5, which flagged the same textual ambiguity without
+    yet tracing the consumer graph or the `spec.md` item I precedent this
+    reopening adds.
+  - Action taken here: mapping, citation, and reopening only, per
+    instruction -- no recompute of `FROZEN_BOUNDS`, no percentile logic,
+    and no code change of any kind was made by this entry.
+  - **Closed (2026-09-14), same day, appended -- not editing the mapping
+    above.** The published article's Supplementary Table S3 (pasted by the
+    author into this session) is now cited as the primary source, settling
+    the open item registered directly above without inventing a
+    percentile:
+    > "Each hazard is normalized against a frozen (non-sample-dependent)
+    > bound, with transform selected by a per-hazard skewness check...
+    > Full bounds, transform, and provenance per hazard: Supplementary
+    > Table S3."
+    >
+    > Table S3 footnote: "All bounds in this table are derived empirically
+    > from the pooled sample (minimum/maximum), not from an externally
+    > cited physical constant -- the empirical designation applies to
+    > bound derivation only, and is independent of each hazard's
+    > separately reported Tier 1/Tier 3 classification."
+    Every row Table S3 reports (`ws`, `sv`, `iv`, Extreme Heat x2 GCMs,
+    Extreme Precipitation x2 GCMs, Drought/SPEI x2 GCMs) carries the tier
+    label **"empirical (pooled sample min/max)"** in its own right-hand
+    column -- not "percentile," for any hazard the table documents. This
+    is the literal, published, peer-reviewed-track source for exactly what
+    this entry's original decision (above, 2026-09-04) already built:
+    `FROZEN_BOUNDS` is empirical pooled min/max, full stop, for every
+    hazard the article currently documents. No percentile value is
+    introduced here or anywhere in this closure -- there is no percentile
+    to name, because bound derivation was never percentile-based in the
+    first place, confirmed now by the published source itself rather than
+    only by this repository's own code.
+  - `docs/rework/GEAR_v3_methodology_nature_format.md:720-726` (Section
+    8.1) is corrected in this same task: "FROZEN_BOUNDS percentile
+    choices" is removed from the Sobol continuous-parameter list and
+    replaced with a description matching Table S3 -- frozen normalization
+    bounds are fixed empirical constants with no percentile parameter to
+    perturb; the RiskBand Tier 3 percentile-cut thresholds (a real,
+    separate, already-existing parameter family, `risk_bands.py`) remain
+    in that list under their own name, not conflated with `FROZEN_BOUNDS`
+    any longer. This is a text correction to the methodology document
+    itself, per instruction, in place of inventing a percentile with no
+    precedent.
+  - **New item, registered separately here, not resolved by this
+    entry -- manuscript pendency, not a code pendency**: Table S3 as
+    pasted does not carry a row for Extreme Wind (its own footnote states
+    why, as of when the article text was written: "Extreme Wind is not
+    represented in this table: no country yet has a processed ERA5
+    raster... so no bounds exist to report"). `wind` has since been wired
+    into `risk_calculator.HAZARD_TERMS`/`FROZEN_BOUNDS` (this file, "GEAR
+    v3 wind Risk_i,h integration: empirical transform result,
+    PENDING_RISK_I_H_HAZARDS closed," 2026-09-14) and carries a real
+    empirical `(9.123578071594238, 31.070894241333008)` bound
+    (`risk_calculator.py:344-363`) under the `-ln(1-x)` transform (Phase
+    3.3, commits `b305787`/`74915ea`). Table S3 is therefore stale
+    relative to the code, missing exactly one row (`wind`, `pooled`,
+    skew +0.6215, `-ln(1-x)`, empirical). This is **explicitly a
+    manuscript-update pendency** (the published/submitted table needs a
+    new row added), **not a code pendency** -- `risk_calculator.py` is
+    already correct and complete for `wind`. Not actioned here; the
+    author owns manuscript revision, not this session.
+  - **Sobol dimension count `D` (this file's "Phase 6
+    (Sensitivity/uncertainty) input mapping" entry, and
+    `docs/rework/PHASE6_DESIGN.md` Section 1.3): revised from 7 to 6.**
+    The prior count of 7 confirmed continuous dimensions was reached under
+    `PHASE6_DESIGN.md`'s own working assumption (Section 1.2, "the most
+    defensible reading... not a confirmed mapping") that Section 8.1's
+    "FROZEN_BOUNDS percentile choices" might name a continuous parameter
+    distinct from -- or additional to -- the RiskBand percentile-cut
+    dimensions already grouped into that count. Table S3 and the Section
+    8.1 text correction above close that ambiguity: there is no
+    bounds-percentile parameter, so no such dimension exists to count.
+    `D = 6`: coal decay rate, wind fallback rate, hydro retention rate,
+    the neg-log tail-padding fraction, and the RiskBand percentile-cut
+    rank grouped as (at minimum) one dimension for the P75/P90/P95 hazard
+    family and one for the Wind/Solar P90/P95/P99 family -- unchanged from
+    `PHASE6_DESIGN.md` Section 1.3's own grouped-minimum counting, only
+    the now-removed bounds-percentile dimension is subtracted. Still
+    subject to Phase 6 open items 1, 2, and 4 (solar retention range, coal
+    overhaul ranges, percentile-cut grouping granularity) raising `D`
+    further if the author resolves those toward finer granularity --
+    `D = 6` is the floor with today's open items unresolved, not a final
+    number.
+  - References: article text and Table S3 (pasted by the author into this
+    session, 2026-09-14); `docs/rework/
+    GEAR_v3_methodology_nature_format.md:720-726` (corrected in this
+    task); `src/index/risk_calculator.py:191-198,344-363`
+    (`wind`'s `LOG_TERMS` membership and `FROZEN_BOUNDS` entry); this
+    file, "Phase 6 (Sensitivity/uncertainty) input mapping" (open item 5,
+    the ambiguity this closure resolves) and "GEAR v3 wind Risk_i,h
+    integration" (wind's wiring date and skew figure).
+  - Status of this reopening: **Closed (2026-09-14).** `FROZEN_BOUNDS` is
+    confirmed, by the published article's own Table S3, to be empirical
+    pooled min/max for every hazard, with no percentile parameter of any
+    kind -- nothing invented, nothing assumed. Two items spawned by this
+    closure remain open on their own, tracked separately, not by this
+    reopening: the Table S3 manuscript-update pendency for `wind` (above),
+    and Phase 6 open items 1/2/4 (`PHASE6_DESIGN.md`/this file's Phase 6
+    mapping entry), which still bound on `D`.
 
 ## [2026-09-04] age_factor: >=1 multiplier via `2 - retention(age)` (spec item D closed)
 
@@ -3225,6 +3426,307 @@ protocol-only draft (never committed as such).
   silent drop or a bare NaN indistinguishable from a computed 0.0). Every
   other PSAE mechanic already confirmed sourced in this entry's mapping
   section above is unchanged and not reopened by this closure.
+
+## [2026-09-14] Phase 6 (Sensitivity/uncertainty) input mapping: PHASE6_DESIGN.md read, Phase 2.5 closure verified by code, six OPEN items registered
+
+- Scope: mapping only, ahead of any Monte Carlo/Sobol code, per instruction
+  not to write Phase 6 code before its input surface and every
+  undocumented methodological gap are on record. `psae.py` (commit
+  `6b70a36`) is read as the actual Phase 4 interface Phase 6 will draw its
+  PSAE-side parameters/outputs from.
+- **`docs/rework/PHASE6_DESIGN.md` -- what it is, read in full for the
+  first time in this entry (previously untracked, never read)**: a
+  design-only research document, **not an approved plan**, by its own
+  first line ("Design-only document. No code is implemented or run
+  against this document.") and its own closing section (Section 5 lists
+  six items explicitly needing "author confirmation before an
+  implementation prompt is written"). It was written *ahead of* Phase 4
+  and Phase 3.3 closing, on the explicit bet that writing the design early
+  would keep it off the critical path once both closed -- and states its
+  own limitation up front: "If either closes with a materially different
+  shape..., the parameter inventories in Sections 1 and 2 need a re-check
+  against the actual closed state before implementation -- this design is
+  **not self-updating**." It is not committed to git (confirmed untracked
+  by `git status` both when first noticed and as of this entry).
+  - **What it got right, verified against the actual closed state**:
+    - Phase 3.3 assumptions (post-swap `neg_log_minmax` design,
+      `normalization.UPPER_TAIL_PADDING_FRACTION = 0.05`) match the real
+      `risk_calculator.py`/`normalization.py` post-commit-`74915ea` state
+      exactly -- confirmed by direct read of both files (this file's
+      Phase 3.3 entries).
+    - Its `age_factor` constant table (`COAL_DECAY_RATE = 0.0025`,
+      `WIND_RELATIVE_RATE = 0.004`, `HYDRO_RETENTION_RATE = 0.0055`,
+      `SOLAR_RETENTION_RATE = 0.007`, `COAL_OVERHAUL_CYCLE_YEARS = 5`,
+      `COAL_OVERHAUL_RECOVERY = 0.70`) matches `age_factor.py:126-135`
+      verbatim -- confirmed by direct grep of the module, not assumed
+      from the design doc's own table.
+    - Its `hazard_scope.APPLICABLE_HAZARDS` OAT table (Hydro 5, Thermal 3,
+      Solar 3, Wind 1/0-meaningful) matches `hazard_scope.py:107-112`
+      exactly.
+    - Its `monte_carlo.py` mechanics description (`N_ITERATIONS = 1000`,
+      `PERCENTILES = (2.5, 50.0, 97.5)`, `country_rng`'s
+      `zlib.crc32`+`SeedSequence` construction) matches
+      `monte_carlo.py:143-175` verbatim -- confirmed by direct grep, not
+      assumed.
+  - **What it got wrong or left stale, found in this entry**: Section 0
+    still reads "Phase 4 (PSAE aggregation): not implemented... No
+    `src/index/psae.py` (or equivalent) exists yet" -- stale as of commit
+    `6b70a36`. More importantly, its own Section 2.2 (PSAE cut-point OAT
+    design) was written **before** `psae.py`'s actual interface existed
+    and, checked against that real interface now, is missing something
+    the real module introduced that Section 2.2 has no provision for at
+    all: `psae.py`'s complete-case mechanic (`psae_complete`,
+    `missing_hazards`, this file's "Phase 4 (PSAE) input mapping... CLOSED,
+    complete-case" entry above) is not mentioned anywhere in
+    `PHASE6_DESIGN.md`, because it postdates the document. This is exactly
+    the "materially different shape" re-check the document itself warned
+    would be needed -- see the new open item below.
+  - **Net assessment**: a thorough, well-sourced set of research notes and
+    a defensible starting point for an implementation prompt -- but reading
+    it as if it were an approved Phase 6 design, rather than as a draft
+    still carrying six author-facing open questions plus the one gap found
+    here, would be a mistake this entry is written to prevent.
+- **Phase 2.5 (correlation gate) closure -- confirmed by code and real
+  output data, not by trusting `PHASE6_DESIGN.md`'s own claim or the work
+  plan's "Sequencing notes" line**:
+  - `src/index/correlation_gate.py:181`: `GATE_THRESHOLD = 0.80`, matching
+    the cited convention.
+  - `data/outputs/tables/correlation_gate.csv` exists on disk (modified
+    2026-09-12), a real output artifact, not just code -- 56 rows, all
+    three countries present (`Brazil`, `Portugal`, `India`, plus a
+    `pooled` row group), confirmed by direct `pandas.read_csv` in this
+    entry.
+  - Among the 44 gated rows, `decision_r.abs().max() == 0.7020788...`
+    (Seasonal vs. Interannual Variability, Hydro) and
+    `(gate_verdict == "fail").any() == False` -- every gated pair passed
+    at the production `0.80` threshold, confirmed by direct computation on
+    the real CSV in this entry, matching this file's "GEAR v3 Phase 2.5:
+    correlation gate implemented and run" (2026-09-12) and "...follow-up:
+    Portugal/India Extreme Precipitation processed, gate closed for all
+    three countries" (2026-09-12) entries. **Phase 2.5 is closed,
+    confirmed independently by code and data, not assumed from the work
+    plan's "Phase 6 needs Phase 4 and Phase 2.5" line.**
+- **Entry points Phase 6 will connect to, and what it varies**:
+  - **Sobol/SALib (continuous parameters, work plan 6.2, methodology
+    Section 8.1)**: `age_factor.py`'s named rate constants
+    (`COAL_DECAY_RATE`, `WIND_RELATIVE_RATE`, `HYDRO_RETENTION_RATE`;
+    `SOLAR_RETENTION_RATE`/`COAL_OVERHAUL_CYCLE_YEARS`/
+    `COAL_OVERHAUL_RECOVERY` flagged, no literature range on record);
+    `normalization.UPPER_TAIL_PADDING_FRACTION`; the Tier 3 RiskBand
+    percentile-cut thresholds computed inside `risk_bands.
+    percentile_band_cuts`/`classify_hazard` (the operative cuts are the
+    non-diagnostic percentiles named in `risk_bands.THRESHOLD_REGISTRY`'s
+    `percentiles` field per hazard/bucket).
+  - **Scenario discovery / one-at-a-time (discrete parameters, work plan
+    6.3, methodology Section 8.2)**: `hazard_scope.APPLICABLE_HAZARDS`
+    (per-bucket hazard inclusion/exclusion); the PSAE cut points, now a
+    concrete target -- `psae.classify_psae_fraction`'s inline `1.0`/`0.5`/
+    `0.0` comparisons (not yet named constants, unlike every other
+    perturbable parameter in this mapping, which are all named module-level
+    constants); `correlation_gate.GATE_THRESHOLD`; `normalization.
+    SKEWNESS_NORMAL_THRESHOLD` (discontinuous effect on transform
+    selection, grouped here per `PHASE6_DESIGN.md` Section 2.5's
+    reasoning, not with Sobol).
+  - **Output statistic(s)**: methodology Section 8.1 says only "the
+    summary statistic of interest" for Sobol (does not name `Risk_i,h`,
+    `PSAE_i`, or both); Section 8.2 explicitly names "the resulting change
+    in the distribution of PSAE/RiskBand outcomes" for the OAT analysis --
+    resolved for 8.2, **not resolved for 8.1**. See open item below.
+- **Items registered here (six total; the first four are `PHASE6_DESIGN.md`'s
+  own Section 5 list, restated here as this project's open-decision record
+  rather than left standing only in an untracked draft; items 5-6 are new,
+  found in this entry). Update (2026-09-14, same day): items 1 and 2, and
+  sub-items 4(a)/4(b), are now CLOSED (appended in place below, original
+  open-item text left unedited per this file's append-only convention for
+  reopened/updated entries). Items 3, 4(c), 5, and 6 remain open.**
+  1. **Distribution family per perturbed parameter.** Neither
+     `PHASE6_DESIGN.md` nor methodology Section 8 states what probability
+     distribution each Sobol/Monte-Carlo-perturbed parameter is drawn
+     from within its stated range -- only the range itself is given (e.g.
+     coal decay rate 0.0019-0.0044/yr). The retired `monte_carlo.py` used
+     `rng.uniform` for every one of its (now-retired) perturbed parameters
+     (`monte_carlo.py:190-199`), but that precedent covers a different,
+     superseded parameter set (thermal water/heat weight ratio,
+     `EventMultiplier`'s `k`) and was never re-confirmed for the age_factor
+     rates, RiskBand percentile cuts, or tail-padding fraction Phase 6
+     actually needs. For the Sobol portion specifically, SALib's sampler
+     supports a per-parameter `dists` argument (uniform is only its
+     default, not a requirement) -- so "uniform for everything" is an
+     available choice, not an already-made one.
+     - **Closed (2026-09-14).** Default distribution for any perturbed
+       parameter that has no better-sourced prior (a literature-cited
+       distribution shape, if one exists for a specific parameter, takes
+       precedence over this default and is not overridden by it): **uniform,
+       ±20% around that parameter's current nominal value** (e.g. for
+       `COAL_DECAY_RATE = 0.0025`/yr, the default draw range is
+       `[0.002, 0.003]`, not the literature-backed `[0.0019, 0.0044]`
+       already on record for that specific parameter -- the ±20% default
+       applies only where no such literature range exists). This mirrors
+       the retired `monte_carlo.py`'s own choice of `rng.uniform` as the
+       sampling family (`monte_carlo.py:190-199`), extended with an
+       explicit, symmetric width where the old module simply hardcoded a
+       literature-sourced range per parameter and had no need for a
+       general-purpose default. **Binding manuscript note**: any parameter
+       perturbed under this ±20%-uniform default (as opposed to a
+       literature-cited range) must be reported in the manuscript's
+       limitations/methods text as a Tier 3, author-declared engineering
+       default -- never presented as a calibrated or literature-backed
+       distribution. This decision does not by itself enumerate every
+       parameter this default applies to; `SOLAR_RETENTION_RATE` and
+       `COAL_OVERHAUL_CYCLE_YEARS`/`COAL_OVERHAUL_RECOVERY` below are
+       closed under it explicitly, as named applications, not the full set.
+  2. **Monte Carlo N / convergence procedure (work plan 6.1).**
+     Methodology Section 8.1 says only "N increased substantially above
+     the current 1000, final value set by measured convergence of the
+     summary statistic of interest" -- it does not specify a procedure.
+     `PHASE6_DESIGN.md` Section 4.1 proposes a concrete doubling-sequence
+     stabilization procedure (1000/2000/4000/8000/16000, <1% point-estimate
+     tolerance, <5% CI-half-width tolerance, confirmed by one further
+     doubling) -- this is that document's own proposal, not a sourced
+     methodology requirement, and is one of the things a reader could
+     mistake for already-decided if `PHASE6_DESIGN.md` is read as approved
+     rather than as a draft (see the assessment above).
+     - **Closed (2026-09-14).** `PHASE6_DESIGN.md` Section 4.1's proposed
+       procedure is adopted as the actual Phase 6.1 convergence procedure,
+       cited as its source: run at `N = 1000, 2000, 4000, 8000, 16000`
+       (doubling from the current legacy value); at each `N`, record the
+       point estimate and its 95% percentile CI (2.5/97.5); declare
+       convergence at the smallest `N` where the point estimate's relative
+       change from the previous `N` is `< 1%` **and** the 95% CI
+       half-width's relative change from the previous `N` is `< 5%`;
+       confirm by requiring the *next* doubling beyond that point to also
+       satisfy both criteria before accepting it as converged (guards
+       against a single-doubling fluke); report the Monte Carlo standard
+       error (`SE = sample_std / sqrt(N)`) at the converged `N` as a
+       secondary, corroborating statistic, never the primary criterion.
+       Reference: `docs/rework/PHASE6_DESIGN.md` Section 4.1 (2026-09-14
+       draft, this closure is what promotes that section from proposal to
+       adopted procedure).
+  3. **Seed/reproducibility and RNG granularity for the new parameter
+     set.** `PHASE6_DESIGN.md` Section 3 already states this explicitly as
+     unresolved (not this entry's own finding, restated here so it is not
+     left standing only in the untracked draft): whether Phase 6's RNG
+     streams are keyed per-country or per-country-scenario has no
+     author-confirmed answer for the current (post-CCRS) parameter set --
+     the old per-country approval was scoped to the retired
+     `EventMultiplier`/bucket-weight parameters, not to age_factor rates or
+     RiskBand percentile cuts. Whether `config.RANDOM_SEED` (the constant
+     the retired module keyed off) is reused for Phase 6, or a new seed
+     constant is introduced, is also not stated anywhere.
+  4. **Which continuous parameters actually enter the Sobol dimension
+     count `D`, and how finely the RiskBand percentile-cut family is
+     grouped.** Three sub-points, all from `PHASE6_DESIGN.md` Sections 1.1
+     -1.3/5, restated here: (a) `SOLAR_RETENTION_RATE`'s perturbation range
+     has no cited source (the 0.7%/yr point value is sourced, no range is);
+     (b) `COAL_OVERHAUL_CYCLE_YEARS`/`COAL_OVERHAUL_RECOVERY` are already
+     logged elsewhere in this file as "ASSUMED... a modelling premise, not
+     values taken from" their cited sources -- a perturbation range for an
+     already-assumed point value would be an assumption stacked on an
+     assumption, not decided here; (c) whether the RiskBand percentile-cut
+     Sobol dimension is grouped one-per-hazard-family or one-per-hazard
+     changes `D` from 2 to 6 for that family alone, directly changing the
+     Saltelli evaluation budget (`N_0 * (2D + 2)`).
+     - **(a) SOLAR_RETENTION_RATE -- Closed (2026-09-14).** Perturbation
+       range is the item 1 default: **uniform, ±20% around the current
+       nominal `SOLAR_RETENTION_RATE = 0.007`/yr**, i.e. `[0.0056,
+       0.0084]`. No literature source backs this range (the 0.7%/yr point
+       value is sourced -- Deline et al. 2020/2024, Boretti & Castellotto
+       2024 -- a range around it is not, per this file's original
+       `age_factor` entries). **Documented as a declared limitation**: the
+       manuscript must state this range is a Tier 3, author-declared
+       engineering default (item 1's binding note), not a literature-cited
+       uncertainty band, wherever `SOLAR_RETENTION_RATE`'s Sobol result is
+       reported.
+     - **(b) COAL_OVERHAUL_CYCLE_YEARS / COAL_OVERHAUL_RECOVERY --
+       Closed (2026-09-14).** Both enter the Sobol dimension count, each
+       perturbed under the item 1 default around their current **ASSUMED**
+       nominal values: `COAL_OVERHAUL_CYCLE_YEARS = 5`yr -> `[4, 6]`yr;
+       `COAL_OVERHAUL_RECOVERY = 0.70` -> `[0.56, 0.84]`. Both point values
+       are themselves already logged as "ASSUMED... a modelling premise,
+       not values taken from" Kim & Moon (2012) or Sagaf (2020) (this
+       file, age_factor final entry; `docs/LIMITATIONS.md`, "GEM
+       retrofit/repowering field absent") -- this closure perturbs an
+       already-assumed point, it does not newly assume one. **Binding
+       note, not optional**: if the Sobol run finds a high sensitivity
+       index (`S1`/`ST`) for either `COAL_OVERHAUL_CYCLE_YEARS` or
+       `COAL_OVERHAUL_RECOVERY`, the final report **must** cite that the
+       underlying parameter is an ASSUMED value (no real overhaul-history
+       source exists for any GEM-tracked plant) at the point that finding
+       is presented -- a high sensitivity index for this parameter is
+       never to be presented as a confirmed empirical finding about coal
+       plant behavior; it is a finding about how sensitive the model's
+       output is to an admittedly unsourced modelling premise, and the
+       distinction must survive into the manuscript text, not only into
+       this decisions log.
+     - **(c) RiskBand percentile-cut Sobol dimension grouping -- still
+       open, not addressed by this closure.** Whether that family is one
+       dimension or six remains undecided; `D`'s exact final value still
+       depends on this sub-item (see this file's "Phase 3.1 CCRS global
+       Min-Max bounds... Reopened... Closed" entry's `D = 6` floor
+       calculation, which already treats this as unresolved and additive).
+  5. **Whether methodology Section 8.1's "FROZEN_BOUNDS percentile
+     choices" names the RiskBand percentile-cut thresholds (Phase 3.2) or
+     something else.** Confirmed as a genuine textual ambiguity in this
+     entry, not invented by `PHASE6_DESIGN.md`: the methodology text
+     itself (`GEAR_v3_methodology_nature_format.md:722-723`) says
+     verbatim "FROZEN_BOUNDS percentile choices," but `risk_calculator.
+     FROZEN_BOUNDS` (confirmed by direct read, `risk_calculator.py:344
+     -363`) contains empirical pooled min/max values with no percentile
+     trimming anywhere in their computation -- the only percentile-based
+     continuous-parameter family that actually exists in the pipeline is
+     `risk_bands.py`'s Tier 3 RiskBand classification cuts, a different,
+     already-separately-named thing in the same methodology document
+     (Section 4 vs. Section 4.2). `PHASE6_DESIGN.md`'s reading (the
+     RiskBand cuts are what was meant) is stated there as "the most
+     defensible reading... not a confirmed mapping." Not resolved here.
+  6. **PSAE `psae_complete=False` rows' treatment in the sensitivity
+     analysis -- not addressed anywhere, found in this entry.**
+     `PHASE6_DESIGN.md` predates `psae.py`'s actual complete-case mechanic
+     (this file's "Phase 4 (PSAE) input mapping... CLOSED, complete-case"
+     entry, closed after `PHASE6_DESIGN.md` was written) and has no
+     provision for it in its Section 2.2 PSAE-cut-point OAT design. Three
+     plausible readings, none written down anywhere: (a) restrict every
+     Phase 6 PSAE-based statistic to `psae_complete=True` rows only,
+     silently narrowing the plant sample the sensitivity analysis actually
+     covers; (b) treat an incomplete row's contribution to any aggregate
+     statistic (e.g. capacity-weighted PSAE-band fraction) as itself
+     missing/NaN, propagating the gap into the reported statistic rather
+     than silently dropping the plant; (c) something else not yet
+     articulated. This is the same category of gap the Phase 4 entry above
+     closed for PSAE's own denominator -- unresolved here for how Phase 6
+     consumes PSAE's output.
+- Action taken here: mapping and gap identification only, per instruction
+  -- no Monte Carlo/Sobol code was written, and none of the six items
+  above is decided by this entry.
+- References: `docs/rework/PHASE6_DESIGN.md` (full read, this entry);
+  `docs/rework/GEAR_v3_work_plan.md`, "Phase 6: Sensitivity and
+  uncertainty" and "Sequencing notes"; `docs/rework/
+  GEAR_v3_methodology_nature_format.md` Section 8; `src/index/
+  correlation_gate.py:181` (`GATE_THRESHOLD`); `data/outputs/tables/
+  correlation_gate.csv` (real output, read directly in this entry);
+  `src/index/age_factor.py:126-135`; `src/index/hazard_scope.py:107-112`
+  (`APPLICABLE_HAZARDS`); `src/index/monte_carlo.py:143-199` (legacy RNG/N
+  mechanics, not carried forward as-is); `src/index/normalization.py`
+  (`UPPER_TAIL_PADDING_FRACTION`, `SKEWNESS_NORMAL_THRESHOLD`);
+  `src/index/risk_bands.py` (`THRESHOLD_REGISTRY`,
+  `percentile_band_cuts`); `src/index/psae.py` (commit `6b70a36`,
+  `classify_psae_fraction`, `psae_complete`, `missing_hazards`); this
+  file, "GEAR v3 Phase 2.5: correlation gate implemented and run",
+  "...follow-up: Portugal/India... gate closed for all three countries",
+  "Phase 4 (PSAE) input mapping... CLOSED, complete-case".
+- Status: **Partially closed (2026-09-14).** Items 1 (distribution
+  default), 2 (convergence procedure), 4(a) (`SOLAR_RETENTION_RATE`
+  range), and 4(b) (`COAL_OVERHAUL_*` range + binding manuscript note) are
+  **Closed** -- see the appended resolutions in place above. Items 3
+  (seed/RNG granularity), 4(c) (percentile-cut dimension grouping), 5
+  (`FROZEN_BOUNDS percentile choices` mapping -- separately closed in this
+  file's "CCRS global Min-Max bounds... Reopened... Closed" entry, not
+  reopened here), and 6 (PSAE `psae_complete=False` treatment) remain
+  **Open**, awaiting the author's input before a Phase 6 implementation
+  prompt is written. Not to be resolved by inference or by a future
+  implementation task picking defaults silently. Phase 2.5's closure and
+  the entry points/parameter inventory mapped above are confirmed and not
+  reopened by this entry.
 
 ## [2026-09-14] GEAR v3: spei reclassified from LOG_TERMS to LIN_TERMS (Phase 3.3 correction)
 

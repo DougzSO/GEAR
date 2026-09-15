@@ -719,11 +719,15 @@ when applied to step/threshold functions.
 
 ### 8.1 Sobol/SALib (continuous parameters only)
 
-Applied only to genuinely continuous parameters: FROZEN_BOUNDS
-percentile choices, age_factor decay rates, and any other parameter
-that varies smoothly. First-order and total-order indices computed via
-SALib, N increased substantially above the current 1000, final value
-set by measured convergence of the summary statistic of interest.
+Applied only to genuinely continuous parameters: the RiskBand Tier 3
+percentile-cut thresholds, age_factor decay rates, and any other parameter
+that varies smoothly. Frozen normalization bounds (Supplementary Table S3)
+are fixed empirical constants (pooled sample min/max per hazard) with no
+percentile trim of any kind in their derivation and therefore no continuous
+percentile parameter to perturb here. First-order and total-order indices
+computed via SALib, N increased substantially above the current 1000,
+final value set by measured convergence of the summary statistic of
+interest.
 
 ### 8.2 Scenario discovery / one-at-a-time (structural/discrete parameters)
 
