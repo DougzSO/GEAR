@@ -5000,3 +5000,144 @@ Sobol wall time. Phase 6 is NOT closed.**
   `risk_bands.py`, `hazard_scope.py`, `psae.py`, `correlation_gate.py`
   (all read directly, not assumed, before writing the D=13 table and the
   scenario-discovery mechanisms above).
+
+## [2026-09-15] GEAR v3 Phase 6 closure: full-scale Sobol run (N_0=1024) and general-MC convergence run (N=100..1600, converged at N=800) executed, real results, Phase 6 CLOSED
+
+- Scope: the two runs the prior entry left pending author go-ahead on
+  (full-scale Sobol, full-scale general-MC) were both authorized and
+  executed for real, on real data (Brazil, Portugal, India, both GCMs).
+  This entry reports actual measured outcomes, not projections, and
+  closes Phase 6.
+
+### Full-scale Sobol run (Phase 6.2)
+
+`sobol_sensitivity.run_validation(1024, n_workers=4, seed=20260915)`,
+real data: **N_0 = 1024, 15,360 evaluations, 7237.5s (2.01h) total,
+0.4712s/draw**, `psae_complete` coverage 99.847% (31,079,520/31,127,040
+complete rows -- unchanged from the pilot run). Output saved to
+`data/outputs/tables/phase6_sobol_full_n1024.json`.
+
+**Risk_i,h -- S1/ST, full table:**
+
+| parameter | S1 | ST |
+|---|---|---|
+| coal_decay_rate | 0.1964 | 0.2068 |
+| wind_relative_rate | 0.0001 | 0.0001 |
+| hydro_retention_rate | 0.4034 | 0.4046 |
+| solar_retention_rate | 0.0033 | 0.0030 |
+| coal_overhaul_cycle_years | 0.0008 | 0.0010 |
+| coal_overhaul_recovery | 0.1908 | 0.2003 |
+| upper_tail_padding_fraction | 0.1953 | 0.1946 |
+| spei/precip/heat/sv/iv/wind percentile shifts | ~0.0000 | ~0.0000 |
+
+`ΣS1 ≈ 0.99`, `ST ≈ S1` for every parameter -- near-additive response, no
+meaningful parameter interactions.
+
+**PSAE_i -- S1/ST, full table:**
+
+| parameter | S1 | ST |
+|---|---|---|
+| coal_decay_rate ... upper_tail_padding_fraction (all 7) | ~0.0000 | ~0.0000 |
+| spei_percentile_shift | 0.0002 | 0.0001 |
+| precip_percentile_shift | 0.4670 | 0.4675 |
+| heat_percentile_shift | 0.4534 | 0.4530 |
+| sv_percentile_shift | 0.0001 | 0.0002 |
+| iv_percentile_shift | -0.0000 | 0.0000 |
+| wind_percentile_shift | 0.0774 | 0.0776 |
+
+`ΣS1 ≈ 0.997`, `ST ≈ S1` throughout -- same near-additive pattern. The
+two-chain independence the codebase's own docstrings claim
+(`Risk_i,h` from `age_factor`, `RiskBand`/`PSAE_i` from raw hazard
+percentile classification, never mixed) is confirmed empirically at full
+scale, not just the N_0=32 pilot: every age_factor/padding parameter
+carries `S1 ≈ 0` for `PSAE_i`, and every percentile-cut parameter carries
+`S1 ≈ 0` for `Risk_i,h`.
+
+**Binding manuscript note, not optional (restated from the closure that
+first required it, "PHASE6_DESIGN.md" solar/coal-overhaul closure
+above):** `coal_overhaul_recovery` (S1=0.1908, ST=0.2003) is one of
+Risk_i,h's four leading sensitivity contributors -- comparable in
+magnitude to `coal_decay_rate` (S1=0.1964) and `upper_tail_padding_fraction`
+(S1=0.1953), and roughly half of the leading contributor,
+`hydro_retention_rate` (S1=0.4034). `coal_overhaul_recovery` is an
+author-declared engineering assumption with no calibrating source (no
+GEM-tracked field records plant-level overhaul history) -- this finding
+must be reported in the manuscript as "the model's Risk_i,h output is
+sensitive to an admittedly unsourced modelling premise, not a validated
+empirical parameter," never as an empirical finding about coal plant
+behavior. Manuscript Results/Discussion paragraphs implementing this
+caveat were drafted this session (author-reviewed and approved,
+2026-09-15) -- not yet written into
+`docs/rework/GEAR_v3_methodology_nature_format.md` itself, which is a
+Methods-only document; the Results/Discussion prose has no destination
+file in this repository yet and remains held pending the manuscript
+draft's own file existing.
+
+### Full-scale general-MC convergence run (Phase 6.1)
+
+`scratch_run_general_mc.py` (doubling sequence, `general_mc.run_n`, 9
+streams = 3 countries x 3 `water_scenario`, `phase6_rng` per-country
+-scenario granularity, no reduction for cost -- per author instruction).
+Real wall-clock per step, all `psae_complete=False` rows NaN-masked in
+every aggregate:
+
+| N (per stream) | total draws (9x) | elapsed | s/draw | criteria met vs. previous step |
+|---|---|---|---|---|
+| 100 | 900 | 380.3s | 0.4226 | (first step, no comparison) |
+| 200 | 1800 | 738.5s | 0.4103 | No |
+| 400 | 3600 | 1457.0s | 0.4047 | No |
+| 800 | 7200 | 2983.4s | 0.4144 | **Yes** (point <1% and CI half-width <5%, every stream, both outputs) |
+| 1600 | 14400 | 6342.5s | 0.4405 | **Yes -- confirms N=800** |
+
+**Converged and confirmed at N=800 per stream**, one doubling short of
+the design's original 8000-16000 floor -- the doubling sequence's own
+"confirm with one more doubling" rule (PHASE6_DESIGN.md Section 4.1,
+point 4) was satisfied by the N=1600 step, so the sequence stopped there
+per the task's own early-stop instruction rather than continuing to 3200
+/6400/8000. Total real time for the full sequence (100 through the 1600
+confirmation step): 380.3+738.5+1457.0+2983.4+6342.5 = 11,901.7s (3.31h).
+
+N=800 point estimates (mean, 95% CI, 2.5/97.5 percentile), per stream:
+
+| country/scenario | risk_mean | risk 95% CI | psae_mean | psae 95% CI |
+|---|---|---|---|---|
+| Brazil/bau | 645.655 | [632.282, 659.731] | 0.0388 | [0.0217, 0.0552] |
+| Brazil/opt | 639.191 | [625.653, 652.524] | 0.0554 | [0.0312, 0.0799] |
+| Brazil/pes | 743.260 | [726.678, 759.008] | 0.0403 | [0.0227, 0.0574] |
+| India/bau | 318.161 | [311.457, 326.977] | 0.1144 | [0.0790, 0.1486] |
+| India/opt | 305.244 | [298.368, 313.319] | 0.1098 | [0.0726, 0.1449] |
+| India/pes | 320.975 | [314.198, 329.139] | 0.1203 | [0.0855, 0.1582] |
+| Portugal/bau | 98.752 | [97.257, 100.142] | 0.5163 | [0.5004, 0.5334] |
+| Portugal/opt | 95.965 | [94.528, 97.423] | 0.5158 | [0.4997, 0.5325] |
+| Portugal/pes | 96.532 | [95.075, 97.938] | 0.5125 | [0.4875, 0.5312] |
+
+N=1600 vs. N=800 relative change (the confirmation step -- every value
+below is comfortably inside the design's `<1%` point-estimate /
+`<5%` CI-half-width tolerances, every stream): point-estimate relative
+change 0.00004-0.00838 (risk), 0.00008-0.00838 (psae); CI half-width
+relative change 0.00000-0.01703 (risk), 0.00000-0.01513 (psae). Full
+per-stream figures in `data/outputs/tables/phase6_general_mc_convergence.json`.
+
+- Files: `data/outputs/tables/phase6_sobol_full_n1024.json`,
+  `data/outputs/tables/phase6_general_mc_convergence.json` (new, real
+  output, not placeholders); `scratch_run_sobol_full.py`,
+  `scratch_run_general_mc.py` (temporary run scripts at repo root, not
+  part of the production pipeline -- candidates for removal now that
+  their numbers are recorded here, kept for now in case a rerun is
+  wanted).
+- References: prior entry ("GEAR v3 Phase 6.2/6.3 implementation..."),
+  this file's binding note on `coal_overhaul_recovery` restated above;
+  `docs/rework/PHASE6_DESIGN.md` Section 4.1 (general-MC convergence
+  procedure) and Section 4.2 (Sobol sampling procedure).
+
+### Status
+
+**Phase 6 CLOSED.** Both runs left pending by the prior entry are now
+executed with real numbers: Sobol at N_0=1024 (full table above, two
+-chain independence confirmed at full scale), general-MC converged and
+confirmed at N=800 per stream (well inside the design's 8000-16000
+target range, stopped early per its own convergence rule). The one
+open item carried forward is not a Phase 6 mechanics gap but a
+manuscript-writing dependency: the `coal_overhaul_recovery` caveat's
+drafted Results/Discussion prose has no destination file yet (see
+above) and must be placed once the actual manuscript draft exists.
