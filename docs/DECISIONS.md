@@ -3298,3 +3298,138 @@ protocol-only draft (never committed as such).
   untouched; `risk_bands.py`/`psae.py`/`correlation_gate.py` confirmed
   unaffected, not merely assumed unaffected from the dependency graph;
   full test suite green.
+
+## [2026-09-14] GEAR v3 Phase 6: partial-recomputation pipeline (raster caching + perturbed-chain recompute)
+
+- Decision: `src/index/sensitivity_recompute.py` implements
+  `PHASE6_DESIGN.md` Section 4.2's proposed architecture -- raster I/O and
+  hazard-value sampling done ONCE and cached, the perturbation-sensitive
+  chain (`age_factor` -> `Risk_i,h`, and RiskBand percentile cuts ->
+  `RiskBand_i,h` -> `PSAE_i`) recomputed per draw from that cache -- so a
+  future Sobol/Monte Carlo driver (not built here, out of this task's
+  scope) does not re-read a single raster per draw. This task does not run
+  Sobol, does not sample from SALib, and does not resolve any of Phase 6's
+  three still-open items (RNG granularity, RiskBand percentile-cut
+  dimension grouping, `psae_complete=False` treatment) -- those remain open
+  exactly as this file's "Phase 6 (Sensitivity/uncertainty) input mapping"
+  entry left them.
+- Why: a naive "call `risk_calculator.compute_risk()` fully per Saltelli
+  draw" approach was measured this session at ~29.7s/draw (3 countries,
+  both GCMs) -- projecting to ~77 days at `D=6`, `N_0=16000`
+  (`N_0*(2D+2) = 224000` evaluations, `PHASE6_DESIGN.md` Section 4.2's
+  proposed Saltelli budget). Not viable. The expensive step is raster I/O +
+  nearest-pixel sampling, which does not depend on any Sobol/Monte-Carlo
+  parameter this project has identified (`PHASE6_DESIGN.md` Section 1) --
+  raw hazard values sampled from a raster are the same regardless of
+  `age_factor` rates or RiskBand percentile-cut choices.
+- Architecture (module docstring has the full rationale):
+  - `precompute(models=None) -> PrecomputedInputs`: runs
+    `risk_calculator.sample_terms(model)` and
+    `risk_bands.sample_hazard_terms(model)` ONCE per configured GCM (kept
+    as two separate caches, not unified -- the two production sampling
+    functions already exist independently with different missing-raster
+    fallback behaviour; reconciling them is out of this task's scope), plus
+    plant attributes for `age_factor`.
+  - `recompute_risk_by_hazard(pre, model, bounds=None, rate_overrides=None)`:
+    `risk_calculator.compute_risk_by_hazard`'s exact arithmetic
+    (`transform_term`, `exposure_capacity_mw`, `risk_i_h`, `_term_bounds`,
+    called directly, not reimplemented), fed from the cache.
+  - `recompute_risk_bands(pre, model, percentile_overrides=None)`:
+    `risk_bands.percentile_band_cuts`/`_bandize`/`classify_hazard` (called
+    directly), fed from the cache; only Tier 3 percentile specs are
+    perturbable (Section 1.2's named Sobol candidate), Tier 1
+    absolute/binary cutoffs are not (not in scope per Section 1).
+  - `psae.compute_psae` is called unmodified on the recomputed
+    `RiskBandTable` -- zero duplication of any of the three modules'
+    production logic.
+  - The one necessary exception, not a violation of "call the existing
+    function, don't duplicate it": `age_factor.age_factor()` is a scalar,
+    per-row function that reads its rate constants from MODULE-LEVEL
+    GLOBALS, not parameters, so it cannot be called with a perturbed rate
+    without either monkeypatching module globals (not draw-parallel-safe)
+    or a vectorised mirror. `retention_vector`/`age_factor_vector` follow
+    the exact precedent the retired `monte_carlo.py` already established
+    for this situation (its own `_retention_vector`/`_coal_retention_vec`,
+    cross-checked against `age_factor.compute_age_factors()` row for row) --
+    `monte_carlo.py` itself is not imported (it is currently broken,
+    retired `ccrs_calculator` import, pre-existing and unrelated).
+- Correctness verified FIRST, against real data, before any speed claim
+  (task requirement, not optional): with every override omitted (nominal
+  draw), `tests/test_sensitivity_recompute.py` confirms, over the real
+  processed rasters and validated-plant CSVs:
+  - `age_factor_vector(pre.attrs)` == `age_factor.compute_age_factors()`'s
+    `age_factor` column, **exactly** (max abs diff `0.0`, not just within
+    tolerance).
+  - `recompute_risk_by_hazard(pre, model)` == `risk_calculator.
+    compute_risk_by_hazard(model)`, `np.allclose` on `hazard_i_h`/
+    `exposure_mw`/`age_factor`/`risk_i_h`, same 226,968 rows, same columns.
+  - `recompute_risk_bands(pre, model)` == `risk_bands.
+    compute_risk_bands(model)`, same 88,116 rows, identical `raw_value`,
+    identical `risk_band` labels row-for-row, identical `percentile_cuts`
+    (`band_cuts` and `all_cuts`) for every Tier 3 (hazard, bucket).
+  - `psae.compute_psae` on the recomputed `RiskBandTable` == `psae.
+    compute_psae` on the production `RiskBandTable`, identical `psae`/
+    `psae_label`/`psae_complete` per row.
+  - A perturbed draw (rates x3, percentile cuts shifted +10 points)
+    measurably changes both `Risk_i,h` and `RiskBand_i,h` output -- guards
+    against a pipeline that silently ignored its own override arguments.
+  16 tests, all passing. Full project suite: 381/381 (365 previously
+  reported + 16 new), same three pre-existing unrelated
+  `ccrs_calculator`-import failures excluded as before.
+- Real measured per-draw cost (not projected -- task requirement): 100 real
+  draws, one GCM, both chains (`sensitivity_recompute.time_n_draws`,
+  small illustrative jitter on every perturbable parameter, NOT a real
+  Sobol/SALib sample -- picking real perturbation ranges is Phase 6.2's
+  job, still open): **mean 8.27s/draw** (median 8.23s, min 8.12s, max
+  9.07s, n=100). A further 20 real draws at the naive baseline's own scope
+  (3 countries, both GCMs, nominal parameters) measured **mean 16.42s/draw**
+  (16.11-17.81s range, n=20) against the ~29.7s/draw naive baseline --
+  **a 1.81x real speedup**, projecting `D=6`/`N_0=16000` from ~77 days to
+  **~42.6 days**. Still not viable for a real Sobol run.
+- **Honest finding, not buried in the topline number: the raster-caching
+  fix itself worked exactly as designed, but a DIFFERENT, pre-existing
+  bottleneck this task was explicitly scoped not to touch now dominates.**
+  `recompute_risk_by_hazard` + `recompute_risk_bands` together cost
+  ~0.27s/model (0.137s + 0.133s, measured) -- **~110x faster** than the
+  ~14.85s/model raster-sampling half of the naive baseline (29.7s / 2
+  models) they replace. That part of this task's goal is fully achieved.
+  But `psae.compute_psae` -- called unmodified, per this task's explicit
+  instruction not to reimplement it -- costs **~7.9s per call on its own**
+  (measured directly, `tests/test_sensitivity_recompute.py`'s timing probe
+  and the `time_n_draws` breakdown), because its own implementation is a
+  Python-level `groupby` + per-group `dict(zip(...))` loop over ~32,424
+  (plant x water_scenario) groups (`psae.py:161-188`), not vectorised. At
+  two GCMs this alone is ~15.8s of the measured 16.42s/draw total -- **96%
+  of the remaining cost**, and the reason the real speedup (1.81x) is far
+  short of what raster-caching alone would suggest. Fixing this is a
+  genuinely separate task (vectorising `psae.compute_psae`, or accepting a
+  Python loop at Sobol's evaluation count), explicitly out of this task's
+  scope (instruction: do not inline/reimplement `psae.py`'s logic here) --
+  **flagged as a new open item, not resolved by this entry**: Phase 6.2
+  cannot be practically run against the current `psae.compute_psae`
+  without a follow-up performance task on that function specifically, on
+  top of (not instead of) the raster-caching fix this entry closes.
+- Scope confirmed: this entry's module does not implement Sobol sampling,
+  SALib integration, or any of Phase 6's three still-open items -- see
+  this file's "Phase 6 (Sensitivity/uncertainty) input mapping" entry,
+  unchanged and still open on those three points.
+- References: `docs/rework/PHASE6_DESIGN.md` Section 4.2 (the proposed
+  architecture this entry implements) and Section 1 (the parameter
+  inventory `rate_overrides`/`percentile_overrides` are shaped against);
+  `src/index/sensitivity_recompute.py` (new module, full docstring);
+  `tests/test_sensitivity_recompute.py` (16 tests); `src/index/
+  risk_calculator.py` (`sample_terms`, `compute_risk_by_hazard`,
+  `transform_term`, `_term_bounds`, called not duplicated); `src/index/
+  risk_bands.py` (`sample_hazard_terms`, `percentile_band_cuts`,
+  `_bandize`, `classify_hazard`, `THRESHOLD_REGISTRY`, called not
+  duplicated); `src/index/psae.py:161-188` (`compute_psae`'s groupby loop,
+  the newly identified bottleneck); `src/index/age_factor.py` (retention
+  curve constants/source functions `retention_vector` mirrors); this file,
+  "Phase 6 (Sensitivity/uncertainty) input mapping" (the three items this
+  entry does not resolve).
+- Status: **Closed (2026-09-14) for this task's scope** (raster-caching
+  recomputation pipeline, correctness-verified, real speedup measured).
+  **New item opened, not closed**: `psae.compute_psae`'s own per-draw cost
+  (~7.9s/call) is now the dominant remaining bottleneck and must be
+  addressed before a real Phase 6.2 Sobol run is practically viable -- not
+  attempted here, per this task's explicit scope.
