@@ -3433,3 +3433,129 @@ protocol-only draft (never committed as such).
   (~7.9s/call) is now the dominant remaining bottleneck and must be
   addressed before a real Phase 6.2 Sobol run is practically viable -- not
   attempted here, per this task's explicit scope.
+
+## [2026-09-14] GEAR v3 Phase 5: contextual validator layer (broad-impact only, PARTIAL)
+
+- Decision: `src/index/contextual_validators.py` implements the two-class,
+  three-state validator taxonomy Methods Section 7 already specifies --
+  `Corroborated`/`No Record`/`Not Applicable`, post-2000, per applicable
+  hazard per asset -- for the **broad-impact class (Section 7.2, EM-DAT)
+  only**. The **physical-occurrence class (Section 7.1) is NOT
+  implemented**: grep-confirmed zero IBTrACS/FIRMS (or any other
+  physical-occurrence source) acquisition code or data anywhere in this
+  project (`grep -rl "IBTrACS\|ibtracs"` and the FIRMS equivalent both
+  return nothing under `src/`; the only substring hits, in
+  `tests/test_extreme_wind_processor.py`/`tests/test_visualization.py`, are
+  "con**firms**" false positives, not `FIRMS` references). Per the standing
+  rule against acquiring new data without author confirmation, and per this
+  task's own explicit instruction, no acquisition was attempted --
+  `compute_physical_occurrence_validation()` exists as a named, explicit
+  `NotImplementedError` stop point, not a silent gap. **This is a PARTIAL
+  Phase 5 implementation, not a closed phase**, per this project's own
+  partial-closure convention -- labelled as such in the module docstring
+  and here, not reported as done.
+- Data-source availability, checked before writing any code (per this
+  task's explicit instruction, not assumed):
+  - **EM-DAT (broad-impact, Section 7.2)**: already acquired for all three
+    countries, CCRS-era work (`src/downloaders/emdat_downloader.py`,
+    `data/raw/validation/emdat_{country}.csv`, confirmed present on disk).
+    Reused as-is, no new acquisition.
+  - **IBTrACS/FIRMS/landslide/lightning (physical-occurrence, Section
+    7.1)**: **not acquired anywhere in this project.** Author decision
+    needed on which source(s) to acquire (IBTrACS for cyclone/storm-surge
+    is the only one Section 7.1 names with a specific dataset; FIRMS,
+    landslide, and lightning sources are named generically, "where
+    available and physically applicable") before this class can be
+    implemented.
+- Not the retired `src/index/emdat_validation.py` (confirmed not reusable
+  as-is, exactly as this task's brief stated): that module is a polygon-
+  level Mann-Whitney diagnostic (admin-1 polygons with vs. without a
+  geocoded event, hazard-raster zonal mean compared between the two
+  groups) -- a genuinely different design from a per-asset three-state
+  output, and currently broken besides (imports the retired
+  `ccrs_calculator`, cannot even be imported). Its `GADM Admin Units`
+  JSON-parsing logic and documented EM-DAT coverage caveats (point
+  Latitude/Longitude: 5.3-12.1% event coverage, unusable for a per-asset
+  radius search; structured `GADM Admin Units`: 50.3-52.6% coverage,
+  enough for an admin-1-polygon overlay) are reproduced (not imported --
+  cannot be) in the new module as the established, data-quality-driven
+  operationalization of Section 7.3's "location/radius" phrase for this
+  specific source. The ~47-50% of EM-DAT events with no structured
+  geocoding at all remain excluded from every validator state -- the same
+  real, non-random coverage gap (better-documented/urban disasters
+  plausibly over-represented in the geocoded half), inherited unchanged,
+  not re-investigated by this task.
+- **Disaster-type -> hazard-term mapping: inherited UNCHANGED from the
+  retired module, NOT re-derived -- flagged as an open item, not decided
+  here.** `Extreme temperature -> heat`, `Drought -> spei`, `Flood -> ws`
+  (approved by Douglas, 2026-09-04; `Flood -> ws` is the retired module's
+  own acknowledged poor match -- water STRESS, not excess water -- kept
+  only because no better v3 term existed at approval time). `Storm` stays
+  excluded. v3 now has two hazard terms that did not exist when this
+  mapping was approved and that plausibly fit better: `precip` (Extreme
+  Precipitation, days/year exceeding local P95 wet-day threshold -- a much
+  more direct "Flood" proxy than water stress) and `wind` (a real "Storm"
+  target, wired in 2026-09-14, this file's "GEAR v3 wind Risk_i,h
+  integration" entry). **Open item for author confirmation**: whether to
+  extend the mapping to `Storm -> wind` and/or replace or supplement
+  `Flood -> ws` with `Flood -> precip`. Not decided or silently extended by
+  this task -- re-deriving a disaster-type/hazard-term mapping is a
+  methodology judgment call Section 7 does not specify and this task's
+  brief did not ask for.
+- Architecture (module docstring has the full detail): `_load_admin1_
+  boundaries`/`_resolve_admin1_gid`/`_admin1_gids_from_cell` (GADM parsing,
+  reproduced from the retired module), `load_geocoded_emdat_events`
+  (per-country EM-DAT events resolved to admin-1 GIDs + start year, no
+  filter applied), `_plants_with_admin1` (point-in-polygon spatial join,
+  `risk_calculator.load_plants` x GADM admin-1 layer, `gid_1=None` kept
+  explicit for a spatial-join miss rather than dropped or guessed),
+  `compute_broad_impact_validation` (the three-state assignment: `Not
+  Applicable` for hazard terms with no EM-DAT mapping OR an unmatched
+  plant; `Corroborated`/`No Record` by counting post-2000 geocoded events
+  in the plant's `gid_1`). "Applicable hazard" (Section 7.3's phrase) is
+  operationalized as `hazard_scope.APPLICABLE_HAZARDS[bucket]` -- the same
+  H_b set RiskBand/PSAE already use, not a separately invented set.
+- Read-only guarantee (task requirement, explicit, not just claimed):
+  `tests/test_contextual_validators.py` computes
+  `risk_calculator.compute_risk_by_hazard`, `risk_bands.
+  compute_risk_bands`, and `psae.compute_psae` BEFORE running
+  `contextual_validators.compute_contextual_validation`, runs it, then
+  recomputes all three and asserts frame-level equality (numeric columns
+  `np.allclose`, categorical columns exact) -- plus a structural test
+  confirming the module's own source never imports `psae`/`risk_bands` at
+  all. All three read-only tests pass. The module also never imports
+  `risk_calculator.compute_risk_by_hazard`/`compute_risk`/`transform_term`
+  -- only `load_plants` (a pure read) and `PLANT_UID`.
+- Correctness verified against real data (all three countries): 29,372
+  rows total (Brazil 13,961, India 14,431, Portugal 980 -- 5 hazards/hydro,
+  3/thermal, 1/wind, 3/solar per plant, per `hazard_scope.
+  APPLICABLE_HAZARDS`); state counts Brazil
+  Not-Applicable/Corroborated/No-Record = 8971/3055/1935, India
+  9244/5020/167, Portugal 698/267/15. 14 plants across all three countries
+  had no admin-1 spatial-join match (`gid_1=None`) -- confirmed all their
+  rows are `Not Applicable`, not silently mis-stated. Every row for a
+  hazard term with no EM-DAT mapping (`precip`/`wind`/`sv`/`iv`) confirmed
+  `Not Applicable` regardless of location.
+- Test coverage: `tests/test_contextual_validators.py`, 19 tests -- pure
+  GADM-GID parsing (no I/O, 6 tests), three-state assignment logic against
+  real data (10 tests), the three explicit read-only guarantee tests, one
+  structural import guard. Full project suite: 400/400 (381 previously
+  reported + 19 new), same three pre-existing unrelated
+  `ccrs_calculator`-import failures excluded as before.
+- References: `docs/rework/GEAR_v3_methodology_nature_format.md` Section 7
+  (7.1/7.2/7.3, read in full before writing code, per instruction); `docs/
+  rework/GEAR_v3_work_plan.md` Phase 5; `src/index/contextual_validators.py`
+  (new module, full docstring); `tests/test_contextual_validators.py` (19
+  tests); `src/index/emdat_validation.py` (retired, not imported, GADM-
+  parsing logic reproduced); `src/downloaders/emdat_downloader.py`
+  (existing EM-DAT acquisition, reused); `src/index/hazard_scope.py`
+  (`APPLICABLE_HAZARDS`, reused as the "applicable hazard" set); this file,
+  "GEAR v3 wind Risk_i,h integration" (`wind`'s wiring date, relevant to
+  the open disaster-type-mapping item above).
+- Status: **PARTIAL, not closed.** Broad-impact class (Section 7.2):
+  implemented, correctness- and read-only-verified against real data.
+  Physical-occurrence class (Section 7.1): **not implemented, no acquired
+  source** -- explicit `NotImplementedError`, author decision needed on
+  which source(s) to acquire before it can proceed. Disaster-type/hazard-
+  term mapping extension (`Storm -> wind`, `Flood -> precip`): **open,
+  author confirmation needed**, not decided by this entry.
