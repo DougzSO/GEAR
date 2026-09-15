@@ -226,6 +226,38 @@ def test_precip_is_gcm_dependent():
     assert "precip" not in rc.FLAT_BOUND_TERMS
 
 
+def test_spei_is_linear_not_log_given_its_empirical_skew():
+    """spei's LOG_TERMS membership was inherited from the retired CCRS
+    design and never re-evaluated against a real skewness check -- unlike
+    precip/wind, which were classified from their own measured skew. The
+    published article's own Supplementary Table S3 reports Drought (SPEI)'s
+    transform as direct Min-Max for both GCMs (skew 0.36 GFDL-ESM4, 0.13
+    MIROC6 -- both under the |skew| <= 0.5 threshold), so spei must be a
+    LIN_TERM, not a LOG_TERM (Phase 3.3 correction, 2026-09-14). Asserted
+    here, not just against membership, so a future data refresh that flips
+    spei's measured skew right-skewed cannot silently leave it
+    misclassified: the reasoning behind the membership, not just the
+    membership itself, is pinned against the same skewness statistic
+    normalization.py would compute."""
+    from src.index import normalization as norm
+
+    assert "spei" in rc.LIN_TERMS
+    assert "spei" not in rc.LOG_TERMS
+
+    gfdl_skew, miroc6_skew = 0.36, 0.13
+    assert abs(gfdl_skew) <= norm.SKEWNESS_NORMAL_THRESHOLD
+    assert abs(miroc6_skew) <= norm.SKEWNESS_NORMAL_THRESHOLD
+
+
+def test_spei_frozen_bounds_unchanged_by_the_ln_terms_reclassification():
+    """FROZEN_BOUNDS is raw, pre-transform data -- moving spei from
+    LOG_TERMS to LIN_TERMS must not touch it."""
+    assert rc.FROZEN_BOUNDS["spei"] == {
+        "gfdl_esm4": (1.4441261291503906, 4.022922515869141),
+        "miroc6": (1.2722063064575195, 4.160458564758301),
+    }
+
+
 def _rasters_present() -> bool:
     try:
         p = rc.raster_path("heat", "Brazil", "opt", rc.configured_models()[0])

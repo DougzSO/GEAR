@@ -78,11 +78,32 @@ different outcome; neither was assumed from the other. As of this entry,
 Phase 3.3 entry below.
 
 --------------------------------------------------------------------------
+Drought (``spei``) -- reclassified to ``LIN_TERMS`` (Phase 3.3 correction,
+2026-09-14)
+--------------------------------------------------------------------------
+``spei``'s ``LOG_TERMS`` membership was inherited unchanged from the
+retired CCRS design (``ws``/``heat``/``spei`` were ``LOG_TERMS`` from
+Phase 1 onward) and, unlike ``precip``/``wind``, was never re-evaluated
+against this project's own empirical skewness check. The published
+article's own Supplementary Table S3 reports Drought (SPEI)'s transform as
+**direct Min-Max** for both GCMs (skew 0.36 GFDL-ESM4, 0.13 MIROC6 --
+both under the ``|skew| <= 0.5`` "fairly symmetrical" threshold,
+``normalization.SKEWNESS_NORMAL_THRESHOLD``, that selects ``direct_minmax``
+over ``neg_log_minmax``). ``spei`` therefore moves to ``LIN_TERMS``,
+corrected in place here rather than left as a silent divergence between the
+already-published methodology text and this module's code -- the same
+empirical-skew rule already applied to ``precip`` and ``wind``, not a new
+rule invented for this correction. ``FROZEN_BOUNDS["spei"]`` is untouched:
+the raw bounds are transform-independent (only the transform function
+applied to them changes). See ``docs/DECISIONS.md``, "GEAR v3: spei
+reclassified from LOG_TERMS to LIN_TERMS (Phase 3.3 correction)".
+
+--------------------------------------------------------------------------
 Phase 3.3: ``LOG_TERMS`` transform is ``-ln(1-x)``, not ``log1p``
 --------------------------------------------------------------------------
 Closed 2026-09-14 (``docs/DECISIONS.md``, "Phase 3.3 scope over `wind`:
 closed -- `-ln(1-x)` applied to all of `LOG_TERMS`"). ``Tlog`` for every
-term in ``LOG_TERMS`` (``ws``, ``heat``, ``spei``, ``wind``) is now
+term in ``LOG_TERMS`` at the time (``ws``, ``heat``, ``spei``, ``wind``) was
 ``normalization.transform_neg_log_minmax``'s mechanism, reproduced in
 ``transform_term`` below rather than imported (``normalization.py`` imports
 this module, so the reverse import would be circular): the raw value is
@@ -213,16 +234,22 @@ logger = logging.getLogger(__name__)
 # closed".
 HAZARD_TERMS = ("ws", "heat", "sv", "iv", "spei", "precip", "wind")
 # `wind` -> LOG_TERMS on its OWN measured skew (+0.6215, right-skewed,
-# |skew| > 0.5), not by assumed parity with ws/heat/spei: the same empirical
+# |skew| > 0.5), not by assumed parity with ws/heat: the same empirical
 # normality_check rule that put `precip` in LIN_TERMS (its measured skew was
 # not right-skewed) puts `wind` in LOG_TERMS because its measured skew IS
 # right-skewed and significant -- see docs/DECISIONS.md for the full
 # skewness/Shapiro readout this classification is based on.
-# `Tlog` is `-ln(1-x)` (not `log1p`) for every member as of Phase 3.3,
-# closed 2026-09-14 -- see the module docstring's "Phase 3.3" section and
-# docs/DECISIONS.md, "Phase 3.3 scope over `wind`: closed".
-LOG_TERMS = frozenset({"ws", "heat", "spei", "wind"})   # -ln(1-x) -> Min-Max
-LIN_TERMS = frozenset({"sv", "iv", "precip"})           # linear Min-Max
+# `spei` -> LIN_TERMS (Phase 3.3 correction, 2026-09-14): reclassified from
+# LOG_TERMS, where it had sat unevaluated since Phase 1 (an inherited CCRS
+# default, not a measured skew). The published article's own Table S3
+# reports SPEI's transform as direct Min-Max for both GCMs (skew 0.36/0.13,
+# both |skew| <= 0.5) -- see docs/DECISIONS.md, "GEAR v3: spei reclassified
+# from LOG_TERMS to LIN_TERMS (Phase 3.3 correction)".
+# `Tlog` is `-ln(1-x)` (not `log1p`) for every LOG_TERMS member as of
+# Phase 3.3, closed 2026-09-14 -- see the module docstring's "Phase 3.3"
+# section and docs/DECISIONS.md, "Phase 3.3 scope over `wind`: closed".
+LOG_TERMS = frozenset({"ws", "heat", "wind"})           # -ln(1-x) -> Min-Max
+LIN_TERMS = frozenset({"sv", "iv", "spei", "precip"})   # linear Min-Max
 # Terms whose global bound is per-GCM (magnitudes are not model-comparable);
 # every other term's bound is a single flat pair pooling all GCMs. `wind` has
 # no GCM axis at all (single ERA5 product, no CMIP6 model/scenario) -- it
@@ -515,7 +542,7 @@ TLOG_UPPER_TAIL_PADDING_FRACTION = 0.05
 
 
 def transform_term(term: str, raw: np.ndarray, lo: float, hi: float) -> np.ndarray:
-    """``Tlog`` for ws/heat/spei/wind, ``Tlin`` for sv/iv/precip -- this IS
+    """``Tlog`` for ws/heat/wind, ``Tlin`` for sv/iv/spei/precip -- this IS
     ``Hazard_{i,h}`` for the term: a per-hazard [0, 1] normalization, never
     combined with any other term's transformed value. ``lo``/``hi`` are RAW
     bounds.

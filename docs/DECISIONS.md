@@ -3225,3 +3225,76 @@ protocol-only draft (never committed as such).
   silent drop or a bare NaN indistinguishable from a computed 0.0). Every
   other PSAE mechanic already confirmed sourced in this entry's mapping
   section above is unchanged and not reopened by this closure.
+
+## [2026-09-14] GEAR v3: spei reclassified from LOG_TERMS to LIN_TERMS (Phase 3.3 correction)
+
+- Decision: `spei` (Drought) moves from `risk_calculator.LOG_TERMS` to
+  `risk_calculator.LIN_TERMS` -- `Tlin` (direct Min-Max), not `Tlog`
+  (`-ln(1-x)`), is now applied to it. `FROZEN_BOUNDS["spei"]` is
+  **unchanged**: raw, pre-transform bounds are transform-independent (this
+  project's established convention, unaffected by which transform function
+  is later applied to them) -- only the transform function changes.
+- Why: `spei`'s `LOG_TERMS` membership was inherited unchanged from the
+  retired CCRS design (`ws`/`heat`/`spei` were `LOG_TERMS` from Phase 1
+  onward) and was never re-evaluated against this project's own empirical
+  skewness check (`normalization.normality_check`,
+  `SKEWNESS_NORMAL_THRESHOLD = 0.5`, Bulmer 1979) -- unlike `precip` and
+  `wind`, both of which were classified from their own measured pooled
+  skew (this file, "Phase 3.3 scope over `wind`: closed" and the `precip`
+  wiring entries). This is a real divergence between code and
+  already-published methodology text, not a hypothetical: the published
+  article's own Supplementary Table S3 (already cited in this file, "CCRS
+  global Min-Max bounds... Reopened... Closed") reports Drought (SPEI)'s
+  `Transform` column as **`direct Min-Max`** for both GCMs -- skew 0.36
+  (GFDL-ESM4) and 0.13 (MIROC6), both under the `|skew| <= 0.5` "fairly
+  symmetrical" threshold that selects `direct_minmax` over
+  `neg_log_minmax` per `normalization.py`'s own selection rule. This
+  correction applies the same empirical-skew rule already applied to
+  `precip`/`wind` to `spei` for the first time, rather than inventing a
+  new rule; it makes `spei`'s treatment consistent with `precip` and
+  `wind`, which were already classified from their own measured skew
+  rather than an inherited default.
+- Scope confirmed, not assumed: grepped `src/` for every `LOG_TERMS`/
+  `LIN_TERMS`/`spei` occurrence before making this change.
+  `risk_bands.py` classifies `spei` on its **raw** values via a Tier 3
+  percentile `ThresholdSpec` (`risk_bands.py:234-235`), never reading
+  `risk_calculator.LOG_TERMS`/`LIN_TERMS` at all -- unaffected by
+  construction. `psae.py` does not import `risk_calculator` at all
+  (confirmed by grep, no `risk_calculator`/`rc` import in the file) --
+  zero exposure, direct or indirect. `correlation_gate.py` operates on raw
+  sampled raster values for its correlation statistics and never
+  references `LOG_TERMS`/`LIN_TERMS` -- also unaffected. The only module
+  outside `risk_calculator.py` carrying prose naming `spei` as a
+  `LOG_TERMS` member was `normalization.py`'s module docstring (a
+  historical description of what Phase 3.3 applied on 2026-09-14, before
+  this same-day correction) -- updated in place to state the current
+  membership and cite this entry, not left to silently drift from the
+  code.
+- Test coverage: `tests/test_risk_calculator.py`,
+  `test_spei_is_linear_not_log_given_its_empirical_skew` (mirrors
+  `test_precip_is_linear_not_log_given_its_empirical_skew`'s pattern;
+  asserts membership in `LIN_TERMS`/absence from `LOG_TERMS` AND pins the
+  Table S3 skew values themselves against
+  `normalization.SKEWNESS_NORMAL_THRESHOLD`, not just a tautological
+  membership check) and `test_spei_frozen_bounds_unchanged_by_the_ln_
+  terms_reclassification` (pins `FROZEN_BOUNDS["spei"]` byte-for-byte
+  against its pre-change value). Full suite: 365/365 passing (365 = the
+  363 previously reported passing, plus these 2 new tests), excluding the
+  same three pre-existing, unrelated `ccrs_calculator`-import failures
+  already logged in this file (`test_main.py`/`test_monte_carlo.py`/
+  `test_visualization.py`).
+- References: `src/index/risk_calculator.py:59-99,224-249,517-518`
+  (module docstring, `LOG_TERMS`/`LIN_TERMS`, `transform_term` docstring);
+  `src/index/normalization.py:17-25` (docstring correction);
+  `src/index/risk_bands.py:234-235` (`spei`'s Tier 3 `ThresholdSpec`,
+  raw-value, unaffected); `src/index/psae.py` (no `risk_calculator`
+  import, confirmed by grep); `src/index/correlation_gate.py` (raw-value
+  correlation only, no `LOG_TERMS`/`LIN_TERMS` reference); `tests/
+  test_risk_calculator.py` (two new tests, above); this file, "CCRS
+  global Min-Max bounds... Reopened... Closed" (Table S3's original
+  citation into this repository) and "Phase 3.3 scope over `wind`:
+  closed" (the `-ln(1-x)` mechanism `spei` no longer uses).
+- Status: **Closed (2026-09-14).** `spei` is `LIN_TERMS`; `FROZEN_BOUNDS`
+  untouched; `risk_bands.py`/`psae.py`/`correlation_gate.py` confirmed
+  unaffected, not merely assumed unaffected from the dependency graph;
+  full test suite green.

@@ -20,9 +20,13 @@ recommendation to ``risk_calculator.py``'s ``LOG_TERMS`` transform on
 module's ``transform_neg_log_minmax`` mechanism directly (not imported --
 this module imports ``risk_calculator``, so the reverse import would be
 circular), for every current ``LOG_TERMS`` member (``ws``, ``heat``,
-``spei``, ``wind``). ``FROZEN_BOUNDS`` itself (raw, pre-transform min/max)
-is unaffected -- only the transform formula applied to those bounds
-changed.
+``wind``). ``spei`` was also ``LOG_TERMS`` on 2026-09-14 but was
+reclassified to ``LIN_TERMS`` in a later same-day correction (an inherited,
+never-re-evaluated CCRS default; the published article's own Table S3
+reports its transform as direct Min-Max -- see ``docs/DECISIONS.md``, "GEAR
+v3: spei reclassified from LOG_TERMS to LIN_TERMS (Phase 3.3 correction)").
+``FROZEN_BOUNDS`` itself (raw, pre-transform min/max) is unaffected -- only
+the transform formula applied to those bounds changed.
 
 --------------------------------------------------------------------------
 Candidate hazard set -- run uniformly, no special-casing
