@@ -1,5 +1,18 @@
 # 01 — Visão geral
 
+**Conteúdo abaixo escrito em 2026-09-04, antes do início da reconstrução
+GEAR v3 (Fase 1, 2026-09-11).** Descreve a camada de índice CCRS
+(`ccrs_calculator`/`ccrs_report`/`event_multiplier`) como implementação
+corrente — isso não é mais verdade: esses módulos foram deletados na Fase 1
+e substituídos por `Risk_i,h`/`RiskBand_i,h`/`PSAE_i`
+(`risk_calculator.py`/`risk_bands.py`/`psae.py`). Mantido como registro
+histórico de como o projeto começou (CLAUDE.md Seção 4 não trata este
+arquivo como append-only, mas reescrevê-lo por completo está fora do escopo
+da reconciliação de documentação da Fase 8). **Para o estado corrente do
+projeto e em que fase está, leia `docs/PROJECT_STATE_SNAPSHOT.md` (auditoria
+verificada contra código real, 2026-09-14+) e `docs/memory/02-arquitetura.md`
+(reconciliado na Fase 8) em vez do texto abaixo.**
+
 Pipeline Python de dados geoespaciais/climáticos para o artigo GEAR (risco
 climático de infraestrutura de geração elétrica em Brasil, Portugal e Índia).
 Roda localmente, sem frontend, sem CI.

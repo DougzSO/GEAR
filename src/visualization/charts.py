@@ -1022,13 +1022,10 @@ def plot_figure7_montecarlo_stability_pes(
 # atypical ones -- exactly the failure mode Douglas flagged.
 #
 # --------------------------------------------------------------------------
-# 2026-09-05 review -- box+strip for EVERY country, violin dropped entirely
+# Box+strip for EVERY country; no violin chart type in this figure.
 # --------------------------------------------------------------------------
-# Douglas found box+strip (previously used only for Portugal, ~438 unique
-# plants) more useful to read than violin (previously used for Brazil/India,
-# ~5,150 / ~4,580 unique plants) and asked whether box+strip is viable at
-# that larger volume too, rather than keeping two different chart types.
-# Investigated: a full, unthinned strip at Brazil/India's volume (~15,000
+# Rationale/history: docs/memory/05-decisoes-tecnicas.md item 21.
+# At Brazil/India's plant volume, a full, unthinned strip (~15,000
 # points per panel-row across 3 terms) would be a solid smear -- individual
 # points stop being distinguishable well before that count, and overplotting
 # would misrepresent density (a region with 50 overlapping points looks the

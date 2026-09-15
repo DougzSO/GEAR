@@ -137,7 +137,12 @@
 
 ## TODOs que bloqueiam fases seguintes
 
-- **Camada de índice (CCRS) — completa.**
+- **Camada de índice (CCRS) — histórico, retirada da arquitetura corrente
+  desde a Fase 1 v3 (2026-09-11). Não é mais um TODO ativo; mantido como
+  registro de como a camada anterior estava fechada.** Para o estado
+  corrente (Risk_i,h/RiskBand/PSAE, Fases 1-4 fechadas, Fase 5 parcial,
+  Fase 6 infraestrutura only, Fase 7 não iniciada), ver
+  `docs/memory/02-arquitetura.md` e `docs/PROJECT_STATE_SNAPSHOT.md`.
   `ccrs_calculator.py` (Hazard, incl. o 3º termo aditivo de seca SPEI),
   `risk_bands.py` (Water/HeatRiskBand), `age_factor.py` (multiplicador `≥ 1`),
   `event_multiplier.py` (multiplicador `≥ 1` por país), `ccrs_report.py`
@@ -180,9 +185,12 @@
   extraída de Kim & Moon (2012) / Sagaf (2020)** (essas fontes só dão a taxa
   de 0,25 pp/ano) — marcado provisório/estimado, revisável se surgir dado real
   de overhaul.
-- **`age_factor` gas/oil-gas é provisório.** Sem taxa na literatura dos docs →
-  pinado em 1,0. Revisitar se surgir fonte. `docs/DECISIONS.md` marca o status
-  como provisório.
+- **`age_factor` gas/oil-gas — pinado em 1,0, status FINAL (não mais
+  provisório).** Confirmado final 2026-09-11 após busca bibliográfica
+  limitada (nenhuma fonte Tier 1/2 do tipo necessário; Grubert 2020 mostra
+  sinal de frota oposto, não isolável por planta) — `docs/DECISIONS.md`,
+  "Gas/oil-gas age_factor: pinned-neutral treatment confirmed final".
+  Revisitar só se surgir fonte calendário-indexada nova.
 - **Índia: 9,7% das plantas sem `commissioning_year`** (494/5083, vs BR 1,8% e
   PT 2,4%) → rodam com `age_factor = 1,0` neutro. Não é bug de parsing (o
   mesmo código lê BR/PT sem problema; hydro/thermal da Índia leem bem). A
@@ -192,18 +200,22 @@
   plantas indianas no CCRS carrega idade neutra por falta de dado. Declarar
   no manuscrito. As linhas são **mantidas** e sinalizadas
   (`age_factor_neutralized_missing_year`), nunca excluídas.
-- **Montagem do CCRS depende de `ccrs_hazard.csv` estar atualizado.**
-  `ccrs_report.assemble_ccrs` (fonte única de verdade) levanta se algum
-  `plant_uid` do CSV não tiver `age_factor` (CSV gerado com esquema de
-  `plant_uid` antigo). Regerar com `python -m src.index.ccrs_calculator`. Os
-  probes isolados de um passo só (`age_factor_apply_to_hazard`,
-  `event_multiplier_apply_to_hazard`) vivem em
-  `tests/diagnostics/hazard_step_probes.py` — não são código de produção.
-- **Trava de regressão de bounds depende dos rasters em disco.**
-  `test_ccrs_calculator::test_frozen_bounds_match_recomputed_from_data` lê os
-  rasters processados; é **pulado com motivo** (não passa em silêncio) se
-  ausentes. Num checkout sem `data/processed/` a trava não roda — rodar
-  `python -m src.index.ccrs_calculator --check-bounds` depois de reprocessar.
+- **(Histórico, CCRS-era, módulo deletado) Montagem do CCRS dependia de
+  `ccrs_hazard.csv` estar atualizado.** `ccrs_report.assemble_ccrs` (fonte
+  única de verdade, agora deletada) levantava se algum `plant_uid` do CSV
+  não tivesse `age_factor`. O equivalente corrente em v3 é
+  `risk_calculator.compute_risk_by_hazard`, que não depende de um CSV
+  intermediário regravado — lê os rasters diretamente. Os probes isolados
+  antigos (`age_factor_apply_to_hazard`, `event_multiplier_apply_to_hazard`)
+  em `tests/diagnostics/hazard_step_probes.py` não são código de produção e
+  referenciam a montagem CCRS-era, não a v3.
+- **Trava de regressão de `FROZEN_BOUNDS` depende dos rasters em disco.**
+  Ainda verdadeiro em v3 (`risk_calculator.py`'s equivalente da trava de
+  regressão, mesma lógica herdada do `ccrs_calculator` original) — pulada
+  com motivo se `data/processed/` ausente, não passa em silêncio.
+  `python -m src.index.ccrs_calculator --check-bounds` (citado antes) está
+  quebrado desde a Fase 1; o comando v3 equivalente é o CLI de
+  `risk_calculator.py` (`--help` para os flags reais).
 - **HeatRiskBand não é comparável entre rodadas.** Cortes p25/p75/p95
   dependem do pool de amostra (GFDL-ESM4, 3 cenários) — reprocessar rasters de
   calor, mudar cenário/GCM ou o conjunto de plantas move os cortes
@@ -229,17 +241,26 @@
 
 ## Limitações metodológicas herdadas (declarar no manuscrito — ver `ARCHITECTURE.md`)
 
-*(Parágrafo em inglês; V1–V6 todos fechados, arquitetura CCRS.)*
+*(Parágrafo em inglês; V1–V6 todos fechados, arquitetura CCRS — pré-v3,
+histórico. Onde a limitação de dado é a mesma em v3, dito abaixo; onde a
+linguagem é específica da montagem CCRS retirada, marcado como tal.)*
 
 Heat still without bias-correction/ensemble weighting — the mandatory second
 GCM (MIROC6, V4) is the mitigation on record, downloaded and processed
-(2 GCMs × 3 scenarios); GFDL-ESM4 is the primary GCM for every cited CCRS
-figure and MIROC6 a sensitivity panel, never a 50/50 blend
-(`ARCHITECTURE.md` §5.4). Aqueduct sentinel basins substituted by
-`country_max`. The `Status == operating` filter caps the most recent
-commissioning year, feeding `age_factor`. `event_factor` becomes
-`EventMultiplier_c` — a per-country EM-DAT frequency multiplier on the CCRS
-score (V2), `1 + 0.5·(rate_c/rate_max)`. `fuel_factor` removed entirely
-(V5 closed). `HeatRiskBand` has no published absolute threshold and uses
-sample-relative percentile cuts, GCM-sensitive — declared limitation
-(`ARCHITECTURE.md` §10).
+(2 GCMs × 3 scenarios); GFDL-ESM4 is the primary GCM for every hazard figure
+and MIROC6 a sensitivity panel, never a 50/50 blend — still true in v3
+(`FROZEN_BOUNDS` computed per-GCM, never blended). Aqueduct sentinel basins
+substituted by `country_max` — still true in v3 (same processor layer,
+unchanged). The `Status == operating` filter caps the most recent
+commissioning year, feeding `age_factor` — still true in v3 (`age_factor.py`
+reused unchanged). **CCRS-era only, retired language, not part of v3**:
+`event_factor` became `EventMultiplier_c`, a per-country EM-DAT frequency
+multiplier on the CCRS score (V2), `1 + 0.5·(rate_c/rate_max)` —
+`risk_calculator.Risk_i,h` has no such term; EM-DAT is now consumed
+differently, as a Phase 5 contextual-validator input
+(`contextual_validators.py`, read-only, never a score multiplier).
+`fuel_factor` removed entirely (V5 closed, still true). `HeatRiskBand` (a
+CCRS-era-specific label; the v3 equivalent is `RiskBand_i,h` for the `heat`
+term) has no published absolute threshold and uses sample-relative
+percentile cuts, GCM-sensitive — declared limitation, still true in v3
+(`risk_bands.THRESHOLD_REGISTRY`'s Tier 3 percentile entries for `heat`).

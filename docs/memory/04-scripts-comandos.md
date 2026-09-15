@@ -90,42 +90,42 @@ modelo/cenário) -- rodar sem `--year` baixa o baseline inteiro
 processors novos está plugado em `risk_calculator.HAZARD_TERMS` ainda
 (Fase 2.5/3 pendentes) -- ver `docs/DECISIONS.md`.
 
-## Camada de índice (CCRS)
+## Camada de índice (CCRS-era, RETIRADA — NÃO RODA)
+
+**Todos os comandos abaixo estão quebrados (`ImportError: cannot import name
+'ccrs_calculator'`), por design, desde a Fase 1 da reconstrução v3
+(2026-09-11) — `ccrs_calculator.py`/`ccrs_report.py` foram deletados, não
+depreciados. Mantidos aqui só como registro histórico de como a camada
+CCRS-era era operada; não copie/rode.** Ver `docs/memory/02-arquitetura.md`,
+bloco "Módulos CCRS-era", e `docs/PROJECT_STATE_SNAPSHOT.md`.
 
 ```
-# termo Hazard_{i,s} por planta/cenário, GFDL-ESM4 e MIROC6 em colunas
-# separadas -> data/outputs/tables/ccrs_hazard.csv
+# (histórico, quebrado) termo Hazard_{i,s} -> ccrs_hazard.csv
 .venv\Scripts\python -m src.index.ccrs_calculator
-
-# só confere os bounds globais congelados contra os rasters em disco (não escreve)
-.venv\Scripts\python -m src.index.ccrs_calculator --check-bounds
-
-# WaterRiskBand + HeatRiskBand por planta (colunas separadas) + relatório
-# -> data/outputs/tables/ccrs_risk_bands.csv e ccrs_risk_bands_report.md
+# (histórico, quebrado) WaterRiskBand + HeatRiskBand -> ccrs_risk_bands.csv
 .venv\Scripts\python -m src.index.risk_bands [--heat-gcm gfdl_esm4|miroc6]
-
-# age_factor (>= 1, 2 - retention(age)) por plant_uid.
-# -> ccrs_age_factors.csv, age_factor_report.md
-# (a montagem Hazard x age_factor x EventMultiplier e' src.index.ccrs_report)
+# (histórico, quebrado) age_factor -> ccrs_age_factors.csv
 .venv\Scripts\python -m src.index.age_factor
-
-# EventMultiplier_c (>= 1, 1 + 0.5*rate_c/rate_max) por país, a partir de
-# data/raw/validation/emdat_{país}.csv -> ccrs_event_multipliers.csv
+# (histórico, quebrado) EventMultiplier_c -> ccrs_event_multipliers.csv
 .venv\Scripts\python -m src.index.event_multiplier
-
-# CCRS_i,s = Hazard x age_factor x EventMultiplier (produto, T1xT2xT3) +
-# bandas de T4 juntadas + relatório de % capacidade por banda/contingência.
-# Precisa de ccrs_hazard.csv já gerado (python -m src.index.ccrs_calculator);
-# age_factor/event_multiplier/risk_bands são recalculados dentro do módulo.
-# -> ccrs_final.csv, ccrs_water_band_capacity_shares.csv,
-#    ccrs_heat_band_capacity_shares.csv, ccrs_report.md
+# (histórico, quebrado) montagem final CCRS_i,s -> ccrs_final.csv, ccrs_report.md
 .venv\Scripts\python -m src.index.ccrs_report
 ```
 
-`risk_bands` depende dos rasters brutos (via `ccrs_calculator.sample_terms`).
-`--heat-gcm miroc6` gera o painel de sensibilidade (percentis do próprio
-MIROC6, nunca blend). O relatório sempre traz o aviso literal de que o
-HeatRiskBand não é comparável entre rodadas com pool diferente.
+## Camada de índice v3 (corrente)
+
+Cada módulo tem seu próprio CLI (`argparse`, `python -m src.index.<módulo>
+--help` lista os flags reais — não reproduzidos aqui em detalhe, gap
+conhecido, fora do escopo desta tarefa de reconciliação). Ordem de execução:
+`risk_calculator` -> `risk_bands` -> `psae` -> `contextual_validators`
+(Fase 5, parcial) -> `sensitivity_recompute` (Fase 6, infraestrutura, não a
+análise de sensibilidade em si). `hazard_scope.py`, `normalization.py` e
+`correlation_gate.py` não têm CLI de produção standalone com esse propósito
+final (o gate/normalização são módulos de recomendação, rodados uma vez
+contra dado real — ver `docs/DECISIONS.md`). `age_factor.py` (reaproveitado
+sem reescrita do CCRS-era) mantém seu CLI original, hoje consumido por
+`risk_calculator.compute_risk_by_hazard`, não por um módulo de montagem
+separado (que não existe mais).
 
 `event_multiplier` depende de `data/raw/validation/emdat_{país}.csv` já
 baixado (`python -m src.downloaders.emdat_downloader`) — não roda o

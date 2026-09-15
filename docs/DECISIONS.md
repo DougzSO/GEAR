@@ -4163,6 +4163,93 @@ protocol-only draft (never committed as such).
   cost and projected Phase 6.2 runtime both re-measured, not projected
   from the prior entry's numbers alone.
 
+## [2026-09-03] Sea-level rise (SLR) excluded from the hazard set (formal entry, Phase 8.1)
+
+- Decision: SLR is not modeled as a hazard for any bucket or country, for
+  any GEAR version.
+- Reason: No defensible empirical basis (per-technology coastal-flooding/
+  storm-surge coefficients) exists for the land-based fleet studied.
+  Declared out of scope from the outset; no alternative was formally
+  investigated at the time.
+- Status: **Revisitable** — "a natural extension once per-technology
+  coefficients for coastal flooding and storm surge are available"
+  (explicit, not closed against future work).
+- Note (Phase 8.1, this entry): this decision was made and dated
+  2026-09-03 and has been carried in `docs/ARCHITECTURE.md` Section 10
+  ("What GEAR does not do") and `docs/rework/
+  GEAR_v3_methodology_nature_format.md` Section 10 ever since, and has had
+  a `docs/LIMITATIONS.md` row since that file's creation — but never its
+  own dated entry in this log, which this project's binding convention
+  (`docs/LIMITATIONS.md` preamble: "a `docs/DECISIONS.md` entry alone is
+  not sufficient... this file is updated in the same sitting", and its
+  converse — every `LIMITATIONS.md` row needs a `DECISIONS.md` entry to
+  point to) requires. This entry formalizes the existing, unchanged
+  reasoning; it does not re-derive or revise it.
+- References: `docs/LIMITATIONS.md`, "2026-09-03 — Sea-level rise (SLR)
+  excluded from the hazard set" (the row this entry formalizes, content
+  unchanged); `docs/ARCHITECTURE.md` Section 10; `docs/rework/
+  GEAR_v3_methodology_nature_format.md` Section 10; `hazard_scope.
+  DEFERRED_OR_EXCLUDED_HAZARDS = ("wildfire", "slr")`.
+
+## [2026-09-15] Phase 6 (Sensitivity/uncertainty) implementation-status closure attempt: NOT closed, partial status recorded (Phase 8.2)
+
+- Decision: this entry records Phase 6's real implementation status as of
+  this task, per the work plan's Phase 8.2 item ("Monte Carlo
+  implementation-status closure"). It does **not** close Phase 6 and does
+  **not** resolve the RNG-granularity open item — checked directly against
+  the repository before writing this entry, not assumed.
+- What is actually done (verified this session, by code/commit, not by
+  work-plan text): `src/index/sensitivity_recompute.py` exists and is
+  correctness- and read-only-verified (16 tests,
+  `tests/test_sensitivity_recompute.py`) — a partial-recomputation
+  pipeline that recomputes only the `age_factor -> RiskBand -> PSAE` chain
+  per draw instead of re-running the full pipeline. Combined with the
+  `psae.compute_psae` vectorization (commit `84644e4`, this file's
+  immediately preceding entry), the real measured per-draw cost fell from
+  an original ~29.7s/draw naive baseline to **~0.9724s/draw**, projecting
+  a `D=6`, `N_0=16000` Saltelli run (224,000 evaluations) at **~2.52 days**
+  — down from an original ~77-day naive projection. This performance work
+  is closed and is not reopened by this entry.
+- What is **not** done (verified this session, by direct grep, not
+  inferred): no Sobol sampling, no SALib integration, and no actual
+  sensitivity-index run exist anywhere in this repository —
+  `grep -rn "SALib\|saltelli\|Sobol sampling"` across `src/` and
+  `docs/DECISIONS.md` returns only design-document references
+  (`docs/rework/PHASE6_DESIGN.md`) and this file's own prose describing
+  the gap, never an executed run or a results table. `src/index/
+  monte_carlo.py` remains the CCRS-era, broken-by-design module (imports
+  the retired `ccrs_calculator`) and is not a Phase 6 implementation.
+- **RNG-granularity question (work-plan item 3): still open, not resolved
+  by this entry or any entry before it.** Whether Phase 6's RNG streams
+  are keyed per-country or per-country-scenario has no author-confirmed
+  answer for the current (post-CCRS) parameter set, and whether
+  `config.RANDOM_SEED` is reused or a new seed constant is introduced for
+  Phase 6 is likewise undecided — confirmed unresolved as of the last
+  entry touching Phase 6 before this one (the `psae.compute_psae`
+  vectorization entry, 2026-09-14: "Phase 6's three still-open items (RNG
+  granularity, RiskBand percentile-cut dimension grouping,
+  `psae_complete=False` treatment)... untouched, still open"). This entry
+  does not invent an answer; the question remains open pending author
+  input.
+- The other two Phase 6 open items (RiskBand percentile-cut Sobol-
+  dimension grouping granularity; `psae_complete=False` rows' treatment
+  under Sobol/OAT) are likewise unresolved and unchanged by this entry.
+- Status: **Open — infrastructure/performance sub-work closed, the
+  sensitivity analysis itself not run.** Per this project's binding
+  partial-closure convention, this is recorded as open/partial, not
+  rounded up to "closed." Phase 8.2 cannot close until a real Sobol/SALib
+  run exists and the RNG-granularity, dimension-grouping, and
+  `psae_complete` questions all have author-confirmed answers.
+- References: `src/index/sensitivity_recompute.py`; this file, "GEAR v3
+  Phase 6: partial-recomputation pipeline (raster caching + perturbed-
+  chain recompute)" (2026-09-14) and "GEAR v3 psae.py performance fix:
+  vectorised compute_psae" (2026-09-14, the two entries whose closed scope
+  this entry does not reopen); this file, "Phase 6 (Sensitivity/
+  uncertainty) input mapping" (the entry naming the three still-open
+  items); `docs/rework/PHASE6_DESIGN.md`; `docs/PROJECT_STATE_SNAPSHOT.md`
+  (2026-09-14 snapshot, now stale on Phase 6 — see Phase 8 reconciliation
+  notes).
+
 ## [2026-09-15] GEAR v3 Phase 6 parallelization: multiprocessing across draws, real 2.25x/67x speedup, ~1.14 days projected
 
 - Decision: `src/index/sensitivity_recompute.py` gains

@@ -592,8 +592,7 @@ applied uniformly, regardless of the expected sign of the relationship
 Drought). The expected direction is reported alongside the coefficient,
 but does not change the exclusion rule: any |r| >= 0.80, positive or
 negative, indicates redundant information and excludes the candidate
-from that bucket's applicable set. This replaces the asymmetric cutoff
-in the prior draft (r > -0.85 for precipitation).
+from that bucket's applicable set.
 
 Wildfire's candidate pairs (Wildfire vs. Extreme Heat, Wildfire vs.
 Water Stress) are removed from this gate's scope along with the hazard
