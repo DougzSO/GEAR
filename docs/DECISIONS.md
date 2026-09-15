@@ -5141,3 +5141,29 @@ open item carried forward is not a Phase 6 mechanics gap but a
 manuscript-writing dependency: the `coal_overhaul_recovery` caveat's
 drafted Results/Discussion prose has no destination file yet (see
 above) and must be placed once the actual manuscript draft exists.
+
+## TODO (2026-09-15) — References.md instantiation trigger + pre-saved Kuzma entry
+
+- **Trigger, exact condition (author-set):** if the citation volume used
+  across the manuscript drafts doubles relative to its count as of this
+  entry before Phase 7 starts, `References.md` must be instantiated
+  **immediately** — not deferred to Phase 7 itself, not batched with any
+  other documentation task.
+- **Pre-saved entry, for the moment `References.md` is created** (verified
+  in this session's citation audit as a real, correctly-attributed source
+  for the Aqueduct 4.0 SSP-RCP crosswalk cited in
+  `GEAR_v3_METHODS_DRAFT.md:134` — see this file's "Aqueduct 4.0 SSP-RCP
+  identities" audit entry above for the flagging context):
+
+  ```
+  Kuzma, S., M.F.P. Bierkens, S. Lakshman, T. Luo, L. Saccoccia,
+  E. H. Sutanudjaja, and R. Van Beek. (2023). "Aqueduct 4.0: Updated
+  decision-relevant global water risk indicators." Technical Note.
+  Washington, DC: World Resources Institute. DOI: 10.46830/writn.23.00061.
+  ```
+
+- **Status:** open, condition-based — not yet triggered (citation count has
+  not been re-counted against a doubling threshold as of this entry). Carry
+  forward at every future citation-related task until either the trigger
+  fires or Phase 7 begins with `References.md` already instantiated by
+  other means.
