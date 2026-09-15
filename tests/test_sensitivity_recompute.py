@@ -171,6 +171,73 @@ def test_recompute_draw_with_perturbed_params_changes_output(pre, model):
 
 
 # --------------------------------------------------------------------------
+# Parallel execution (2026-09-15) -- multiprocessing correctness, same
+# standard as the rest of this module: real data, numerically identical to
+# the already-established serial reference, not just "looks right". These
+# actually exercise the real spawn/pickle/IPC path (not just the in-process
+# logic), so they double as the platform-safety check the task asked for.
+# --------------------------------------------------------------------------
+def _serial_summary(draw) -> dict:
+    return {
+        "mean_risk_i_h": float(draw.risk_by_hazard["risk_i_h"].mean()),
+        "mean_psae": float(draw.psae.frame["psae"].mean(skipna=True)),
+    }
+
+
+def test_run_draws_parallel_matches_serial_at_nominal_values(pre):
+    """No overrides (nominal draw) -> the parallel path's per-model summary
+    must numerically match the serial path's own -- proves the pickled
+    `pre`/override dicts survive the spawn/IPC round trip unchanged, not
+    just that the reduction formula is written correctly somewhere."""
+    serial = sr.recompute_draw_all_models(pre)
+    expected = {m: _serial_summary(draw) for m, draw in serial.items()}
+
+    parallel_results = sr.run_draws_parallel(pre, [({}, {})], n_workers=2)
+    assert len(parallel_results) == 1
+    actual = parallel_results[0]
+
+    assert set(actual) == set(expected)
+    for m in expected:
+        assert actual[m]["mean_risk_i_h"] == pytest.approx(expected[m]["mean_risk_i_h"])
+        assert actual[m]["mean_psae"] == pytest.approx(expected[m]["mean_psae"], nan_ok=True)
+
+
+def test_run_draws_parallel_multiple_draws_are_independent(pre):
+    """Two different (rate_overrides, percentile_overrides) draws run
+    through the same pool must come back with DIFFERENT summaries --
+    guards against a worker accidentally reusing stale state (e.g. a
+    module-level global left over from a previous task) across draws."""
+    nominal = ({}, {})
+    big_rates = (
+        {
+            "coal_decay_rate": age_factor.COAL_DECAY_RATE * 3.0,
+            "wind_relative_rate": age_factor.WIND_RELATIVE_RATE * 3.0,
+            "hydro_retention_rate": age_factor.HYDRO_RETENTION_RATE * 3.0,
+            "solar_retention_rate": age_factor.SOLAR_RETENTION_RATE * 3.0,
+        },
+        {},
+    )
+    results = sr.run_draws_parallel(pre, [nominal, big_rates], n_workers=2)
+    model = list(results[0])[0]
+    assert results[0][model]["mean_risk_i_h"] != pytest.approx(results[1][model]["mean_risk_i_h"])
+
+
+def test_run_draws_parallel_result_order_matches_input_order(pre):
+    """``pool.map`` preserves input order -- confirmed explicitly, not
+    assumed, since a future caller may rely on zipping draws with results."""
+    nominal = ({}, {})
+    shifted = ({}, {
+        key: tuple(min(max(p + 10.0, 0.0), 100.0) for p in spec.percentiles)
+        for key, spec in rb.THRESHOLD_REGISTRY.items() if spec.kind == "percentile"
+    })
+    draws = [nominal, shifted, nominal]
+    results = sr.run_draws_parallel(pre, draws, n_workers=2)
+    assert len(results) == 3
+    model = list(results[0])[0]
+    assert results[0][model]["mean_psae"] == pytest.approx(results[2][model]["mean_psae"], nan_ok=True)
+
+
+# --------------------------------------------------------------------------
 # Pure-function unit tests -- retention_vector against age_factor's own
 # scalar curves, no I/O.
 # --------------------------------------------------------------------------

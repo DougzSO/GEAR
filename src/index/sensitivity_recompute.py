@@ -81,6 +81,45 @@ retention curves... cross-checked against ``age_factor.compute_age_factors()``
 ``monte_carlo.py`` itself is not imported -- it is currently broken
 (retired ``ccrs_calculator`` import, pre-existing, unrelated to this task).
 
+--------------------------------------------------------------------------
+Parallel execution across draws (2026-09-15) -- multiprocessing, spawn-safe
+--------------------------------------------------------------------------
+Draws are independent by construction: ``recompute_draw`` reads
+``PrecomputedInputs`` (never mutates it) and a draw's own override dicts --
+nothing shared or mutated across draws. This module parallelizes across
+draws with ``multiprocessing.Pool`` (``run_draws_parallel``/
+``time_n_draws_parallel``), not threading: every step in a draw is
+pandas/numpy array work, which holds the GIL for the C-level call but not
+around it the way a genuinely I/O-bound task would release it -- threading
+would not usefully overlap CPU-bound pandas calls here.
+
+**Platform confirmed, not assumed** (this machine: Windows --
+``multiprocessing.get_all_start_methods()`` returns only ``['spawn']``,
+``fork`` is unavailable, not merely unsafe). Under ``spawn``, a worker
+process does NOT inherit the parent's already-computed objects via
+copy-on-write memory sharing -- everything a worker needs must be sent
+explicitly. ``PrecomputedInputs`` (the ~55s-to-build raster cache) is
+therefore shared via a ``Pool(initializer=_init_worker, initargs=(pre,
+models))`` pattern: pickled across the process boundary exactly ONCE PER
+WORKER at pool creation, never once per draw -- the alternative (each
+worker calling ``precompute()`` itself, or ``pre`` being re-pickled as
+part of every task's arguments) would either duplicate the ~55s raster
+read per worker or dominate per-draw cost with repeated large-object
+pickling. Worker entry points (``_init_worker``, ``_worker_run_draw``) are
+top-level module functions, not closures/lambdas -- ``spawn`` pickles
+callables by qualified name and cannot pickle a closure over local state.
+
+Results returned FROM a worker are deliberately small (a couple of scalar
+summary floats per model, not the full per-plant ``DrawResult``) -- with
+~224,000 draws at Phase 6.2 scale, pickling a full ``RiskBandTable``/
+``PSAETable`` (tens of thousands of rows each) back across the process
+boundary on every draw would make IPC serialization the new bottleneck,
+undoing the parallelization gain. The specific scalar reduction used here
+(mean ``risk_i_h``, mean ``psae``) is a placeholder for throughput
+measurement only -- Phase 6's real output statistic is still an open item
+(``docs/DECISIONS.md``, "Phase 6 (Sensitivity/uncertainty) input mapping")
+and is not decided by this module.
+
 Standalone: no ``main()`` -- this module is a library used by a future
 Sobol/OAT driver (Phase 6.2/6.3, not built here) and by
 ``tests/test_sensitivity_recompute.py``'s correctness/timing checks.
@@ -89,6 +128,8 @@ Sobol/OAT driver (Phase 6.2/6.3, not built here) and by
 from __future__ import annotations
 
 import logging
+import multiprocessing as mp
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -489,36 +530,62 @@ def recompute_draw(
     return DrawResult(risk_by_hazard, risk_band_table, psae_table)
 
 
+def recompute_draw_all_models(
+    pre: PrecomputedInputs,
+    models: list[str] | None = None,
+    *,
+    bounds: dict[str, object] | None = None,
+    rate_overrides: dict[str, float] | None = None,
+    percentile_overrides: dict[tuple[str, str], tuple[float, ...]] | None = None,
+) -> dict[str, DrawResult]:
+    """``recompute_draw`` for every configured GCM -- the real unit of work
+    one Saltelli sample needs (methodology keeps GFDL-ESM4/MIROC6 separate,
+    never blended -- Section 9). ``{model: DrawResult}``."""
+    models = models or rc.configured_models()
+    return {
+        m: recompute_draw(
+            pre, m, bounds=bounds, rate_overrides=rate_overrides,
+            percentile_overrides=percentile_overrides,
+        )
+        for m in models
+    }
+
+
+# --------------------------------------------------------------------------
+# Jitter -- shared by the serial and parallel timing harnesses below. NOT a
+# real Sobol/SALib sample (this module does not implement Sobol); exists
+# only to produce a representative, non-degenerate per-draw cost, not a
+# sensitivity result. Jitter ranges are illustrative magnitudes only, not
+# the literature ranges PHASE6_DESIGN.md Section 1.1 names -- picking those
+# ranges is Phase 6.2's job, still open, not this task's.
+# --------------------------------------------------------------------------
+def _random_draw_params(rng: np.random.Generator) -> tuple[dict, dict]:
+    rate_overrides = {
+        "coal_decay_rate": age_factor.COAL_DECAY_RATE * (1.0 + rng.uniform(-0.1, 0.1)),
+        "wind_relative_rate": age_factor.WIND_RELATIVE_RATE * (1.0 + rng.uniform(-0.1, 0.1)),
+        "hydro_retention_rate": age_factor.HYDRO_RETENTION_RATE * (1.0 + rng.uniform(-0.1, 0.1)),
+        "solar_retention_rate": age_factor.SOLAR_RETENTION_RATE * (1.0 + rng.uniform(-0.1, 0.1)),
+    }
+    shift = rng.uniform(-5.0, 5.0)
+    percentile_overrides = {
+        key: tuple(min(max(p + shift, 0.0), 100.0) for p in spec.percentiles)
+        for key, spec in rb.THRESHOLD_REGISTRY.items()
+        if spec.kind == "percentile"
+    }
+    return rate_overrides, percentile_overrides
+
+
 # --------------------------------------------------------------------------
 # Timing harness -- real measurement, not a projection (task requirement).
 # --------------------------------------------------------------------------
 def time_n_draws(pre: PrecomputedInputs, model: str, n: int, seed: int = 20260914) -> dict:
-    """Run ``n`` real draws of ``recompute_draw`` with small random jitter on
-    every perturbable rate/percentile-shift parameter (NOT a real Sobol/
-    SALib sample -- this module does not implement Sobol; jitter here exists
-    only to produce a representative, non-degenerate per-draw cost, not a
-    sensitivity result) and return real wall-clock timing.
-
-    Jitter ranges are illustrative magnitudes only (small relative
-    perturbations around the nominal constants), not the literature ranges
-    PHASE6_DESIGN.md Section 1.1 names -- picking those ranges is Phase 6.2's
-    job, still open, not this task's.
-    """
+    """Run ``n`` real draws of ``recompute_draw`` (single GCM, single
+    process) with jitter (see ``_random_draw_params``) and return real
+    wall-clock timing."""
     rng = np.random.default_rng(seed)
     elapsed = np.empty(n, dtype="float64")
     for i in range(n):
-        rate_overrides = {
-            "coal_decay_rate": age_factor.COAL_DECAY_RATE * (1.0 + rng.uniform(-0.1, 0.1)),
-            "wind_relative_rate": age_factor.WIND_RELATIVE_RATE * (1.0 + rng.uniform(-0.1, 0.1)),
-            "hydro_retention_rate": age_factor.HYDRO_RETENTION_RATE * (1.0 + rng.uniform(-0.1, 0.1)),
-            "solar_retention_rate": age_factor.SOLAR_RETENTION_RATE * (1.0 + rng.uniform(-0.1, 0.1)),
-        }
-        shift = rng.uniform(-5.0, 5.0)
-        percentile_overrides = {
-            key: tuple(min(max(p + shift, 0.0), 100.0) for p in spec.percentiles)
-            for key, spec in rb.THRESHOLD_REGISTRY.items()
-            if spec.kind == "percentile"
-        }
+        rate_overrides, percentile_overrides = _random_draw_params(rng)
         t0 = time.perf_counter()
         recompute_draw(
             pre, model,
@@ -534,4 +601,157 @@ def time_n_draws(pre: PrecomputedInputs, model: str, n: int, seed: int = 2026091
         "min_s": float(elapsed.min()),
         "max_s": float(elapsed.max()),
         "total_s": float(elapsed.sum()),
+    }
+
+
+def time_n_draws_all_models(pre: PrecomputedInputs, n: int, seed: int = 20260914) -> dict:
+    """Same as ``time_n_draws``, but each timed unit is one FULL draw across
+    every configured GCM (``recompute_draw_all_models``) -- the real
+    per-Saltelli-sample cost, matching how the naive-baseline and partial-
+    recompute figures in ``docs/DECISIONS.md`` were both measured (3
+    countries, both GCMs, per draw)."""
+    rng = np.random.default_rng(seed)
+    models = rc.configured_models()
+    elapsed = np.empty(n, dtype="float64")
+    for i in range(n):
+        rate_overrides, percentile_overrides = _random_draw_params(rng)
+        t0 = time.perf_counter()
+        recompute_draw_all_models(
+            pre, models,
+            rate_overrides=rate_overrides,
+            percentile_overrides=percentile_overrides,
+        )
+        elapsed[i] = time.perf_counter() - t0
+
+    return {
+        "n": n,
+        "mean_s": float(elapsed.mean()),
+        "median_s": float(np.median(elapsed)),
+        "min_s": float(elapsed.min()),
+        "max_s": float(elapsed.max()),
+        "total_s": float(elapsed.sum()),
+    }
+
+
+# --------------------------------------------------------------------------
+# Parallel execution across draws -- multiprocessing, not threading (this
+# is CPU/pandas-bound work; the GIL would serialize threaded pandas calls
+# anyway, buying nothing). See module docstring's "Parallel execution"
+# section for the platform-specific sharing analysis this is built on.
+# --------------------------------------------------------------------------
+_worker_pre: "PrecomputedInputs | None" = None
+_worker_models: "list[str] | None" = None
+
+
+def _init_worker(pre: PrecomputedInputs, models: list[str]) -> None:
+    """``multiprocessing.Pool`` initializer -- runs ONCE per worker
+    PROCESS, at pool creation, not once per draw. This is what keeps
+    ``pre`` (the raster cache, ~55s to build) from being recomputed, or
+    even re-pickled, per draw: it crosses the process boundary exactly
+    once per worker here."""
+    global _worker_pre, _worker_models
+    _worker_pre = pre
+    _worker_models = models
+
+
+def _worker_run_draw(params: tuple[dict, dict]) -> dict:
+    """One draw, executed inside a worker process. Returns a SMALL,
+    cheaply-serializable summary -- not the full ``DrawResult`` (its
+    per-plant ``RiskBandTable``/``PSAETable`` frames, pickled back to the
+    main process once per draw across ~224,000 draws, would make IPC
+    serialization cost dominate, defeating the point of parallelizing).
+
+    The specific reduction below (mean ``risk_i_h``, mean ``psae``) is a
+    placeholder for TIMING/THROUGHPUT MEASUREMENT ONLY -- Phase 6's actual
+    output statistic is still an open item (``docs/DECISIONS.md``, "Phase
+    6 (Sensitivity/uncertainty) input mapping") and is NOT decided by this
+    function. A real Sobol/OAT driver must supply its own reduction once
+    that decision is made -- see ``run_draws_parallel``'s ``reduce_fn``
+    parameter.
+    """
+    rate_overrides, percentile_overrides = params
+    per_model = recompute_draw_all_models(
+        _worker_pre, _worker_models,
+        rate_overrides=rate_overrides, percentile_overrides=percentile_overrides,
+    )
+    return {
+        model: {
+            "mean_risk_i_h": float(draw.risk_by_hazard["risk_i_h"].mean()),
+            "mean_psae": float(draw.psae.frame["psae"].mean(skipna=True)),
+        }
+        for model, draw in per_model.items()
+    }
+
+
+def run_draws_parallel(
+    pre: PrecomputedInputs,
+    draws: list[tuple[dict, dict]],
+    *,
+    models: list[str] | None = None,
+    n_workers: int | None = None,
+) -> list[dict]:
+    """Run ``draws`` (a list of ``(rate_overrides, percentile_overrides)``
+    pairs, e.g. from repeated ``_random_draw_params`` calls, or eventually
+    a real Saltelli sample) across a ``multiprocessing.Pool``, ``pre``
+    shared via the pool initializer (see ``_init_worker`` -- pickled once
+    per worker, never per draw).
+
+    **Platform note, confirmed not assumed** (task instruction): this
+    machine is Windows, where ``multiprocessing.get_all_start_methods()``
+    returns only ``['spawn']`` -- ``fork`` is not merely unsafe here, it is
+    UNAVAILABLE. Under ``spawn``, a worker process does not inherit the
+    parent's memory via copy-on-write the way a Linux ``fork`` would; it
+    starts fresh and re-imports this module, so ``pre`` MUST be sent
+    explicitly (the ``Pool(initializer=..., initargs=(pre, ...))`` pattern
+    used here) -- there is no implicit sharing to rely on, and assuming
+    fork semantics on this platform would silently break (each worker
+    would either recompute ``precompute()`` itself, defeating the caching
+    fix, or crash on an unpicklable closure). This function does not force
+    a start method; it uses whatever ``multiprocessing.get_context()``
+    resolves to (``spawn`` on this machine), and is written to be correct
+    under ``spawn`` specifically -- every object crossing the process
+    boundary (``pre``, ``models``, each draw's override dicts) is a plain,
+    picklable ``dict``/``DataFrame``/``str``, and the worker entry points
+    (``_init_worker``, ``_worker_run_draw``) are top-level module functions
+    (spawn needs to pickle callables by qualified name, not a closure).
+    """
+    n_workers = n_workers or mp.cpu_count()
+    models = models or rc.configured_models()
+    # BLAS thread-oversubscription guard, measured not assumed (see module
+    # docstring / docs/DECISIONS.md, "GEAR v3 Phase 6 parallelization"):
+    # each worker process would otherwise let OpenBLAS/MKL spin up its own
+    # multi-threaded pool for numpy calls, so `n_workers` PROCESSES each
+    # running several BLAS THREADS oversubscribes the physical core count
+    # and measurably hurts throughput (1.74x -> 2.08x on the 4-core
+    # machine this was measured on, real numbers). Set in THIS (parent)
+    # process, right before the workers are spawned -- `spawn` gives each
+    # worker a fresh interpreter that inherits the current environment at
+    # spawn time, so this reliably reaches every worker's own first numpy
+    # import even though numpy is already imported here in the parent.
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ.setdefault(var, "1")
+    ctx = mp.get_context()
+    with ctx.Pool(processes=n_workers, initializer=_init_worker, initargs=(pre, models)) as pool:
+        return pool.map(_worker_run_draw, draws)
+
+
+def time_n_draws_parallel(
+    pre: PrecomputedInputs, n: int, *, n_workers: int | None = None, seed: int = 20260914,
+) -> dict:
+    """Same real-draw methodology as ``time_n_draws_all_models``, but
+    executed across a ``multiprocessing.Pool`` -- real wall-clock timing
+    of the parallel path, not a theoretical ``1/n_workers`` projection."""
+    n_workers = n_workers or mp.cpu_count()
+    rng = np.random.default_rng(seed)
+    draws = [_random_draw_params(rng) for _ in range(n)]
+
+    t0 = time.perf_counter()
+    run_draws_parallel(pre, draws, n_workers=n_workers)
+    elapsed = time.perf_counter() - t0
+
+    return {
+        "n": n,
+        "n_workers": n_workers,
+        "total_s": elapsed,
+        "mean_s_per_draw_wallclock": elapsed / n,
     }
