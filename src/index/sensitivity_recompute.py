@@ -310,11 +310,28 @@ class PrecomputedInputs:
 
     ``attrs``: plant attributes for the vectorised ``age_factor`` chain
     (``_prepare_age_factor_attrs()``'s shape).
+
+    ``hazard_i_h_by_model`` / ``exposure_mw_by_model`` (2026-09-15,
+    Hazard_i,h cache): ``rc.transform_term(term, raw, lo, hi)`` --
+    Hazard_{i,h} itself, Equation 1 -- and ``rc.exposure_capacity_mw`` are
+    both functions of ``hazard_by_model``/``FROZEN_BOUNDS`` only, neither of
+    which any draw in this module's jitter harness (nor any perturbation
+    ``PHASE6_DESIGN.md`` Section 1 names) ever varies -- only ``age_factor``
+    (Vulnerability) changes per draw. Precomputed once here at ``FROZEN_BOUNDS``
+    and reused by every draw's ``recompute_risk_by_hazard`` call instead of
+    recomputing ``transform_term`` ~7 times (once per ``HAZARD_TERMS`` member)
+    on every draw. ``recompute_risk_by_hazard`` still recomputes this chain
+    live whenever it is called with a non-default ``bounds`` argument (kept
+    correct/general for a future Sobol driver that perturbs bounds; nothing
+    in this module currently does), so the cache is a fast path, not the
+    only path.
     """
 
     hazard_by_model: dict[str, pd.DataFrame] = field(default_factory=dict)
     band_samples_by_model: dict[str, pd.DataFrame] = field(default_factory=dict)
     attrs: pd.DataFrame = field(default_factory=pd.DataFrame)
+    hazard_i_h_by_model: dict[str, dict[str, np.ndarray]] = field(default_factory=dict)
+    exposure_mw_by_model: dict[str, np.ndarray] = field(default_factory=dict)
 
 
 def precompute(models: list[str] | None = None) -> PrecomputedInputs:
@@ -334,10 +351,27 @@ def precompute(models: list[str] | None = None) -> PrecomputedInputs:
 
     attrs = _prepare_age_factor_attrs()
 
+    # Hazard_i,h cache (see PrecomputedInputs docstring): FROZEN_BOUNDS only
+    # -- draw-invariant under every perturbation this module's harness applies.
+    hazard_i_h_by_model: dict[str, dict[str, np.ndarray]] = {}
+    exposure_mw_by_model: dict[str, np.ndarray] = {}
+    for model in models:
+        merged = hazard_by_model[model]
+        hazard_i_h_by_model[model] = {
+            term: rc.transform_term(
+                term, merged[term].to_numpy("float64"),
+                *rc._term_bounds(term, model, rc.FROZEN_BOUNDS),
+            )
+            for term in rc.HAZARD_TERMS
+        }
+        exposure_mw_by_model[model] = rc.exposure_capacity_mw(merged["capacity_mw"].to_numpy("float64"))
+
     return PrecomputedInputs(
         hazard_by_model=hazard_by_model,
         band_samples_by_model=band_samples_by_model,
         attrs=attrs,
+        hazard_i_h_by_model=hazard_i_h_by_model,
+        exposure_mw_by_model=exposure_mw_by_model,
     )
 
 
@@ -362,9 +396,21 @@ def recompute_risk_by_hazard(
     must reproduce ``risk_calculator.compute_risk_by_hazard(model)``
     numerically identically -- see
     ``test_recompute_risk_by_hazard_matches_production_at_nominal_values``.
+
+    ``Hazard_{i,h}`` cache (2026-09-15): with ``bounds`` left at its default
+    (resolves to ``rc.FROZEN_BOUNDS``, the object every draw in this
+    module's harness actually uses -- ``FROZEN_BOUNDS`` is never
+    perturbed), ``hazard_i_h``/``exposure_mw`` are read from
+    ``pre.hazard_i_h_by_model``/``pre.exposure_mw_by_model`` (computed once
+    in ``precompute()``) instead of recomputing ``transform_term`` per term
+    per draw -- only ``age_factor`` (Vulnerability) actually varies per
+    draw. A caller that passes an explicit, non-default ``bounds`` falls
+    back to the original live ``transform_term`` computation, so this stays
+    correct (not just fast) for a future Sobol driver that perturbs bounds.
     """
     bounds = bounds or rc.FROZEN_BOUNDS
     rate_overrides = rate_overrides or {}
+    use_cache = bounds is rc.FROZEN_BOUNDS and model in pre.hazard_i_h_by_model
 
     df = pre.hazard_by_model[model]
     af_values = age_factor_vector(pre.attrs, **rate_overrides)
@@ -380,12 +426,18 @@ def recompute_risk_by_hazard(
             f"the two caches are out of sync with each other."
         )
 
-    exposure_mw = rc.exposure_capacity_mw(merged["capacity_mw"].to_numpy("float64"))
+    if use_cache:
+        exposure_mw = pre.exposure_mw_by_model[model]
+    else:
+        exposure_mw = rc.exposure_capacity_mw(merged["capacity_mw"].to_numpy("float64"))
 
     parts = []
     for term in rc.HAZARD_TERMS:
-        lo, hi = rc._term_bounds(term, model, bounds)
-        h_i_h = rc.transform_term(term, merged[term].to_numpy("float64"), lo, hi)
+        if use_cache:
+            h_i_h = pre.hazard_i_h_by_model[model][term]
+        else:
+            lo, hi = rc._term_bounds(term, model, bounds)
+            h_i_h = rc.transform_term(term, merged[term].to_numpy("float64"), lo, hi)
         vulnerability = merged["age_factor"].to_numpy("float64")
         risk = rc.risk_i_h(h_i_h, exposure_mw, vulnerability)
 

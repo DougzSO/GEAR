@@ -36,5 +36,12 @@ matplotlib>=3.7.0
 # C6, exploratory) -- Mann-Whitney U test.
 scipy>=1.11.0
 
+# GEAR v3 Phase 6 perf (src/index/psae.py, classify_psae_fraction_batch) --
+# JIT-compiled per-row PSAE classification, the one pure-Python hotspot a
+# cProfile of the Sobol/Monte-Carlo draw loop surfaced (~11% of per-draw
+# time). See docs/DECISIONS.md, "GEAR v3 Phase 6 perf: Hazard_i,h cache +
+# Numba classify_psae_fraction".
+numba>=0.60.0
+
 # Tests
 pytest>=7.4.0

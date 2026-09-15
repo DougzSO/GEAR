@@ -211,6 +211,26 @@ def test_classify_psae_fraction_nan_and_none_are_unclassified():
 
 
 # --------------------------------------------------------------------------
+# classify_psae_fraction_batch (Numba, 2026-09-15 perf fix) -- must match
+# the scalar reference element-for-element, not just look right.
+# --------------------------------------------------------------------------
+def test_classify_psae_fraction_batch_matches_scalar_reference():
+    import numpy as np
+
+    values = np.array([1.0, 0.999, 0.5, 0.4999, 2 / 3, 1 / 3, 0.0001, 0.0, float("nan")])
+    expected = [psae.classify_psae_fraction(v) for v in values]
+    actual = list(psae.classify_psae_fraction_batch(values))
+    assert actual == expected
+
+
+def test_classify_psae_fraction_batch_empty_input():
+    import numpy as np
+
+    out = psae.classify_psae_fraction_batch(np.array([], dtype="float64"))
+    assert len(out) == 0
+
+
+# --------------------------------------------------------------------------
 # Comparability guard -- work plan Phase 4.2
 # --------------------------------------------------------------------------
 def test_assert_single_bucket_raises_on_mixed_buckets():

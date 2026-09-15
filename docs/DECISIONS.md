@@ -4556,3 +4556,147 @@ protocol-only draft (never committed as such).
   Section 7.1 is revisited. Disaster-type/hazard-term mapping extension
   (`Storm -> wind`, `Flood -> precip`, from the 2026-09-14 entry): still
   open, untouched by this task.
+
+## [2026-09-15] GEAR v3 Phase 6 perf: Hazard_i,h cache + Numba `classify_psae_fraction`, 0.44s -> 0.40s/draw, ~1.04 days projected
+
+- Task scope: three bounded, low-risk residual optimizations on top of the
+  parallelization entry immediately above (2.25x/67x speedup, 0.44s/draw,
+  ~1.14-day projection). No methodology or output value may change --
+  correctness re-verified bit-identical at nominal values for every shipped
+  change, same standard as every prior entry in this file.
+- **Step 1 -- profile first, do not guess.** `cProfile` over 50 REAL draws
+  (`recompute_draw_all_models`, jittered parameters, both GCMs) surfaced
+  exactly one pure-Python, non-BLAS, non-numpy-vectorised function above
+  the 10%-of-per-draw-time bar: `psae.classify_psae_fraction`, called once
+  per plant x water_scenario row inside a `for i in range(n)` loop in
+  `psae.compute_psae` (~3.24M calls across the 100 model x draw
+  combinations profiled), **9.452s self time / 82.555s total = 11.4%**.
+  Everything else above it in the profile (pandas `factorize`,
+  `DataFrame.duplicated`, `pivot`, block-manager `take`/`copy`) is pandas'
+  own C-level machinery, not reimplementable Python -- correctly out of
+  scope per the task's own instruction. Qualifies as a Numba candidate;
+  step 3 proceeds.
+- **Step 2 -- Hazard_i,h cache (implemented).** This is exactly the
+  opportunity the immediately-preceding entry's "Item 2" investigation
+  flagged and explicitly deferred ("a genuine, LOW-risk opportunity...
+  `hazard_i_h * exposure_mw` could be precomputed ONCE... not implemented"):
+  `FROZEN_BOUNDS` is never perturbed by this module's jitter harness (nor
+  by any parameter `PHASE6_DESIGN.md` Section 1 names), so
+  `rc.transform_term(term, raw, lo, hi)` -- Hazard_i,h itself, Equation 1
+  -- and `rc.exposure_capacity_mw` are draw-invariant; only `age_factor`
+  (Vulnerability) varies per draw.
+  - `PrecomputedInputs` gains `hazard_i_h_by_model`/`exposure_mw_by_model`
+    (`{model: {term: array}}` / `{model: array}`), computed once in
+    `precompute()` at `rc.FROZEN_BOUNDS`.
+  - `recompute_risk_by_hazard` reads from this cache instead of calling
+    `transform_term`/`exposure_capacity_mw` per term per draw, IFF called
+    with the default `bounds` argument (resolves to `rc.FROZEN_BOUNDS` by
+    object identity, `bounds is rc.FROZEN_BOUNDS`) -- the case every real
+    draw in this module currently hits. A caller passing an explicit,
+    non-default `bounds` (no current caller does; kept for a future Sobol
+    driver that perturbs bounds, per `PHASE6_DESIGN.md` Section 1.2's still-
+    open naming question) falls back to the original live computation, so
+    the cache is a fast path, not the only path -- correctness does not
+    depend on nobody ever passing `bounds`.
+- **Step 3 -- Numba on the qualifying hotspot only, not speculative.**
+  `psae.py` gains `classify_psae_fraction_batch` (public) backed by
+  `_classify_psae_codes_kernel` (`@njit(cache=True)`, module-private): one
+  compiled loop over a whole bucket's `psae_value` array at once, emitting
+  int8 codes (`-1` = undefined/NaN, `0..3` = `PSAE_LABELS` index -- numba
+  nopython mode cannot return a `str | None` array directly, so the string
+  lookup happens in plain vectorised numpy just outside the kernel).
+  `compute_psae`'s per-bucket loop now calls this once per bucket instead
+  of `classify_psae_fraction` once per row; the `missing_hazards` tuple
+  assembly (not a classification, needs real per-row tuple construction)
+  is untouched, still a Python loop, correctly out of scope (not the
+  measured hotspot). `classify_psae_fraction` itself is UNCHANGED and
+  stays the public scalar API (`tests/test_psae.py` still exercises it
+  directly) -- `classify_psae_fraction_batch` is a new, separate function,
+  not a rewrite of the old one, cross-checked against it element-for-
+  element (`test_classify_psae_fraction_batch_matches_scalar_reference`).
+  `numba>=0.60.0` added to `requirements.txt` (installed `numba 0.67.0`
+  wheel, `llvmlite 0.49.0`, against the project's already-installed
+  `numpy 2.4.6` -- confirmed compiling and running correctly on this
+  machine before use, not assumed compatible).
+- **Correctness verified bit-identical at nominal values, both changes,
+  before any speed claim was trusted** -- same standard as every entry in
+  this file: 19/19 `tests/test_sensitivity_recompute.py` (unchanged
+  expectations, including the exact numeric-identity checks against
+  `risk_calculator.compute_risk_by_hazard`/`risk_bands.compute_risk_bands`/
+  `psae.compute_psae`) pass after Step 2 alone, and again after Step 2 +
+  Step 3 together; 104/104 across
+  `test_psae.py`/`test_sensitivity_recompute.py`/`test_risk_calculator.py`/
+  `test_risk_bands.py` (2 new `test_psae.py` cases for the batch/Numba
+  cross-check). Full project suite re-run after both changes: **423
+  passed** (421 previously reported + 2 new), same three pre-existing
+  unrelated `ccrs_calculator`-import failures excluded as before
+  (`tests/test_main.py`/`test_monte_carlo.py`/`test_visualization.py`).
+- **Measured gain -- profiler and real wall-clock reported separately, not
+  conflated.** Under `cProfile` (both changes together, same 50-real-draw
+  methodology as Step 1's baseline): **82.555s -> 61.594s, a 25.4%
+  reduction**; `classify_psae_fraction` no longer appears in the profile's
+  top 30 by either cumulative or self time. Under real (non-profiled) wall-
+  clock timing -- the number that actually feeds the projection, profiler
+  instrumentation overhead does not: `time_n_draws_all_models`/
+  `time_n_draws_parallel`, 100 serial + 300 parallel real draws (4 workers,
+  same machine as the immediately-preceding entry, thread-pinning already
+  built into `run_draws_parallel`):
+  - Serial: **mean 0.8416s/draw** (median 0.826s) -- down from the prior
+    entry's 0.9922s/draw baseline.
+  - Parallel, 4 workers: **mean 0.4002s/draw** wall-clock -- down from the
+    prior entry's 0.4411s/draw, **2.10x speedup over this session's own
+    serial baseline** (consistent with, not an improvement on, the prior
+    entry's measured 2.25x -- run-to-run variance on this machine, not a
+    regression; the hardware-contention finding the prior entry documented
+    still applies).
+  - **A real, non-obvious finding worth recording honestly**: an initial
+    50-draw parallel measurement showed only 0.749s/draw (1.28x speedup),
+    APPEARING to regress against the 0.44s/draw baseline. Diagnosed before
+    trusting it, not reported at face value: a dedicated pool-creation-only
+    timing (`time_n_draws_parallel(pre, 1, n_workers=4)`) measured **13.98s
+    of fixed `Pool()` start-up cost alone** (4 worker processes each
+    unpickling the now-slightly-larger `PrecomputedInputs`, which the
+    Hazard_i,h cache adds two more dict-of-array fields to). Over only 50
+    draws this fixed cost is not amortised away and dominates the
+    per-draw average; over 300 draws it is negligible (13.98s / 300 ~=
+    0.047s/draw). The 300-draw parallel figure above is the trustworthy
+    one; the 50-draw figure is recorded here only as the diagnostic
+    reasoning trail, not as a competing result.
+  - **Why the profiler's 25.4% reduction does not translate 1:1 into a
+    25.4% wall-clock reduction (only ~9.3%, 0.4411 -> 0.4002s/draw
+    parallel)**: `cProfile` instruments every Python-level function call,
+    which inflates the RELATIVE cost of pure-Python per-row loops (exactly
+    what Step 3 removed) more than it inflates pandas' own C-level
+    machinery (unaffected by either change, and already the dominant cost
+    per the Step 1 profile). The profiler figure correctly identifies and
+    validates the hotspot removal; the real wall-clock figure is what
+    actually feeds the projection below, and the two are reported
+    separately here rather than letting the larger, more flattering number
+    stand in for both.
+- **Updated projected Phase 6.2 runtime**: `D=6`, `N_0=16000` ->
+  `N_0*(2D+2) = 224,000` Saltelli evaluations x 0.4002s/draw = **~1.037
+  days (~24.9 hours)** on this 4-core machine -- down from the prior
+  entry's ~1.14-day projection. Still multi-day, reported as such, same
+  standing note as the prior entry: an overnight-plus job on this hardware,
+  not a same-session one.
+- Scope confirmed: `age_factor.py`/`risk_bands.py`/`hazard_scope.py` are
+  untouched by this entry. `risk_calculator.py` is untouched (its own
+  `FROZEN_BOUNDS`/`transform_term`/`exposure_capacity_mw` are read, not
+  modified -- the cache lives entirely in `sensitivity_recompute.py`'s own
+  `PrecomputedInputs`). `psae.classify_psae_fraction` (the scalar function)
+  is untouched, still the public API; `psae.compute_psae`'s
+  `missing_hazards` assembly and every other line outside the
+  `psae_label` loop is untouched. Phase 6's three still-open items (RNG
+  granularity, RiskBand percentile-cut dimension grouping,
+  `psae_complete=False` treatment) remain untouched, still open, same
+  standing note as the two entries above.
+- References: `src/index/sensitivity_recompute.py`
+  (`PrecomputedInputs.hazard_i_h_by_model`/`.exposure_mw_by_model`,
+  `precompute`, `recompute_risk_by_hazard`); `src/index/psae.py`
+  (`classify_psae_fraction_batch`, `_classify_psae_codes_kernel`,
+  `compute_psae`); `tests/test_psae.py` (2 new tests);
+  `tests/test_sensitivity_recompute.py` (unchanged, re-verified);
+  `requirements.txt` (`numba>=0.60.0`); this file, "GEAR v3 Phase 6
+  parallelization" (2026-09-15, the entry whose deferred "Item 1" this
+  entry implements and whose 0.44s/1.14-day baseline this entry improves
+  on).

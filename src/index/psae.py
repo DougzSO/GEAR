@@ -86,6 +86,7 @@ from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
+from numba import njit
 
 from src.config import OUTPUT_TABLES
 from src.index import hazard_scope as hs
@@ -114,7 +115,15 @@ class CrossBucketPSAEComparisonError(ValueError):
 def classify_psae_fraction(psae: float | None) -> str | None:
     """Section 6 classification of a single ``psae`` fraction. ``None``/
     ``NaN`` -> ``None`` (a complete-case-undefined plant gets no label --
-    never silently classified as LOW or any other band)."""
+    never silently classified as LOW or any other band).
+
+    Scalar reference implementation -- kept as the public API
+    (``tests/test_psae.py`` exercises it directly) and as the definition
+    ``_classify_psae_codes_batch`` below is cross-checked against
+    (``tests/test_psae.py::test_classify_psae_codes_batch_matches_scalar_...``).
+    ``compute_psae`` itself calls the batch/Numba path, not this function,
+    for its per-row classification (2026-09-15 perf fix, see
+    ``compute_psae``'s docstring)."""
     if psae is None or (isinstance(psae, float) and np.isnan(psae)):
         return None
     if psae >= 1.0:
@@ -124,6 +133,50 @@ def classify_psae_fraction(psae: float | None) -> str | None:
     if psae > 0.0:
         return "MEDIUM"
     return "LOW"
+
+
+# --------------------------------------------------------------------------
+# Vectorised/Numba batch classification (2026-09-15 perf fix) -- see
+# compute_psae's docstring for the measured hotspot this replaces. Integer
+# codes, not strings: numba's nopython mode cannot return a Python
+# str-or-None array directly, so the JIT kernel emits int8 codes
+# (-1 = undefined/NaN, 0..3 = PSAE_LABELS index) and the tiny string lookup
+# happens in plain, vectorised numpy just outside the kernel.
+# --------------------------------------------------------------------------
+@njit(cache=True)
+def _classify_psae_codes_kernel(psae_values: np.ndarray) -> np.ndarray:
+    n = psae_values.shape[0]
+    codes = np.empty(n, dtype=np.int8)
+    for i in range(n):
+        v = psae_values[i]
+        if np.isnan(v):
+            codes[i] = -1
+        elif v >= 1.0:
+            codes[i] = 3
+        elif v >= 0.5:
+            codes[i] = 2
+        elif v > 0.0:
+            codes[i] = 1
+        else:
+            codes[i] = 0
+    return codes
+
+
+_PSAE_LABEL_LOOKUP = np.array(PSAE_LABELS, dtype=object)  # PSAE_LABELS defined above, module top
+
+
+def classify_psae_fraction_batch(psae_values: np.ndarray) -> np.ndarray:
+    """Vectorised/Numba-compiled equivalent of calling ``classify_psae_fraction``
+    once per element of ``psae_values`` -- identical per-element semantics
+    (NaN -> ``None``, same four cut points), an object array of ``str |
+    None`` out, same shape as ``psae_values`` in."""
+    psae_values = np.asarray(psae_values, dtype="float64")
+    codes = _classify_psae_codes_kernel(psae_values)
+    labels = np.empty(psae_values.shape[0], dtype=object)
+    defined = codes >= 0
+    labels[defined] = _PSAE_LABEL_LOOKUP[codes[defined]]
+    labels[~defined] = None
+    return labels
 
 
 # --------------------------------------------------------------------------
@@ -169,17 +222,33 @@ def compute_psae(risk_band_result: rb.RiskBandTable) -> PSAETable:
     hazard, one row per plant x water_scenario), then one boolean-matrix
     pass PER BUCKET (4 buckets, not 32,424 groups) using ``.isna()``/
     ``.isin()`` over the whole bucket's rows at once. The only remaining
-    Python-level per-row work (assembling ``psae_label``/``missing_hazards``,
-    both via ``classify_psae_fraction`` and plain numpy indexing, no pandas
-    per-row indexing) runs over plain numpy arrays, not pandas group
-    objects -- this is what actually eliminates the cost, not fewer lines
-    of code.
+    Python-level per-row work (assembling ``missing_hazards``) runs over
+    plain numpy arrays, not pandas group objects -- this is what actually
+    eliminates the cost, not fewer lines of code.
+
+    --------------------------------------------------------------------
+    ``psae_label`` classification (2026-09-15 perf fix) -- Numba, not a
+    per-row Python loop
+    --------------------------------------------------------------------
+    Profiled again after the 2026-09-14 rewrite above (``docs/DECISIONS.md``,
+    "GEAR v3 Phase 6 perf"): ``cProfile`` over 50 real Sobol-jitter draws
+    showed ``classify_psae_fraction`` itself (called once per row, ~3.2M
+    calls total) at ~11.4% of total draw time -- the one remaining pure-
+    Python, non-vectorised hotspot the profile surfaced (everything else at
+    or above it is pandas/numpy C-level machinery). ``psae_label`` is now
+    assembled via ``classify_psae_fraction_batch`` (a Numba ``@njit``
+    kernel over the whole bucket's ``psae_value`` array at once) instead of
+    a ``for i in range(n): classify_psae_fraction(...)`` loop.
+    ``missing_hazards`` still needs its own per-row loop (tuple assembly,
+    not classification) and is unchanged.
 
     Correctness is unchanged: ``tests/test_psae.py`` (unmodified
-    expectations) and ``tests/test_sensitivity_recompute.py`` (real-data,
-    numeric-identity checks against this function specifically) both pass
-    against this rewrite -- see ``docs/DECISIONS.md`` for the real-data
-    verification this rewrite was checked against before being trusted.
+    expectations, plus a new cross-check that the batch/Numba path matches
+    ``classify_psae_fraction`` element-for-element) and
+    ``tests/test_sensitivity_recompute.py`` (real-data, numeric-identity
+    checks against this function specifically) both pass against this
+    rewrite -- see ``docs/DECISIONS.md`` for the real-data verification
+    this rewrite was checked against before being trusted.
     """
     frame = risk_band_result.frame
     id_cols = [PLANT_UID, "country", "plant_name", "bucket", "water_scenario",
@@ -213,16 +282,19 @@ def compute_psae(risk_band_result: rb.RiskBandTable) -> PSAETable:
 
         psae_value = np.where(complete, n_high / h_b_size, np.nan)
         n = len(bucket_keys)
+        # psae_value is already NaN on every incomplete row (the np.where
+        # above), so classify_psae_fraction_batch's own NaN handling makes
+        # the `if complete[i] else None` branch the per-row loop used to
+        # need unnecessary -- batch-classify the whole column at once.
+        psae_label = classify_psae_fraction_batch(psae_value)
         # np.array([tuple(...), ...], dtype=object) would silently broadcast
         # into a 2-D array when every tuple has the same length (e.g. every
         # row complete -> every missing_hazards entry is the SAME-length
         # empty tuple `()`) -- a real numpy footgun, not a hypothetical.
         # Pre-allocated 1-D object arrays, filled by index, sidestep it.
-        psae_label = np.empty(n, dtype=object)
         hazard_names = np.array(cols, dtype=object)
         missing_hazards = np.empty(n, dtype=object)
         for i in range(n):
-            psae_label[i] = classify_psae_fraction(psae_value[i]) if complete[i] else None
             missing_hazards[i] = tuple(hazard_names[is_missing[i]]) if missing_count[i] else ()
 
         part = meta.loc[bucket_keys, id_cols].reset_index(drop=True)
