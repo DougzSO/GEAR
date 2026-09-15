@@ -2208,3 +2208,60 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
 - **Status:** Ativa, fechada. `wind` é um termo `Risk_i,h` real e
   computável nos 3 países. `PENDING_RISK_I_H_HAZARDS` vazio. Item 39
   totalmente fechado (era o único bloqueio restante).
+
+## 42. Fase 5 — validador de ocorrência física (IBTrACS) implementado, `wind` apenas; FIRMS rejeitado (2026-09-15)
+
+- **Contexto:** `compute_physical_occurrence_validation()` existia como
+  `NotImplementedError` explícito (Fase 5, item anterior neste arquivo/
+  `docs/DECISIONS.md`, "contextual validator layer (broad-impact only,
+  PARTIAL)"). Sessão de escopo prévia (mesma tarefa) concluiu: adquirir
+  IBTrACS, rejeitar FIRMS (wildfire fora do hazard set —
+  `hazard_scope.DEFERRED_OR_EXCLUDED_HAZARDS` — sem slot em
+  `APPLICABLE_HAZARDS` pra anexar detecção de fogo), landslide/lightning
+  não investigados.
+- **Decisão:** `src/downloaders/ibtracs_downloader.py` (novo) baixa 1
+  arquivo CSV de bacia NOAA NCEI v04r01 por país (Brasil/SA, Portugal/NA,
+  Índia/NI — mapeamento geograficamente exaustivo, não simplificação;
+  `config.IBTRACS_BASIN_BY_COUNTRY`). `contextual_validators.
+  compute_physical_occurrence_validation()` faz o match plant×trilha por
+  raio geodésico (`_haversine_km`, WGS84-esfera) — `STORM_TRACK_RADIUS_KM
+  = 100.0` km (extremo conservador da climatologia de raio de vento
+  galé/34kt, ~150-250km típico — escolha deliberada pra sub-reivindicar,
+  não sobre-reivindicar corroboração), `IBTRACS_MIN_WIND_KT = 34` (mesma
+  convenção do campo `USA_R34` do próprio IBTrACS), janela `SEASON >=
+  2000` (label de temporada do próprio IBTrACS, não ano calendário de
+  `ISO_TIME` — evita erro de atribuição em tempestades do hemisfério sul
+  que cruzam dezembro/janeiro). Só o termo `wind` recebe checagem real
+  (único membro de H_b que `WIND_APPLICABLE_BUCKETS` liga a bucket
+  wind/solar); todo outro termo é `Not Applicable`, mesmo padrão do
+  "sem mapeamento" do EM-DAT.
+- **Verificação com dado real:** Brasil 16/4416 (0,36%) `Corroborated`,
+  toda corroboração rastreada a 1 tempestade só (SID `2004086S29318` =
+  furacão Catarina 2004, o único caso documentado no Atlântico Sul —
+  confirmado por identidade da tempestade, não só pela taxa agregada).
+  Índia 1784/4344 (41,1%), 156 tempestades distintas — densidade real,
+  consistente com bacia ciclônica ativa. Portugal 288/391 (73,7%), só 5
+  tempestades identificáveis (Joaquin 2015, Leslie 2018, Michael 2018,
+  Alpha 2020, Gabrielle 2025) — taxa alta por planta reflete o território
+  pequeno de Portugal frente ao raio de 100km de uma única tempestade, não
+  raio mal calibrado.
+- **Consequências:** `compute_contextual_validation()` agora empilha as
+  duas classes implementadas (`pd.concat`, sem deduplicação entre
+  classes). Guarantee read-only inalterado (módulo ainda não importa
+  `psae`/`risk_bands`). `tests/test_contextual_validators.py` 19→30
+  testes; `tests/test_ibtracs_downloader.py` novo, 6 testes. Suíte
+  completa: 421 passando (mesmos 3 arquivos quebrados por
+  `ccrs_calculator` de sempre, não é regressão).
+- **Arquivos:** `src/downloaders/ibtracs_downloader.py` (novo),
+  `src/index/contextual_validators.py`, `src/config.py`
+  (`IBTRACS_BASE_URL`, `IBTRACS_BASIN_BY_COUNTRY`),
+  `tests/test_contextual_validators.py`,
+  `tests/test_ibtracs_downloader.py` (novo), `docs/DECISIONS.md`,
+  `docs/LIMITATIONS.md`.
+- **Status:** Ativa, PARCIAL. Broad-impact (EM-DAT) + physical-occurrence
+  (`wind`, IBTrACS) implementados. FIRMS rejeitado (mismatch de escopo,
+  não de dado — reabrir exigiria decisão de escopo de hazard em
+  `ARCHITECTURE.md`). Landslide/lightning: não investigados, item aberto
+  se Seção 7.1 for revisitada. Ver `docs/DECISIONS.md`, "GEAR v3 Phase 5:
+  physical-occurrence validator (IBTrACS)" (2026-09-15) para o detalhe
+  completo (não duplicado aqui).

@@ -4415,3 +4415,144 @@ protocol-only draft (never committed as such).
   a full `D=6`/`N_0=16000` Sobol run projects to **~1.14 days** on this
   machine under the optimizations implemented to date -- still multi-day,
   reported as such.
+
+## [2026-09-15] GEAR v3 Phase 5: physical-occurrence validator (IBTrACS)
+
+- Decision, source acquisition scope (carried verbatim from this session's
+  scoping report, not re-derived here): **acquire IBTrACS; do not acquire
+  FIRMS; landslide/lightning not investigated.**
+  - IBTrACS: "a real, in-scope, cheap addition -- it validates the one
+    hazard term (`wind`) where a genuinely independent physical-occurrence
+    source exists, for the plants where the H_b table already says wind is
+    applicable... Effort is real (new radius-matching geospatial method,
+    ~1-2 days) but bounded and follows the project's own established
+    validator pattern. It would not overturn any existing conclusion -- it's
+    an additional corroboration axis, not a correction to Risk_i,h -- but it
+    does let Phase 5 close the physical-occurrence class for at least one
+    hazard instead of staying an explicit `NotImplementedError` stop point
+    for all of Section 7.1."
+  - FIRMS: "a scope mismatch, not a data-acquisition problem. The blocker
+    isn't cost or access (both trivial) -- it's that this project has
+    already, deliberately, excluded wildfire from the hazard set
+    (`DEFERRED_OR_EXCLUDED_HAZARDS`). Acquiring fire-detection data doesn't
+    complete Phase 5's physical-occurrence class under the current hazard
+    scope; it would sit outside `APPLICABLE_HAZARDS` entirely, unattachable
+    to any (asset, hazard) row the validator taxonomy defines. Making it
+    useful would require reopening the hazard-scope decision itself (adding
+    wildfire as a modeled hazard) -- a separate, larger, ARCHITECTURE.md-
+    level methodology call, not a Phase 5 data-acquisition call."
+  - Landslide/lightning: "the same structural test would apply before
+    evaluating either" -- not investigated in this task, an open item if
+    Section 7.1 is revisited again.
+- Acquisition (`src/downloaders/ibtracs_downloader.py`, new module):
+  NOAA NCEI IBTrACS v04r01, public domain, no credential, one WMO basin file
+  per country -- Brazil/SA (56 KB, confirms near-zero South Atlantic
+  tropical-cyclone climatology at the source level), Portugal/NA (57 MB),
+  India/NI (28 MB). `config.IBTRACS_BASIN_BY_COUNTRY` -- one basin per
+  country is geographically exhaustive, not a simplification: no study-
+  country coastline is reachable by a storm tracked in any other basin.
+  Downloaded and extracted for all three countries this task: Brazil 119
+  track points / 3 storms, Portugal 127,245 / 2,299, India 62,848 / 1,858
+  (unfiltered by year/wind at this stage -- extraction is a pure read,
+  matching `emdat_downloader`'s own pattern).
+- Implementation (`src/index/contextual_validators.py`):
+  `compute_physical_occurrence_validation()` replaces the prior
+  `NotImplementedError` stop point, `wind` hazard term only -- the only
+  term `hazard_scope.WIND_APPLICABLE_BUCKETS` (`{"wind", "solar"}`) gives a
+  storm-track source anything to validate against. Same three-state/
+  same-output-shape pattern as `compute_broad_impact_validation`: every
+  non-`wind` hazard term (hydro's `ws`/`spei`/`precip`/`sv`/`iv`, thermal's
+  `ws`/`heat`/`precip`, solar's `heat`/`precip`) is `Not Applicable` --
+  IBTrACS has no coverage there, mirrored on EM-DAT's own "hazard term has
+  no disaster-type mapping" case. `Corroborated`/`No Record` for `wind`
+  rows is decided by a great-circle radius search (`_haversine_km`, WGS84-
+  sphere) against that country's track points, restricted to
+  `SEASON >= 2000` (Section 7.3's window, using IBTrACS's own hemisphere-
+  aware season label rather than `ISO_TIME`'s calendar year, which would
+  mis-assign Southern Hemisphere storms spanning December/January) and
+  `WIND_KT >= IBTRACS_MIN_WIND_KT` (34 kt, gale-force/tropical-storm
+  intensity -- the same convention IBTrACS's own `USA_R34` field name
+  encodes). Radius: `STORM_TRACK_RADIUS_KM = 100.0`, the conservative
+  (smaller) end of published mean 34-kt wind-radius climatology
+  (commonly ~150-250 km) -- chosen deliberately so this validator under-
+  claims rather than over-claims corroboration, since a majority of
+  IBTrACS track points (older and non-US-agency records especially) carry
+  no per-quadrant wind-radius field to match against directly; full
+  rationale in the module's own comment on the constant. A coarse per-
+  country bbox pre-filter (`config.COUNTRY_BBOX_FALLBACK`, already used by
+  the climate downloaders, padded by the match radius in degrees) keeps the
+  plant x track-point distance computation bounded before the exact
+  haversine pass -- not a new bbox invented for this task. Unlike EM-DAT's
+  admin-1 polygon join, a point-radius search never "misses" for a spatial-
+  join reason (every plant has a coordinate), so `wind`-term rows are never
+  `Not Applicable` the way EM-DAT rows can be for an unmatched `gid_1`.
+  `compute_contextual_validation()` now stacks both implemented classes
+  (`pd.concat`, row counts additive, no deduplication across classes).
+- Correctness verified against real data (all three countries, 29,372 rows
+  total -- same row count as the broad-impact class, same H_b grid):
+  - **Brazil**: 4,416 wind/solar-bucket plants, 16 `Corroborated` (0.36%),
+    4,400 `No Record`. Every corroborating match traces to exactly one
+    storm, SID `2004086S29318` -- Hurricane Catarina (2004), the South
+    Atlantic basin's one documented hurricane-strength case. This is the
+    expected near-null physical reality the scoping report predicted, not a
+    bug or a coverage gap -- confirmed by checking the matched-storm
+    identity directly, not inferred from the raw corroboration count alone
+    (other SA-basin storms exist in the qualifying-track list but never
+    approach any actual Brazilian plant).
+  - **India**: 4,344 wind/solar-bucket plants, 1,784 `Corroborated` (41.1%),
+    2,560 `No Record`, matched against 156 distinct qualifying storms --
+    a real, substantial corroboration density, consistent with India's
+    coastal wind/solar assets sitting inside an active North Indian Ocean
+    cyclone basin.
+  - **Portugal**: 391 wind/solar-bucket plants, 288 `Corroborated` (73.7%),
+    103 `No Record`, matched against exactly 5 identifiable storms: Joaquin
+    (2015), Leslie (2018), Michael (2018), Alpha (2020), Gabrielle (2025) --
+    all real, attributable systems (Leslie's 2018 Porto landfall and
+    Alpha's 2020 landfall, the first tropical/subtropical storm on record
+    to make landfall in mainland Portugal, are independently documented
+    events); the high plant-level percentage reflects Portugal's small
+    mainland footprint (~560 km north-south) relative to a single storm's
+    100 km-radius swath, not an inflated or miscalibrated radius -- checked
+    by identifying the specific storms driving every match, not assumed
+    from the aggregate rate.
+- Read-only guarantee: unchanged from the broad-impact class's own
+  verification -- this module still never imports `psae`/`risk_bands`, and
+  `tests/test_contextual_validators.py`'s three before/after equality tests
+  (now run against the combined `compute_contextual_validation()` output,
+  broad-impact + physical-occurrence stacked) still pass.
+- Test coverage: `tests/test_contextual_validators.py` grew from 19 to 30
+  tests (pure haversine, no I/O, 3 tests; three-state assignment logic
+  against real data, including the Brazil-near-null/India-real-density/
+  Portugal-attributable-storms checks above, 8 tests; the stacked-output
+  test, 1 test; the rest unchanged from the broad-impact class). New
+  `tests/test_ibtracs_downloader.py`, 6 tests (path construction, column
+  extraction, `WMO_WIND`/`USA_WIND` max reconciliation, missing-coordinate
+  drop, missing-column fail-loud, per-country independent failure
+  reporting) -- same no-network-in-tests pattern as
+  `tests/test_emdat_downloader.py`. Full project suite: 421 passed (400
+  previously reported + 21 new), same three pre-existing unrelated
+  `ccrs_calculator`-import failures excluded as before.
+- Limitation recorded: `docs/LIMITATIONS.md`, "2026-09-15 -- IBTrACS
+  physical-occurrence validator: fixed-radius proxy, not real per-storm
+  wind-field data" (the 100 km fixed radius vs. real per-quadrant R34 wind-
+  field extent, points with no reported wind speed from either agency
+  silently excluded, basin-file update cadence).
+- References: `src/downloaders/ibtracs_downloader.py` (new module, full
+  docstring); `src/index/contextual_validators.py`
+  (`compute_physical_occurrence_validation`, `_haversine_km`,
+  `STORM_TRACK_RADIUS_KM`, `IBTRACS_MIN_WIND_KT`, updated module docstring);
+  `tests/test_contextual_validators.py` (11 new tests);
+  `tests/test_ibtracs_downloader.py` (6 new tests); `src/config.py`
+  (`IBTRACS_BASE_URL`, `IBTRACS_BASIN_BY_COUNTRY`); `docs/LIMITATIONS.md`
+  (new entry, this task); this file, "GEAR v3 Phase 5: contextual validator
+  layer (broad-impact only, PARTIAL)" (2026-09-14, the entry this task
+  narrows the physical-occurrence gap of, not replaces).
+- Status: **Still PARTIAL, narrower than before.** Broad-impact (EM-DAT):
+  implemented, unchanged. Physical-occurrence (Section 7.1): **`wind` term
+  implemented via IBTrACS, correctness- and read-only-verified against real
+  data.** FIRMS: rejected as a hazard-scope mismatch, not a data problem --
+  would require reopening the hazard-scope decision itself, out of this
+  task's scope. Landslide/lightning: still not investigated, open if
+  Section 7.1 is revisited. Disaster-type/hazard-term mapping extension
+  (`Storm -> wind`, `Flood -> precip`, from the 2026-09-14 entry): still
+  open, untouched by this task.

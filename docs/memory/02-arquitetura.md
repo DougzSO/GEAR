@@ -16,6 +16,7 @@ src/
     cds_precipitation_downloader.py  CDS projections-cmip6 pr+tas diário (insumo do SPEI) -> valida série bruta + raster QA de média do período; reusa _climate_bounds / _resample_to_1km do cds_tasmax
     aqueduct_downloader.py     WRI Aqueduct 4.0 future_annual via GEE -> CSV largo por país
     emdat_downloader.py        EM-DAT Archive (Dataverse) -> filtro país/tipo -> contagem + cobertura
+    ibtracs_downloader.py      IBTrACS v04r01 (NOAA NCEI, sem credencial) -> 1 basin CSV/país (SA/Brasil, NA/Portugal, NI/Índia) -> pontos de trilha por país (Fase 5, 2026-09-15)
     assets_validator.py        NÃO baixa — lê .xlsx manual do GEM -> status/agregação/fuel bucket
     climate_downloader.py      orquestrador: boundaries + cds_tasmax + aqueduct
   processors/          (4) — todos emitem raster 0–1 (Min-Max/país) + acesso ao bruto, mesma grade
@@ -99,8 +100,11 @@ Ordem lógica (v3): `risk_calculator` (`Risk_i,h`, por hazard, nunca somado)
 → `risk_bands` (`RiskBand_i,h`, classificação sobre valor bruto, lê
 `hazard_scope.APPLICABLE_HAZARDS`) → `psae` (`PSAE_i`, fração não-ponderada
 de High/Extreme dentro do H_b da planta, consome só `RiskBandTable`) →
-`contextual_validators` (Fase 5, PARCIAL, read-only, nunca realimenta as
-três etapas anteriores) → `sensitivity_recompute` (Fase 6, infraestrutura de
+`contextual_validators` (Fase 5, PARCIAL — broad-impact/EM-DAT e
+physical-occurrence/IBTrACS (`wind` apenas, 2026-09-15) implementados;
+FIRMS rejeitado (wildfire fora do hazard set, sem slot em
+`APPLICABLE_HAZARDS`); landslide/lightning não investigados — read-only,
+nunca realimenta as três etapas anteriores) → `sensitivity_recompute` (Fase 6, infraestrutura de
 recomputação parcial, análise Sobol/SALib em si ainda não implementada) →
 `visualization/` (Fase 7, NÃO INICIADO para a divisão PSAE/Risk_i,h — o
 módulo existente é CCRS-era e está quebrado). Não existe mais um

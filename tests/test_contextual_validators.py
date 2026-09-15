@@ -1,11 +1,13 @@
 """Tests for src/index/contextual_validators -- GEAR v3 Phase 5 (Methods
-Section 7), broad-impact (EM-DAT) validator class only (physical-occurrence
-not implemented, no acquired source -- see module docstring).
+Section 7): broad-impact (EM-DAT) and physical-occurrence (IBTrACS, ``wind``
+term only) validator classes. FIRMS/landslide/lightning remain unacquired --
+see module docstring.
 
-Covers: pure GADM-GID parsing (no I/O), the three-state assignment logic
-against real EM-DAT/GADM/plant data, and -- the task's explicit
-requirement -- a read-only guarantee test proving this module never changes
-psae.py/risk_bands.py/risk_calculator.py output.
+Covers: pure GADM-GID parsing and haversine distance (no I/O), the
+three-state assignment logic against real EM-DAT/IBTrACS/GADM/plant data
+(including the known Brazil-near-null / India-real-density physical cases),
+and -- the task's explicit requirement -- a read-only guarantee test proving
+this module never changes psae.py/risk_bands.py/risk_calculator.py output.
 """
 
 import numpy as np
@@ -13,8 +15,9 @@ import pandas as pd
 import pytest
 
 from src.config import BOUNDARIES_RAW, COUNTRIES, COUNTRY_ISO3
-from src.downloaders import emdat_downloader
+from src.downloaders import emdat_downloader, ibtracs_downloader
 from src.index import contextual_validators as cv
+from src.index import hazard_scope as hs
 from src.index import psae
 from src.index import risk_bands as rb
 from src.index import risk_calculator as rc
@@ -28,8 +31,9 @@ def _real_data_present() -> bool:
         (BOUNDARIES_RAW / "gadm" / f"gadm41_{COUNTRY_ISO3[c]}.gpkg").exists() for c in COUNTRIES
     )
     emdat_ok = all(emdat_downloader.country_csv_path(c).exists() for c in COUNTRIES)
+    ibtracs_ok = all(ibtracs_downloader.country_csv_path(c).exists() for c in COUNTRIES)
     rasters_ok = rc.raster_path("heat", "Brazil", "opt", rc.configured_models()[0]).exists()
-    return plants_ok and boundaries_ok and emdat_ok and rasters_ok
+    return plants_ok and boundaries_ok and emdat_ok and ibtracs_ok and rasters_ok
 
 
 pytestmark = pytest.mark.skipif(
@@ -126,14 +130,135 @@ def test_output_has_no_duplicate_plant_hazard_rows():
     assert out.duplicated(key).sum() == 0
 
 
-def test_physical_occurrence_raises_not_implemented():
-    with pytest.raises(NotImplementedError, match="physical-occurrence"):
-        cv.compute_physical_occurrence_validation()
+# --------------------------------------------------------------------------
+# Physical-occurrence (IBTrACS) -- pure haversine, no I/O
+# --------------------------------------------------------------------------
+def test_haversine_zero_distance_for_identical_points():
+    assert cv._haversine_km(-23.5, -46.6, -23.5, -46.6) == pytest.approx(0.0, abs=1e-6)
 
 
-def test_compute_contextual_validation_is_broad_impact_only():
+def test_haversine_matches_known_distance():
+    # Lisbon (38.72 N, -9.14) to Porto (41.15 N, -8.61) -- known great-circle
+    # distance ~273 km, cross-checked independently of this module.
+    d = cv._haversine_km(38.72, -9.14, 41.15, -8.61)
+    assert d == pytest.approx(273.0, rel=0.02)
+
+
+def test_haversine_broadcasts_over_arrays():
+    import numpy as np
+
+    lat2 = np.array([-23.5, -22.9])
+    lon2 = np.array([-46.6, -43.2])
+    d = cv._haversine_km(-23.5, -46.6, lat2, lon2)
+    assert d.shape == (2,)
+    assert d[0] == pytest.approx(0.0, abs=1e-6)
+
+
+# --------------------------------------------------------------------------
+# Physical-occurrence (IBTrACS) -- pytestmark-gated real-data tests
+# --------------------------------------------------------------------------
+def test_physical_occurrence_output_only_uses_the_three_documented_states():
+    out = cv.compute_physical_occurrence_validation(["Portugal"])
+    assert set(out["state"]) <= set(cv.THREE_STATE_LABELS)
+
+
+def test_physical_occurrence_every_row_is_hazard_applicable_to_its_own_bucket():
+    out = cv.compute_physical_occurrence_validation(["Portugal"])
+    for row in out.itertuples(index=False):
+        assert row.hazard_term in hs.APPLICABLE_HAZARDS[row.bucket]
+
+
+def test_physical_occurrence_non_wind_hazard_terms_are_always_not_applicable():
+    """IBTrACS covers only ``wind`` -- every row for every other hazard term
+    (ws/spei/precip/sv/iv/heat) must be Not Applicable, regardless of
+    location, exactly the same shape as EM-DAT's unmapped-term rows."""
+    out = cv.compute_physical_occurrence_validation(COUNTRIES)
+    non_wind = out[out["hazard_term"] != "wind"]
+    assert len(non_wind)  # sanity: hydro/thermal rows really are present
+    assert (non_wind["state"] == cv.NOT_APPLICABLE).all()
+
+
+def test_physical_occurrence_wind_rows_are_only_wind_or_solar_bucket():
+    out = cv.compute_physical_occurrence_validation(COUNTRIES)
+    wind_rows = out[out["hazard_term"] == "wind"]
+    assert set(wind_rows["bucket"]) <= {"wind", "solar"}
+
+
+def test_physical_occurrence_corroborated_rows_have_at_least_one_match():
+    out = cv.compute_physical_occurrence_validation(COUNTRIES)
+    corroborated = out[out["state"] == cv.CORROBORATED]
+    if len(corroborated):
+        assert (corroborated["n_geocoded_events"] >= 1).all()
+        assert (corroborated["hazard_term"] == "wind").all()
+        assert corroborated["gid_1"].isna().all()
+
+
+def test_physical_occurrence_no_record_rows_have_zero_matches():
+    out = cv.compute_physical_occurrence_validation(COUNTRIES)
+    no_record = out[(out["state"] == cv.NO_RECORD) & (out["validator_class"] == cv.VALIDATOR_CLASS_PHYSICAL_OCCURRENCE)]
+    if len(no_record):
+        assert (no_record["n_geocoded_events"] == 0).all()
+        assert (no_record["hazard_term"] == "wind").all()
+
+
+def test_physical_occurrence_output_has_no_duplicate_plant_hazard_rows():
+    out = cv.compute_physical_occurrence_validation(["Portugal"])
+    key = [cv.PLANT_UID, "validator_class", "hazard_term"]
+    assert out.duplicated(key).sum() == 0
+
+
+def test_physical_occurrence_brazil_is_near_total_no_record():
+    """South Atlantic tropical-cyclone climatology is near-zero -- Hurricane
+    Catarina (2004) is the one documented case. This validator's
+    corroboration rate for Brazil should reflect that near-null physical
+    reality, not indicate a bug or a data gap."""
+    out = cv.compute_physical_occurrence_validation(["Brazil"])
+    wind_rows = out[out["hazard_term"] == "wind"]
+    corroborated = wind_rows[wind_rows["state"] == cv.CORROBORATED]
+    assert len(corroborated) / len(wind_rows) < 0.01  # well under 1%
+    if len(corroborated):
+        # every Brazil corroboration must trace back to a track point within
+        # STORM_TRACK_RADIUS_KM of that specific plant -- and every such
+        # matched storm must be Catarina, the SA basin's one documented
+        # hurricane-strength case. Other qualifying SA-basin storms exist in
+        # the raw track file (e.g. weak 2010/2011 subtropical systems) but
+        # never approach any actual plant -- checked directly, not inferred
+        # from the basin-wide qualifying-track list.
+        plants = rc.load_plants("Brazil")
+        plants = plants[plants[cv.PLANT_UID].isin(corroborated[cv.PLANT_UID])]
+        tracks = cv.load_ibtracs_track_points("Brazil")
+        tracks = tracks[
+            (tracks["SEASON"] >= cv.VALIDATION_WINDOW_START_YEAR)
+            & (tracks["WIND_KT"] >= cv.IBTRACS_MIN_WIND_KT)
+        ]
+        matched_sids = set()
+        for plant in plants.itertuples(index=False):
+            d = cv._haversine_km(plant.lat, plant.lon, tracks["LAT"].to_numpy(), tracks["LON"].to_numpy())
+            matched_sids.update(tracks.loc[d <= cv.STORM_TRACK_RADIUS_KM, "SID"].unique())
+        assert matched_sids == {"2004086S29318"}
+
+
+def test_physical_occurrence_india_has_real_corroboration_density():
+    """India's coastal wind/solar plants sit inside an active North Indian
+    Ocean cyclone basin -- corroboration should be a substantial, non-token
+    fraction, unlike Brazil's near-null case."""
+    out = cv.compute_physical_occurrence_validation(["India"])
+    wind_rows = out[out["hazard_term"] == "wind"]
+    corroborated = wind_rows[wind_rows["state"] == cv.CORROBORATED]
+    assert len(corroborated) / len(wind_rows) > 0.10  # well above Brazil's <1%
+
+
+def test_compute_contextual_validation_stacks_both_implemented_classes():
     out = cv.compute_contextual_validation(["Portugal"])
-    assert set(out["validator_class"]) == {cv.VALIDATOR_CLASS_BROAD_IMPACT}
+    assert set(out["validator_class"]) == {
+        cv.VALIDATOR_CLASS_BROAD_IMPACT,
+        cv.VALIDATOR_CLASS_PHYSICAL_OCCURRENCE,
+    }
+    # both classes report the full (plant, hazard_term) grid independently --
+    # stacking must not deduplicate or drop either class's rows
+    broad = cv.compute_broad_impact_validation(["Portugal"])
+    physical = cv.compute_physical_occurrence_validation(["Portugal"])
+    assert len(out) == len(broad) + len(physical)
 
 
 # --------------------------------------------------------------------------

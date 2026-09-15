@@ -23,19 +23,27 @@ per the standing "never acquire new data without author confirmation" rule
   all three countries (``src/downloaders/emdat_downloader.py``,
   ``data/raw/validation/emdat_{country}.csv``) -- CCRS-era work, reusable.
   **Implemented in this module.**
-* **Physical-occurrence (Section 7.1, IBTrACS/FIRMS/landslide/lightning)**:
-  grep-confirmed **zero** acquisition code or data anywhere in this project
-  (``grep -rl "IBTrACS\\|ibtracs" --include=*.py`` and the FIRMS equivalent
-  both return nothing under ``src/``; the substring hits in
-  ``tests/test_extreme_wind_processor.py``/``tests/test_visualization.py``
-  are false positives -- "con**firms**"). Per this task's explicit
-  instruction: **not acquired here.** This module is therefore a
-  **PARTIAL implementation of Phase 5** -- the broad-impact class only, the
-  two-class taxonomy left structurally ready (``ValidatorClass``,
-  ``THREE_STATE_LABELS``) for a physical-occurrence class to be added once
-  an author decides which source to acquire and how. Labelled as partial,
-  not closed, per this project's own partial-closure convention -- see
-  ``docs/DECISIONS.md``.
+* **Physical-occurrence (Section 7.1)**: author-approved scoping session
+  concluded IBTrACS acquisition, FIRMS rejection, landslide/lightning not
+  investigated -- see ``docs/DECISIONS.md``, "GEAR v3 Phase 5:
+  physical-occurrence validator (IBTrACS)".
+  - **IBTrACS**: acquired (``src/downloaders/ibtracs_downloader.py``,
+    ``data/raw/validation/ibtracs_{country}.csv``, one NOAA NCEI basin file
+    per country -- SA/Brazil, NA/Portugal, NI/India). **Implemented in this
+    module, ``wind`` hazard term only** (the only term
+    ``hazard_scope.WIND_APPLICABLE_BUCKETS`` gives a storm-track source
+    anything to validate against).
+  - **FIRMS**: **not acquired.** ``hazard_scope.
+    DEFERRED_OR_EXCLUDED_HAZARDS`` excludes wildfire from this project's
+    modeled hazard set entirely -- there is no ``APPLICABLE_HAZARDS`` slot a
+    fire detection could attach to. A scope mismatch, not a data-access
+    problem; reopening it means reopening the hazard-scope decision itself
+    (an ``ARCHITECTURE.md``-level call), not a Phase 5 acquisition task.
+  - **Landslide/lightning**: not investigated -- flagged as an open item if
+    Section 7.1 is revisited.
+  This module is therefore a **PARTIAL implementation of Phase 5**: EM-DAT
+  and IBTrACS(``wind``) only. Labelled as partial, not closed, per this
+  project's own partial-closure convention -- see ``docs/DECISIONS.md``.
 
 --------------------------------------------------------------------------
 Not the retired src/index/emdat_validation.py, reused where it still fits
@@ -96,8 +104,17 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
-from src.config import BOUNDARIES_RAW, COUNTRIES, COUNTRY_ISO3, MAINLAND_ONLY_COUNTRIES, OUTPUT_TABLES
-from src.downloaders import emdat_downloader
+import numpy as np
+
+from src.config import (
+    BOUNDARIES_RAW,
+    COUNTRIES,
+    COUNTRY_BBOX_FALLBACK,
+    COUNTRY_ISO3,
+    MAINLAND_ONLY_COUNTRIES,
+    OUTPUT_TABLES,
+)
+from src.downloaders import emdat_downloader, ibtracs_downloader
 from src.downloaders.boundaries_downloader import get_country_geometry
 from src.index import hazard_scope as hs
 from src.index import risk_calculator as rc
@@ -117,6 +134,32 @@ THREE_STATE_LABELS = (CORROBORATED, NO_RECORD, NOT_APPLICABLE)
 
 # Section 7.3: "Historical window: post-2000 only for all sources."
 VALIDATION_WINDOW_START_YEAR = 2000
+
+# --------------------------------------------------------------------------
+# Physical-occurrence (IBTrACS) match radius -- Section 7.3's "location/
+# radius" phrase, operationalized for a point-track source (unlike EM-DAT's
+# admin-1 polygon, IBTrACS gives no polygon to contain a plant in, so a
+# radius search is the only workable geometry here).
+#
+# 100 km is the conservative end of published tropical-cyclone gale-force
+# (34-kt) wind-radius climatology -- mean R34 radii are commonly reported in
+# the ~150-250 km range depending on basin and intensity, but a majority of
+# IBTrACS track points (especially pre-2000s and non-US-agency records)
+# carry no per-quadrant R34 field at all, so a fixed radius from the track
+# center is a necessary proxy, not a refinement over real per-storm wind-
+# field data. Using the conservative (smaller) end of that range means this
+# validator under-claims rather than over-claims corroboration -- consistent
+# with this module's read-only, honest-gap posture elsewhere (see EM-DAT's
+# ~47-50% unmapped-event exclusion above).
+STORM_TRACK_RADIUS_KM = 100.0
+
+# Gale-force / tropical-storm intensity threshold (kt) a matched track point
+# must also meet -- see ibtracs_downloader.MIN_WIND_KT, same constant,
+# duplicated here (not imported) because it belongs to this module's own
+# state-assignment logic, not to acquisition.
+IBTRACS_MIN_WIND_KT = ibtracs_downloader.MIN_WIND_KT
+
+_EARTH_RADIUS_KM = 6371.0088
 
 # The two classes (Section 7.1/7.2) -- named here so a future
 # physical-occurrence implementation registers under the same taxonomy
@@ -315,30 +358,138 @@ def compute_broad_impact_validation(countries: list[str] | None = None) -> pd.Da
     return out
 
 
+def _haversine_km(lat1, lon1, lat2, lon2):
+    """Vectorised great-circle distance (km), WGS84-sphere approximation
+    (``_EARTH_RADIUS_KM``). Accepts scalars or numpy arrays; broadcasts."""
+    lat1, lon1, lat2, lon2 = map(np.radians, (lat1, lon1, lat2, lon2))
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
+    return 2.0 * _EARTH_RADIUS_KM * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+
+
+def load_ibtracs_track_points(country: str) -> pd.DataFrame:
+    """``ibtracs_downloader.country_csv_path(country)`` read as-is: one row
+    per (storm, best-track fix), unfiltered by year or wind speed (post-2000
+    and the gale-force floor are applied by the caller, exactly like
+    ``load_geocoded_emdat_events`` stays a pure read of what the source
+    says). Raises ``FileNotFoundError`` with an actionable message rather
+    than silently returning an empty frame -- fail loud on missing
+    acquisition, matching this module's EM-DAT path."""
+    path = ibtracs_downloader.country_csv_path(country)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} does not exist -- run "
+            f"ibtracs_downloader.run_ibtracs_pipeline(['{country}']) first."
+        )
+    df = pd.read_csv(path)
+    df["SEASON"] = pd.to_numeric(df["SEASON"], errors="coerce")
+    return df
+
+
 # --------------------------------------------------------------------------
-# Physical-occurrence validator -- Section 7.1. NOT IMPLEMENTED: no source
-# acquired (see module docstring). Named here as the explicit, honest stop
-# point rather than silently absent.
+# Physical-occurrence validator -- Section 7.1, ``wind`` hazard term only
+# (IBTrACS). FIRMS/landslide/lightning remain unacquired -- scope mismatch
+# (FIRMS) or not investigated (landslide/lightning); see module docstring
+# and docs/DECISIONS.md, "GEAR v3 Phase 5: physical-occurrence validator
+# (IBTrACS)".
 # --------------------------------------------------------------------------
 def compute_physical_occurrence_validation(countries: list[str] | None = None) -> pd.DataFrame:
-    raise NotImplementedError(
-        "Phase 5 physical-occurrence validator (Section 7.1: IBTrACS/FIRMS/"
-        "landslide/lightning) has no acquired data source in this project "
-        "(grep-confirmed) -- not implemented per the standing rule against "
-        "acquiring new data without author confirmation. See "
-        "docs/DECISIONS.md, 'GEAR v3 Phase 5: contextual validator layer "
-        "(broad-impact only, partial)'."
-    )
+    """One row per (plant, hazard_term) for every hazard_term in that
+    plant's bucket's ``hazard_scope.APPLICABLE_HAZARDS`` -- same shape as
+    ``compute_broad_impact_validation``, this validator class's own source
+    (IBTrACS) and coverage (``wind`` only).
+
+    State assignment per (plant, hazard_term):
+    - ``Not Applicable`` if ``hazard_term != "wind"`` -- IBTrACS has no
+      coverage for any other hazard this project models (mirrors EM-DAT's
+      "no disaster-type mapping" case; every ``wind``-term row belongs to a
+      ``wind``- or ``solar``-bucket plant, per
+      ``hazard_scope.WIND_APPLICABLE_BUCKETS`` -- never hydro/thermal).
+    - ``Corroborated`` if >=1 track point of >= ``IBTRACS_MIN_WIND_KT``
+      (gale-force) sits within ``STORM_TRACK_RADIUS_KM`` of the plant,
+      ``SEASON >= 2000``.
+    - ``No Record`` otherwise (validator applicable, checked, nothing
+      found within radius/window/intensity). A point-radius search never
+      "misses" the way an admin-1 spatial join can (every plant has a
+      coordinate), so ``wind``-term rows are never ``Not Applicable`` for a
+      join-failure reason the way EM-DAT rows can be.
+    """
+    countries = countries or COUNTRIES
+    rows = []
+    for country in countries:
+        plants = rc.load_plants(country)
+        tracks = load_ibtracs_track_points(country)
+        tracks = tracks[
+            (tracks["SEASON"] >= VALIDATION_WINDOW_START_YEAR)
+            & (tracks["WIND_KT"] >= IBTRACS_MIN_WIND_KT)
+        ]
+        # Coarse country-bbox pre-filter (padded by the match radius in
+        # degrees, generously -- 1 deg latitude ~111 km) before the exact
+        # haversine pass, so the O(plants x tracks) distance matrix stays
+        # small. Uses the same COUNTRY_BBOX_FALLBACK box the climate
+        # downloaders already rely on -- not a new bbox invented here.
+        pad_deg = STORM_TRACK_RADIUS_KM / 111.0 + 0.5
+        xmin, ymin, xmax, ymax = COUNTRY_BBOX_FALLBACK[country]
+        tracks = tracks[
+            tracks["LON"].between(xmin - pad_deg, xmax + pad_deg)
+            & tracks["LAT"].between(ymin - pad_deg, ymax + pad_deg)
+        ]
+        track_lat = tracks["LAT"].to_numpy()
+        track_lon = tracks["LON"].to_numpy()
+
+        for plant in plants.itertuples(index=False):
+            bucket = plant.bucket
+            applicable = hs.APPLICABLE_HAZARDS.get(bucket, ())
+
+            n_matches = 0
+            if "wind" in applicable and track_lat.size:
+                dist = _haversine_km(plant.lat, plant.lon, track_lat, track_lon)
+                n_matches = int((dist <= STORM_TRACK_RADIUS_KM).sum())
+
+            for hazard_term in applicable:
+                if hazard_term != "wind":
+                    state = NOT_APPLICABLE
+                    n_events = 0
+                else:
+                    n_events = n_matches
+                    state = CORROBORATED if n_events > 0 else NO_RECORD
+
+                rows.append({
+                    PLANT_UID: getattr(plant, PLANT_UID),
+                    "country": country,
+                    "plant_name": plant.plant_name,
+                    "bucket": bucket,
+                    "validator_class": VALIDATOR_CLASS_PHYSICAL_OCCURRENCE,
+                    "source": "IBTrACS",
+                    "hazard_term": hazard_term,
+                    "state": state,
+                    "n_geocoded_events": n_events,
+                    "gid_1": None,
+                })
+
+    out = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
+    key = [PLANT_UID, "validator_class", "hazard_term"]
+    dup = int(out.duplicated(key).sum())
+    if dup:
+        raise RuntimeError(f"compute_physical_occurrence_validation produced {dup} duplicate {key} rows.")
+    return out
 
 
 # --------------------------------------------------------------------------
 # Combined entry point -- currently broad-impact only (see above).
 # --------------------------------------------------------------------------
 def compute_contextual_validation(countries: list[str] | None = None) -> pd.DataFrame:
-    """Every implemented validator class, stacked. Physical-occurrence is
-    absent (not implemented -- see module docstring), not silently
-    represented as ``Not Applicable`` everywhere."""
-    return compute_broad_impact_validation(countries)
+    """Every implemented validator class, stacked: broad-impact (EM-DAT) and
+    physical-occurrence (IBTrACS, ``wind`` term only). FIRMS/landslide/
+    lightning remain absent -- see module docstring."""
+    return pd.concat(
+        [
+            compute_broad_impact_validation(countries),
+            compute_physical_occurrence_validation(countries),
+        ],
+        ignore_index=True,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -355,8 +506,8 @@ def main() -> int:
     out_path = args.out_dir / "contextual_validators.csv"
     result.to_csv(out_path, index=False)
     logger.info(
-        "wrote %s (%d rows, broad_impact class only -- physical_occurrence "
-        "not implemented, no acquired source)", out_path, len(result),
+        "wrote %s (%d rows: broad_impact + physical_occurrence[wind]; "
+        "FIRMS/landslide/lightning not acquired)", out_path, len(result),
     )
     return 0
 

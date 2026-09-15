@@ -254,6 +254,24 @@ AQUEDUCT_FC_ID = "WRI/Aqueduct_Water_Risk/V4/future_annual"
 EMDAT_ARCHIVE_PERSISTENT_ID = "doi:10.14428/DVN/I0LTPH"
 EMDAT_DATAVERSE_API_BASE = "https://dataverse.uclouvain.be/api"
 
+# IBTrACS v04r01 (NOAA NCEI), public domain, no credential, basin-scoped CSV
+# access. One WMO basin per study country -- geographically exhaustive, not a
+# simplification: Brazil's entire coastline sits in the South Atlantic (SA)
+# basin, mainland Portugal sits only on the North Atlantic (NA), and India's
+# Bay of Bengal + Arabian Sea coasts are both inside the North Indian (NI)
+# basin. No study-country coastline is reachable by a storm tracked in any
+# other basin.
+IBTRACS_BASE_URL = (
+    "https://www.ncei.noaa.gov/data/"
+    "international-best-track-archive-for-climate-stewardship-ibtracs/"
+    "v04r01/access/csv"
+)
+IBTRACS_BASIN_BY_COUNTRY = {
+    "Brazil": "SA",
+    "Portugal": "NA",
+    "India": "NI",
+}
+
 # Complementary national asset registries. The downloaders that consume these
 # (ANEEL for Brazil, DGEG for Portugal) are NOT part of this rebuild; the
 # endpoints are retained so the constants exist if that decision is revisited.
