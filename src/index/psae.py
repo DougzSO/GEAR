@@ -152,46 +152,95 @@ def compute_psae(risk_band_result: rb.RiskBandTable) -> PSAETable:
     ``psae_complete=False``, and ``missing_hazards`` naming exactly which
     hazard(s) were unavailable, never a silently dropped row and never a
     band computed over a shrunk denominator.
+
+    --------------------------------------------------------------------
+    Vectorised (2026-09-14 performance rewrite) -- no per-group Python loop
+    --------------------------------------------------------------------
+    Profiled before rewriting (``docs/DECISIONS.md``, "GEAR v3 psae.py
+    performance fix"): the prior implementation's ~7.9s/call cost was NOT
+    redundant computation or slow Python arithmetic -- ``cProfile`` on real
+    production data (88,116 rows, 32,424 plant x water_scenario groups)
+    showed ~95% of cumulative time inside pandas' OWN per-group machinery
+    (``DataFrame._ixs``, ``fast_xs``, ``groupby.ops.__iter__``/``_chop``) --
+    the cost of materialising 32,424 separate group sub-``DataFrame``s and
+    indexing into them with ``.iloc``/``.iat``, not the four lines of actual
+    per-group logic. The fix is therefore structural, not micro-
+    optimisation: ``frame.pivot(...)`` once (one hazard-term column per
+    hazard, one row per plant x water_scenario), then one boolean-matrix
+    pass PER BUCKET (4 buckets, not 32,424 groups) using ``.isna()``/
+    ``.isin()`` over the whole bucket's rows at once. The only remaining
+    Python-level per-row work (assembling ``psae_label``/``missing_hazards``,
+    both via ``classify_psae_fraction`` and plain numpy indexing, no pandas
+    per-row indexing) runs over plain numpy arrays, not pandas group
+    objects -- this is what actually eliminates the cost, not fewer lines
+    of code.
+
+    Correctness is unchanged: ``tests/test_psae.py`` (unmodified
+    expectations) and ``tests/test_sensitivity_recompute.py`` (real-data,
+    numeric-identity checks against this function specifically) both pass
+    against this rewrite -- see ``docs/DECISIONS.md`` for the real-data
+    verification this rewrite was checked against before being trusted.
     """
     frame = risk_band_result.frame
     id_cols = [PLANT_UID, "country", "plant_name", "bucket", "water_scenario",
                "heat_scenario", "model"]
+    key_cols = [PLANT_UID, "water_scenario"]
 
-    rows: list[dict] = []
-    for (_plant_uid, _water_scenario), group in frame.groupby(
-        [PLANT_UID, "water_scenario"], sort=False,
-    ):
-        bucket = group["bucket"].iat[0]
-        h_b = hs.APPLICABLE_HAZARDS[bucket]
+    meta = (
+        frame[id_cols]
+        .drop_duplicates(subset=key_cols)
+        .set_index(key_cols, drop=False)
+    )
+    wide = frame.pivot(index=key_cols, columns="hazard_term", values="risk_band")
+
+    parts: list[pd.DataFrame] = []
+    for bucket, h_b in hs.APPLICABLE_HAZARDS.items():
+        bucket_keys = meta.index[meta["bucket"] == bucket]
+        if len(bucket_keys) == 0:
+            continue
         h_b_size = len(h_b)
+        cols = list(h_b)
+        # reindex columns too: a hazard in H_b that never appears anywhere
+        # in `frame` (not even as a None/NaN row) becomes an all-NaN column
+        # here rather than a silent KeyError or a dropped dimension.
+        sub = wide.reindex(index=bucket_keys, columns=cols)
 
-        by_hazard = dict(zip(group["hazard_term"], group["risk_band"]))
-        missing = tuple(h for h in h_b if pd.isna(by_hazard.get(h)))
+        is_missing = sub.isna().to_numpy()
+        is_high = sub.isin(HIGH_OR_ABOVE).to_numpy()
+        missing_count = is_missing.sum(axis=1)
+        n_high = is_high.sum(axis=1)
+        complete = missing_count == 0
 
-        meta = group.iloc[0]
-        row = {c: meta[c] for c in id_cols}
-        row["h_b_size"] = h_b_size
-        if missing:
-            row["n_high_or_above"] = np.nan
-            row["psae"] = np.nan
-            row["psae_label"] = None
-            row["psae_complete"] = False
-            row["missing_hazards"] = missing
-        else:
-            n_high = sum(1 for h in h_b if by_hazard[h] in HIGH_OR_ABOVE)
-            psae = n_high / h_b_size
-            row["n_high_or_above"] = n_high
-            row["psae"] = psae
-            row["psae_label"] = classify_psae_fraction(psae)
-            row["psae_complete"] = True
-            row["missing_hazards"] = ()
-        rows.append(row)
+        psae_value = np.where(complete, n_high / h_b_size, np.nan)
+        n = len(bucket_keys)
+        # np.array([tuple(...), ...], dtype=object) would silently broadcast
+        # into a 2-D array when every tuple has the same length (e.g. every
+        # row complete -> every missing_hazards entry is the SAME-length
+        # empty tuple `()`) -- a real numpy footgun, not a hypothetical.
+        # Pre-allocated 1-D object arrays, filled by index, sidestep it.
+        psae_label = np.empty(n, dtype=object)
+        hazard_names = np.array(cols, dtype=object)
+        missing_hazards = np.empty(n, dtype=object)
+        for i in range(n):
+            psae_label[i] = classify_psae_fraction(psae_value[i]) if complete[i] else None
+            missing_hazards[i] = tuple(hazard_names[is_missing[i]]) if missing_count[i] else ()
 
-    out = pd.DataFrame.from_records(rows)[PSAE_OUTPUT_COLUMNS]
-    key = [PLANT_UID, "water_scenario"]
-    dup = int(out.duplicated(key).sum())
+        part = meta.loc[bucket_keys, id_cols].reset_index(drop=True)
+        part["h_b_size"] = h_b_size
+        part["n_high_or_above"] = np.where(complete, n_high, np.nan)
+        part["psae"] = psae_value
+        part["psae_label"] = psae_label
+        part["psae_complete"] = complete
+        part["missing_hazards"] = missing_hazards
+        parts.append(part[PSAE_OUTPUT_COLUMNS])
+
+    out = (
+        pd.concat(parts, ignore_index=True) if parts
+        else pd.DataFrame(columns=PSAE_OUTPUT_COLUMNS)
+    )
+    dup = int(out.duplicated(key_cols).sum())
     if dup:
-        raise RuntimeError(f"compute_psae produced {dup} duplicate {key} rows.")
+        raise RuntimeError(f"compute_psae produced {dup} duplicate {key_cols} rows.")
     return PSAETable(frame=out, model=risk_band_result.model)
 
 

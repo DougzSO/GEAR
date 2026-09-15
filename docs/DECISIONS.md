@@ -4061,3 +4061,104 @@ protocol-only draft (never committed as such).
   which source(s) to acquire before it can proceed. Disaster-type/hazard-
   term mapping extension (`Storm -> wind`, `Flood -> precip`): **open,
   author confirmation needed**, not decided by this entry.
+
+## [2026-09-14] GEAR v3 psae.py performance fix: vectorised compute_psae (110x on this step, output unchanged)
+
+- Decision: `psae.compute_psae` is rewritten to eliminate the per-
+  `(plant_uid, water_scenario)` Python `groupby` loop entirely -- one
+  `frame.pivot(...)` (hazard_term -> column) plus one vectorised
+  boolean-matrix pass **per bucket** (4 buckets, not 32,424 groups), using
+  `.isna()`/`.isin()` over the whole bucket's rows at once. Public API
+  (`compute_psae(risk_band_result) -> PSAETable`), output shape/columns,
+  and the complete-case semantics (never-shrunk `h_b_size`, `psae_complete`,
+  `missing_hazards`, never-silently-not-High) are all unchanged --
+  confirmed by the correctness verification below, not just claimed.
+- Why: `sensitivity_recompute.py`'s own DECISIONS.md entry ("GEAR v3 Phase
+  6: partial-recomputation pipeline") already identified `psae.
+  compute_psae` as the new dominant bottleneck once raster I/O was cached
+  -- ~7.9s/call, ~96% of the measured 16.42s/draw end-to-end cost,
+  projecting Phase 6.2's `D=6`/`N_0=16000` Sobol run to ~42.6 days.
+- **Profiled before rewriting (task requirement, not skipped)**:
+  `cProfile` on real production `RiskBandTable` data (88,116 rows, 32,424
+  plant x water_scenario groups) showed 16.7s total, of which the
+  overwhelming majority (`tottime`+`cumtime` breakdown) was inside
+  pandas' OWN per-group machinery -- `DataFrame._ixs` (7.7s cumulative),
+  `indexing._getitem_axis`/`__getitem__` (4.9-4.9s), `groupby.ops.fast_xs`
+  (3.4s), `groupby.ops.__iter__`/`_chop` (2.5s/2.2s) -- not redundant
+  computation, not slow per-row arithmetic (the actual per-group logic's
+  own `dictcomp` cost only 2.1s of the 16.7s total). **The bottleneck was
+  materialising and indexing 32,424 separate pandas group sub-DataFrames**
+  (`.iloc[0]`/`group["bucket"].iat[0]` inside a Python `groupby` loop),
+  confirming the task's premise before any line was rewritten.
+- Correctness verified against real production data, same standard as
+  `sensitivity_recompute.py`'s own precedent, in two independent ways:
+  1. **Direct old-vs-new comparison**, this session: the pre-rewrite
+     implementation's real output (pickled before the rewrite touched the
+     file) compared row-for-row (sorted by `plant_uid`/`water_scenario`)
+     against the rewrite's output on the identical `RiskBandTable` input
+     (32,424 rows, one GCM) -- `h_b_size`/`n_high_or_above`/`psae`
+     `np.allclose`, every categorical column (`country`/`plant_name`/
+     `bucket`/`water_scenario`/`heat_scenario`/`model`/`psae_label`) exact
+     match, `psae_complete` exact match, `missing_hazards` tuples exact
+     match. **Zero discrepancies.**
+  2. **Permanent regression test**, `tests/test_psae.py::
+     test_compute_psae_matches_reference_implementation_on_real_data`: a
+     small, deliberately slow reference re-implementation of the RETIRED
+     per-group algorithm, kept only in the test file (never reused in
+     `src/`, since the original no longer exists there to diff against),
+     run against real `risk_bands.compute_risk_bands()` output and
+     compared field-for-field against the vectorised `compute_psae`. Added
+     specifically so a FUTURE change to `compute_psae` still gets checked
+     against real data, not just the existing hand-built fixtures.
+  All 27 pre-existing `tests/test_psae.py` tests pass **unmodified** (no
+  expectation was changed to accommodate the rewrite) plus the one new
+  regression test above (28 total). `tests/test_sensitivity_recompute.py`'s
+  own real-data correctness tests (which call `psae.compute_psae` both
+  directly and via `recompute_draw`) re-run against the new `psae.py` and
+  pass unmodified. Full project suite: **401/401** (400 previously
+  reported + 1 new), same three pre-existing unrelated
+  `ccrs_calculator`-import failures excluded as before.
+- **Real measured speedup, this session** (not projected):
+  - `compute_psae` alone, one GCM, real data: **~7.9s -> ~0.25s**, a
+    **~31x** speedup for this specific function call.
+  - `sensitivity_recompute.time_n_draws`, one GCM, both chains, N=100 real
+    draws: **mean 0.489s/draw** (median 0.486s, min 0.456s, max 0.568s) --
+    down from the previously measured 8.27s/draw (the psae-dominated
+    figure from the prior entry).
+  - Both-GCM draw (the naive baseline's own scope, 3 countries, both
+    GCMs), 20 real draws, nominal parameters: **mean 0.9724s/draw** (range
+    0.92-1.05s) -- down from the previously measured 16.42s/draw. **A
+    16.9x speedup over the already-cached partial-recompute pipeline, and
+    a 30.5x real speedup over the original ~29.7s/draw naive full-rerun
+    baseline** (29.7 / 0.9724 = 30.5).
+- **New projected Phase 6.2 runtime, real measurement, not projected from
+  a formula alone**: `D=6`, `N_0=16000` -> `N_0*(2D+2) = 224,000`
+  Saltelli evaluations x 0.9724s/draw = **~2.52 days** (~60.5 hours) --
+  down from the previous entry's ~42.6-day figure, and down from the
+  original naive-baseline projection of ~77 days. Each draw is
+  independent (no shared mutable state across draws -- confirmed by
+  `sensitivity_recompute.py`'s own precompute/recompute separation), so
+  this is trivially parallelisable across processes/machines if the
+  author wants the real wall-clock time shorter than ~2.5 days on one
+  core; not attempted here, out of this task's scope.
+- Scope confirmed: this task changed `psae.py` only.
+  `risk_calculator.py`/`risk_bands.py`/`age_factor.py`/
+  `sensitivity_recompute.py` are untouched; `psae.py`'s public API
+  (`compute_psae`, `classify_psae_fraction`, `assert_single_bucket`,
+  `rank_within_bucket`, `build_summary`, `PSAE_OUTPUT_COLUMNS`,
+  `PSAETable`, `HIGH_OR_ABOVE`, `PSAE_LABELS`) is unchanged -- only
+  `compute_psae`'s internal implementation changed. Phase 6's three still-
+  open items (RNG granularity, RiskBand percentile-cut dimension
+  grouping, `psae_complete=False` treatment under a sensitivity
+  statistic) are untouched, still open, not addressed by this entry.
+- References: `src/index/psae.py:144-234` (`compute_psae`, full rewrite
+  docstring); `tests/test_psae.py` (28 tests, including the new real-data
+  regression test); `tests/test_sensitivity_recompute.py` (re-run,
+  unmodified, against the new `psae.py`); this file, "GEAR v3 Phase 6:
+  partial-recomputation pipeline (raster caching + perturbed-chain
+  recompute)" (the entry that identified this bottleneck and whose
+  ~16.42s/draw and ~42.6-day figures this entry supersedes).
+- Status: **Closed (2026-09-14).** `psae.compute_psae` output confirmed
+  unchanged (real-data verified, two independent methods); real per-draw
+  cost and projected Phase 6.2 runtime both re-measured, not projected
+  from the prior entry's numbers alone.

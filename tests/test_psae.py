@@ -10,6 +10,15 @@ thermal=3, wind=1, solar=3), Section 6's classification cut points
 
 Pure-function tests against a hand-built fake RiskBandTable -- no raster or
 CSV I/O, no dependency on real processed data.
+
+Also covers (bottom of file): a real-data regression test for the
+2026-09-14 vectorised performance rewrite of ``compute_psae`` (``docs/
+DECISIONS.md``, "GEAR v3 psae.py performance fix") against a small,
+independent, deliberately slow per-group reference re-implementation of
+the RETIRED (pre-rewrite) algorithm, kept ONLY in this test file -- never
+reused in production code -- so a future change to ``compute_psae`` still
+gets checked against real data, now that the original implementation no
+longer exists in ``src/`` to diff against directly.
 """
 
 import numpy as np
@@ -229,3 +238,91 @@ def test_compute_psae_never_produces_duplicate_plant_scenario_rows():
     rows = _rows_for_bucket("thermal", "P-1", {"ws": "Low", "heat": "Low", "precip": "Low"})
     result = psae.compute_psae(_fake_risk_band_table(rows))
     assert not result.frame.duplicated(["plant_uid", "water_scenario"]).any()
+
+
+# --------------------------------------------------------------------------
+# Real-data regression -- vectorised compute_psae vs. an independent,
+# deliberately slow per-group reference (the RETIRED pre-2026-09-14
+# algorithm, reproduced here only, never in src/). See module docstring.
+# --------------------------------------------------------------------------
+def _reference_compute_psae(risk_band_result: rb.RiskBandTable) -> pd.DataFrame:
+    """Line-for-line the algorithm ``compute_psae`` used before the
+    2026-09-14 vectorised rewrite -- a per-(plant_uid, water_scenario)
+    Python groupby loop. Deliberately NOT imported from anywhere in
+    ``src/`` (it no longer exists there) -- kept here, independently, as
+    the real-data cross-check the rewrite was originally verified against."""
+    frame = risk_band_result.frame
+    id_cols = [psae.PLANT_UID, "country", "plant_name", "bucket", "water_scenario",
+               "heat_scenario", "model"]
+    rows: list[dict] = []
+    for (_plant_uid, _water_scenario), group in frame.groupby(
+        [psae.PLANT_UID, "water_scenario"], sort=False,
+    ):
+        bucket = group["bucket"].iat[0]
+        h_b = hs.APPLICABLE_HAZARDS[bucket]
+        h_b_size = len(h_b)
+        by_hazard = dict(zip(group["hazard_term"], group["risk_band"]))
+        missing = tuple(h for h in h_b if pd.isna(by_hazard.get(h)))
+        meta = group.iloc[0]
+        row = {c: meta[c] for c in id_cols}
+        row["h_b_size"] = h_b_size
+        if missing:
+            row["n_high_or_above"] = np.nan
+            row["psae"] = np.nan
+            row["psae_label"] = None
+            row["psae_complete"] = False
+            row["missing_hazards"] = missing
+        else:
+            n_high = sum(1 for h in h_b if by_hazard[h] in psae.HIGH_OR_ABOVE)
+            fraction = n_high / h_b_size
+            row["n_high_or_above"] = n_high
+            row["psae"] = fraction
+            row["psae_label"] = psae.classify_psae_fraction(fraction)
+            row["psae_complete"] = True
+            row["missing_hazards"] = ()
+        rows.append(row)
+    return pd.DataFrame.from_records(rows)[psae.PSAE_OUTPUT_COLUMNS]
+
+
+def _rasters_present() -> bool:
+    from src.index import risk_calculator as rc
+    try:
+        return rc.raster_path("heat", "Brazil", "opt", rc.configured_models()[0]).exists()
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not _rasters_present(), reason="processed rasters absent")
+def test_compute_psae_matches_reference_implementation_on_real_data():
+    """The 2026-09-14 vectorised rewrite must match the retired per-group
+    algorithm exactly on real production RiskBand output -- not just on
+    the small hand-built fixtures above."""
+    from src.index import risk_calculator as rc
+
+    model = rc.configured_models()[0]
+    band_table = rb.compute_risk_bands(model)
+
+    expected = _reference_compute_psae(band_table)
+    actual = psae.compute_psae(band_table).frame
+
+    key = [psae.PLANT_UID, "water_scenario"]
+    expected = expected.sort_values(key).reset_index(drop=True)
+    actual = actual.sort_values(key).reset_index(drop=True)
+
+    assert list(expected.columns) == list(actual.columns)
+    assert len(expected) == len(actual)
+    for col in ("h_b_size", "n_high_or_above", "psae"):
+        np.testing.assert_allclose(
+            expected[col].to_numpy("float64"), actual[col].to_numpy("float64"),
+            equal_nan=True,
+        )
+    for col in ("country", "plant_name", "bucket", "water_scenario",
+                "heat_scenario", "model", "psae_label"):
+        e = expected[col].astype(object).where(expected[col].notna(), None)
+        a = actual[col].astype(object).where(actual[col].notna(), None)
+        assert (e.to_numpy() == a.to_numpy()).all(), f"column {col!r} diverged"
+    assert (expected["psae_complete"].to_numpy() == actual["psae_complete"].to_numpy()).all()
+    assert (
+        expected["missing_hazards"].apply(tuple).to_numpy()
+        == actual["missing_hazards"].apply(tuple).to_numpy()
+    ).all()
