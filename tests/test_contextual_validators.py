@@ -90,9 +90,10 @@ def test_every_row_is_hazard_applicable_to_its_own_bucket():
 
 
 def test_unmapped_hazard_terms_are_always_not_applicable():
-    """precip/wind/sv/iv have no EMDAT_DISASTER_TYPE_TO_TERM entry -- every
-    row for those hazard terms must be Not Applicable, regardless of
-    location."""
+    """Whichever hazard terms have no EMDAT_DISASTER_TYPE_TO_TERM entry
+    (currently sv/iv) must be Not Applicable in every row, regardless of
+    location -- computed from the mapping itself, not a hardcoded term
+    list, so this stays correct across future mapping changes."""
     out = cv.compute_broad_impact_validation(["Portugal"])
     unmapped = set(out["hazard_term"]) - set(cv.EMDAT_DISASTER_TYPE_TO_TERM.values())
     assert unmapped  # sanity: there really are unmapped terms in H_b

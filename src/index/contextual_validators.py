@@ -73,21 +73,23 @@ was found", not "no event ever occurred" -- narrower, stated here once
 rather than re-litigated per state.
 
 --------------------------------------------------------------------------
-Disaster-type -> hazard-term mapping -- inherited UNCHANGED, an open item
-flagged, not silently extended
+Disaster-type -> hazard-term mapping -- author-confirmed extension
+(2026-09-15), replacing the CCRS-era ``Flood -> ws`` placeholder
 --------------------------------------------------------------------------
-``EMDAT_DISASTER_TYPE_TO_TERM`` below is the retired module's own mapping,
-verbatim (approved by Douglas, 2026-09-04): ``Extreme temperature -> heat``,
-``Drought -> spei``, ``Flood -> ws`` (an explicitly acknowledged poor
-match -- water STRESS, not excess water -- kept only because no better term
-existed in the CCRS-era hazard set), ``Storm`` excluded (no wind hazard
-term existed yet). v3 now has both ``precip`` (Extreme Precipitation, a
-plausibly much better "Flood" proxy) and ``wind`` (a real "Storm" target)
-that did not exist when this mapping was approved. **Not extended here**:
-re-deriving a disaster-type/hazard-term mapping is a methodology judgment
-call this task's brief did not ask for and Section 7 does not specify --
-flagged as an open item in ``docs/DECISIONS.md`` for author confirmation,
-not decided by this module.
+``EMDAT_DISASTER_TYPE_TO_TERM`` below was originally the retired module's
+own mapping, verbatim (approved by Douglas, 2026-09-04): ``Extreme
+temperature -> heat``, ``Drought -> spei``, ``Flood -> ws`` (an explicitly
+acknowledged poor match -- water STRESS, not excess water -- kept only
+because no better term existed in the CCRS-era hazard set), ``Storm``
+excluded (no wind hazard term existed yet). v3 introduced ``precip``
+(Extreme Precipitation) and ``wind`` (Extreme Wind) as real hazard terms,
+making a better mapping possible. **Author decision, 2026-09-15**:
+``Flood -> precip`` (precipitation-driven flooding is treated as the
+primary flood proxy; see the constant's own comment for the excluded-cause
+caveat) and ``Storm -> wind`` (wind-driven damage is treated as the
+primary storm proxy; see the constant's own comment for the mixed-cause
+caveat). Both caveats are also registered in ``docs/LIMITATIONS.md``,
+"Hazard Mapping Proxies (Phase 5)".
 
 Standalone: ``python -m src.index.contextual_validators`` writes
 ``data/outputs/tables/contextual_validators.csv``.
@@ -174,12 +176,22 @@ OUTPUT_COLUMNS = [
 
 # --------------------------------------------------------------------------
 # Broad-impact (EM-DAT) disaster-type -> GEAR hazard-term mapping -- see
-# module docstring, "inherited UNCHANGED, an open item flagged".
+# module docstring, "author-confirmed extension (2026-09-15)".
 # --------------------------------------------------------------------------
 EMDAT_DISASTER_TYPE_TO_TERM = {
     "Extreme temperature": "heat",
     "Drought": "spei",
-    "Flood": "ws",
+    # Flood -> precip: pluvial/fluvial (precipitation-driven) flooding is
+    # assumed as the primary flood proxy. Excludes non-meteorological flood
+    # causes (dam failure, rapid snowmelt) -- see docs/LIMITATIONS.md,
+    # "Hazard Mapping Proxies (Phase 5)".
+    "Flood": "precip",
+    # Storm -> wind: wind-driven damage is assumed as the primary storm
+    # proxy. Accepts noise from storms whose damage is dominated by
+    # concurrent flooding rather than wind -- EM-DAT's own "Storm" category
+    # does not separate the two causes -- see docs/LIMITATIONS.md,
+    # "Hazard Mapping Proxies (Phase 5)".
+    "Storm": "wind",
 }
 _TERM_TO_EMDAT_DISASTER_TYPE = {v: k for k, v in EMDAT_DISASTER_TYPE_TO_TERM.items()}
 
