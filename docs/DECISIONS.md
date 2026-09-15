@@ -4700,3 +4700,303 @@ protocol-only draft (never committed as such).
   parallelization" (2026-09-15, the entry whose deferred "Item 1" this
   entry implements and whose 0.44s/1.14-day baseline this entry improves
   on).
+
+## [2026-09-15] GEAR v3 Phase 6.2/6.3 implementation: D=13 reconciled, Sobol/scenario-discovery/general-MC modules built, validated at small scale
+
+- Scope: implements Phase 6.2 (Sobol/SALib, `sobol_sensitivity.py`), Phase
+  6.3 (scenario discovery/OAT, `scenario_discovery.py`), the Phase 6.1
+  general-MC uncertainty-propagation driver (`general_mc.py`), and the
+  RNG-granularity utility (`rng_utils.py`) `PHASE6_DESIGN.md` Section 3
+  asked for, all on top of the already-tested `sensitivity_recompute.py`
+  partial-recomputation engine (unmodified). Does NOT execute a full-scale
+  Sobol run (`N_0>=1024`) or a full-scale general-MC run (`N>=8000`) --
+  both are real, multi-hour-to-multi-day jobs; this entry runs real,
+  small-scale validation only, per explicit task scope, and reports actual
+  measured numbers, not projections.
+
+### D=13, not the stale D=6 floor
+
+This file's "Phase 6 (Sensitivity/uncertainty) input mapping" entry
+(2026-09-14, item 4c) left the RiskBand percentile-cut Sobol-dimension
+grouping open, noting the choice moves `D` "from 2 to 6 for that family
+alone" -- a number that entry never resolved into a final `D`. Any earlier
+verbal "D=6" floor from this project's history is **superseded**: it
+predates that entry's own closures re-adding `SOLAR_RETENTION_RATE` and
+the `COAL_OVERHAUL_CYCLE_YEARS`/`COAL_OVERHAUL_RECOVERY` pair as Sobol
+candidates (items 4a/4b, both closed 2026-09-14, AFTER whatever session
+first wrote "D=6" down) and predates this entry's own percentile-grouping
+decision below. The reconciled, final count is **D=13**:
+
+  1. `coal_decay_rate` -- 0.0025/yr nominal, `[0.0019, 0.0044]`, literature (Sagaf 2020)
+  2. `wind_relative_rate` -- 0.004/yr nominal, `[0.0030, 0.0050]`, literature (Olauson et al. 2017)
+  3. `hydro_retention_rate` -- 0.0055/yr nominal, `[0.0050, 0.0060]`, literature (Turner et al. 2024)
+  4. `solar_retention_rate` -- 0.007/yr nominal, `[0.0056, 0.0084]`, Tier 3 +-20% default (closed 2026-09-14)
+  5. `coal_overhaul_cycle_years` -- 5yr nominal, `[4, 6]`, Tier 3 +-20% default (closed 2026-09-14)
+  6. `coal_overhaul_recovery` -- 0.70 nominal, `[0.56, 0.84]`, Tier 3 +-20% default (closed 2026-09-14)
+  7. `upper_tail_padding_fraction` -- 0.05 nominal, `[0.04, 0.06]`, Tier 3 +-20% default (item 1's binding default)
+  8-13. one percentile-cut rank-shift dimension per hazard NAME (not per
+     percentile-family group -- session decision, closing item 4c below),
+     `[-5, +5]` percentile points: `spei`, `precip`, `heat`, `sv`, `iv`
+     (all `risk_bands.GENERIC_TIER3_PERCENTILES`), `wind` (the lone
+     `WIND_SOLAR_TIER3_PERCENTILES` member, solar-bucket only for
+     percentile purposes -- `wind/wind` is Tier 1 binary, carries no Sobol
+     dimension; the `wind` dimension's positive shift is clipped so no
+     resulting percentile exceeds 99.5, per `PHASE6_DESIGN.md` Section
+     1.2's own near-ceiling clipping instruction -- `wind`'s base cuts top
+     out at P99).
+
+  Every nominal value cross-checked directly against the running code
+  before being written into `sobol_sensitivity.PARAM_BOUNDS` (not copied
+  from any prior document unverified): `age_factor.py:126-135`
+  (`COAL_DECAY_RATE=0.0025`, `WIND_RELATIVE_RATE=0.004`,
+  `HYDRO_RETENTION_RATE=0.0055`, `SOLAR_RETENTION_RATE=0.007`,
+  `COAL_OVERHAUL_CYCLE_YEARS=5`, `COAL_OVERHAUL_RECOVERY=0.70`),
+  `normalization.py:223` (`UPPER_TAIL_PADDING_FRACTION=0.05`),
+  `risk_bands.py:176-177` (`GENERIC_TIER3_PERCENTILES=(50,75,90,95)`,
+  `WIND_SOLAR_TIER3_PERCENTILES=(75,90,95,99)`, confirmed against
+  `extreme_wind_processor.SOLAR_GUST_PERCENTILES`). All matched exactly --
+  no mismatch found, nothing silently reconciled the other way.
+
+**A real code-vs-plan mismatch found and worked around, not modified
+around**: `risk_calculator.py`'s tail-padding fraction
+(`TLOG_UPPER_TAIL_PADDING_FRACTION`, deliberately independent of
+`normalization.UPPER_TAIL_PADDING_FRACTION` per that module's own comment
+about circular imports) is a MODULE-LEVEL constant read inside
+`transform_term`, not a parameter `sensitivity_recompute.
+recompute_risk_by_hazard` exposes -- unlike every other rate in
+`retention_vector`'s `rate_overrides`. `sensitivity_recompute.py` is left
+unmodified (out of scope, already tested); `sobol_sensitivity.py` instead
+monkeypatches the module global for the duration of exactly one draw's
+synchronous, single-threaded call (never re-entrant under
+`multiprocessing.Pool`'s spawn model, restored in a `finally` block) and
+forces the live (non-cached) `transform_term` path by passing a fresh
+`dict(rc.FROZEN_BOUNDS)` copy instead of the object `recompute_risk_by_hazard`'s
+`Hazard_i,h` cache checks identity against. Documented in
+`sobol_sensitivity.py`'s own module docstring in full.
+
+### RNG granularity: per-country-scenario, 9x general-MC cost -- open decision, not resolved here
+
+Session decision (author, not re-derived): Phase 6's RNG streams are
+**per-country-scenario**, not per-country -- every downstream output this
+project reports is already split by `water_scenario`
+(`config.AQUEDUCT_SCENARIOS`), so the randomness source should match that
+granularity to avoid injecting spurious correlation across scenarios that
+are supposed to be statistically independent. `src/index/rng_utils.py`
+implements `phase6_rng(country, scenario, purpose)`, mirroring
+`monte_carlo.country_rng`'s `zlib.crc32` + `numpy.random.SeedSequence`
+construction exactly, with one more key segment.
+
+**This has no attachment point in Sobol** (`sobol_sensitivity.py`): SALib's
+own Saltelli sampler draws its design matrix via its own `seed` argument,
+not through any `numpy.random.Generator` -- and every one of the 13
+dimensions above is a genuinely GLOBAL parameter applied identically
+across every country/scenario within one evaluation, so there is no
+country/scenario-specific draw to key a stream to there.
+
+**It DOES attach to the general-MC driver** (`general_mc.py`, Phase 6.1),
+and delivering genuine per-country-scenario independence there costs
+**9x**: since every parameter is global, there is no cheap way to draw
+"Brazil/bau's own vector" and get a partial recompute -- each of the 9
+`(country, water_scenario)` streams needs its OWN full
+`recompute_draw_all_models` call (every country, every scenario, both
+GCMs) per draw index, filtered down to that stream's own rows afterward.
+`general_mc.run_n`/`run_convergence` implement exactly this. **This 9x
+multiplier is an open decision point for the author, stated here, not
+resolved**: at the design's own target minimum (`N=8000` before
+convergence is even plausible), this is `9 * 8000 = 72,000` full
+recomputes -- multiple times the Sobol full-scale run's own cost. Real,
+measured cost at small scale below.
+
+### psae_complete=False -> NaN, applied throughout Phase 6
+
+Every Phase 6 aggregate statistic over `psae` (Sobol's `psae_mean_overall`/
+`psae_mean_by_country`, scenario-discovery's capacity-fraction
+distributions, general-MC's per-stream `psae_mean`) masks
+`psae_complete=False` rows to NaN via `pandas`' own `skipna`-default mean,
+never drops rows to shrink the sample, and reports the achieved coverage
+alongside the statistic (`psae_n_complete`/`psae_n_total` fields
+throughout) -- this project's existing `psae.compute_psae` complete-case
+rule (this file, "Phase 4 (PSAE) input mapping... CLOSED, complete-case",
+2026-09-14) is the source of the NaN itself; Phase 6 only propagates it
+correctly rather than re-deciding it.
+
+### Real small-scale Sobol validation (Phase 6.2)
+
+`sobol_sensitivity.run_validation(n0=32, n_workers=4, seed=20260915)`,
+real data (Brazil/Portugal/India, both configured GCMs), on this 4-core
+machine:
+
+  - `calc_second_order=False` (task instruction) means the real Saltelli
+    evaluation count is `N_0 * (D + 2)`, **not** `N_0 * (2D + 2)` --
+    confirmed empirically (`N_0=32`, `D=13` -> exactly 480 rows =
+    `32 * 15`). This roughly HALVES the previously quoted full-scale
+    budget: `N_0=1024` -> `1024 * 15 = 15,360` evaluations, not
+    `1024 * 28 = 28,672`. Flagged in `sobol_sensitivity.py`'s own
+    docstring, not silently carried forward.
+  - 480 evaluations, **214.2s run time (0.446s/draw with 4 workers)** --
+    slightly above the previously-measured 0.40s/draw baseline because
+    perturbing `upper_tail_padding_fraction` forces every draw off the
+    cached `Hazard_i,h` fast path onto the live `transform_term`
+    recomputation (see the monkeypatch note above) -- expected, not a
+    regression in the cached path itself.
+  - `psae` coverage: 31,079,520 / 31,127,040 complete rows across all 480
+    draws (99.847%), matching this project's existing, closed
+    `psae_complete` incompleteness rate.
+  - Real S1/ST (both output statistics, as required -- never just one):
+
+    Risk_i,h (capacity-weighted mean, pooled): non-zero S1/ST on every
+    age_factor/padding parameter (`upper_tail_padding_fraction` S1=0.237,
+    ST=0.166; `coal_overhaul_recovery` S1=0.198, ST=0.143;
+    `hydro_retention_rate` S1=0.111, ST=0.087; `coal_decay_rate` S1=0.108,
+    ST=0.173), **exactly zero** S1/ST on every percentile-shift parameter
+    -- mechanistically correct: `RiskBand_i,h` classifies the raw hazard
+    value, never `Risk_i,h`, so a percentile-cut shift cannot move this
+    statistic, and it does not.
+
+    PSAE_i (mean, `psae_complete=False` NaN-masked): the mirror image --
+    non-zero S1/ST on `precip_percentile_shift` (S1=0.248, ST=0.445) and
+    `heat_percentile_shift` (S1=0.301, ST=0.399, both hazards present in
+    multiple buckets, largest structural influence), smaller but non-zero
+    on `wind_percentile_shift` (S1=0.088, ST=0.072), **exactly zero** S1/ST
+    on every age_factor/padding parameter -- again mechanistically
+    correct: PSAE classifies `RiskBand_i,h`, never touches `age_factor`.
+
+    This two-chain independence (confirmed already by direct code read in
+    `sensitivity_recompute.py`'s own docstring) is now also confirmed
+    EMPIRICALLY by the Sobol indices themselves -- a real, if incidental,
+    sanity check that the partial-recomputation harness has not silently
+    cross-wired the two chains.
+  - Some `S1` values at this small `N_0` are slightly negative
+    (`hydro_retention_rate` S1=-0.047 at n0=4 smoke test, sampling noise,
+    not a violation -- SALib's own bootstrap indices are noisy at small
+    `N_0` and this is expected, not evidence of a bug) and `ST < S1` is
+    observed for a few near-zero parameters at `n0=32`
+    (`wind_relative_rate`: S1=-0.0045, ST=0.0001) -- also small-N bootstrap
+    noise around a true value of ~0, not a real ST<S1 violation on a
+    parameter with real influence.
+
+### Real scenario-discovery results (Phase 6.3, full-scale, not just validated)
+
+`scenario_discovery.run_all()`, real data, ~31s total (cheap, as
+expected -- one `compute_risk_bands` call per sub-analysis needing it,
+~14s each, no Monte Carlo):
+
+  - **Hazard removal OAT** (11 meaningful removals -- 5 Hydro + 3 Thermal +
+    3 Solar; Wind excluded, `|H_b|=1`, would empty `H_b`): largest observed
+    capacity-fraction shifts are in Portugal -- removing `heat` from Solar
+    moves 76.9 percentage points of capacity out of MEDIUM into HIGH/LOW;
+    removing `precip` or `wind` from Solar produces the same-magnitude
+    shift (76.9pp) via the shrunk `|H_b|` (3->2) mechanically changing
+    which fraction of `H_b` crosses the `>=1/2` HIGH threshold. Thermal/
+    India removals shift 48.6-54.1pp. Full 132-row table
+    (bucket x removed_hazard x country x psae_label) available from
+    `hazard_removal_oat()`.
+  - **Correlation-gate threshold sweep** (7 thresholds, 0.60-0.90, against
+    the real, closed `correlation_gate.csv`, decision logic only, no r/rho
+    recomputed): flips vs. the production 0.80 baseline at 0.60 (15
+    cells), 0.65 (14), 0.70 (13), 0.75/0.85/0.90 (12 each). The
+    highest-value flip: Seasonal vs Interannual Variability / Hydro /
+    Portugal (`|decision_r|=0.7021`, this project's known closest-to-gate
+    pair) flips to `fail` at threshold <=0.70, with the real
+    `resolve_tie_breaker` retaining `iv` over `sv` (Criterion 3) --
+    confirming `PHASE6_DESIGN.md` Section 2.4's prediction exactly.
+    Interannual Variability vs Water Stress / Hydro / India also flips at
+    <=0.65 (`|decision_r|=0.669`), tie-breaker retaining `ws` over `iv`
+    (Criterion 2, data-tier rank). No flip occurs at 0.80 itself (the
+    reference threshold, correctly excluded from `flipped_vs_baseline`).
+  - **PSAE cut-point OAT** (0.4/0.5/0.6 boundary shift, real achievable
+    `psae` values from the closed baseline): confirms
+    `PHASE6_DESIGN.md` Section 2.2's coarseness prediction directly --
+    of 9 achievable (`h_b_size`, `psae_value`) combinations x 3 shifted
+    cuts = 27 rows, exactly **1** produces a different classification than
+    the 0.5 baseline (`h_b_size=5`, `psae_value=0.4`: HIGH at cut=0.4,
+    MEDIUM at the 0.5 baseline and at cut=0.6) -- every degenerate
+    EXTREME (`psae=1.0`)/LOW (`psae=0.0`) row is unchanged at every cut, as
+    designed.
+
+### Real small-scale general-MC validation (Phase 6.1) -- early, NOT converged
+
+`general_mc.run_convergence([25, 50], n_workers=4)`, real data, 9 streams
+(3 countries x 3 water_scenarios), `TOTAL WALL 387.1s`:
+
+  - `N=25`: 225 total full recomputes, 133.1s (0.592s/draw).
+  - `N=50`: 450 total full recomputes, 253.7s (0.564s/draw).
+  - Per-stream point estimates at `N=50` (mean, 95% CI, all 9 streams):
+    Brazil/bau risk=645.19 [631.56, 659.65], psae=0.0380 [0.0217, 0.0549];
+    Brazil/opt risk=638.81 [625.0, 650.9], psae=0.0540 [0.0318, 0.0777];
+    Brazil/pes risk=744.00 [729.6, 758.1], psae=0.0398 [0.0231, 0.0568];
+    India/bau risk=318.41 [312.8, 326.1], psae=0.1160 [0.0781, 0.1461];
+    India/opt risk=304.84 [297.5, 313.2], psae=0.1092 [0.0776, 0.1442];
+    India/pes risk=321.0 [315.5, 328.9], psae=0.1162 [0.0865, 0.1620];
+    Portugal/bau risk=98.83 [97.17, 100.11], psae=0.5207 [0.5004, 0.5334];
+    Portugal/opt risk=95.85 [94.50, 97.40], psae=0.5140 [0.4997, 0.5322];
+    Portugal/pes risk=96.57 [95.36, 97.84], psae=0.5151 [0.4884, 0.5312].
+  - `N=25 -> N=50` point-estimate relative change: every stream's
+    `risk_mean` relative change is `<0.3%` (already inside the design's
+    `<1%` criterion, at this tiny N -- more likely a sign the streams have
+    not yet moved far from their starting draws than genuine convergence,
+    given the CI-half-width criterion below is nowhere near satisfied);
+    `psae_mean` relative change ranges `0.2%-4.1%` (Brazil/pes largest at
+    4.14%), inside `<1%` for 5/9 streams, outside for the rest.
+  - `N=25 -> N=50` CI-half-width relative change (the design's own
+    `<5%` criterion, "noisier, converges more slowly, deliberately
+    looser"): **NOT satisfied for the great majority of streams** --
+    ranges from 0% (Portugal/bau `psae_ci_halfwidth`, coincidental) up to
+    **51.8%** (Portugal/opt `risk_ci_halfwidth`) and **15.8%**
+    (Portugal/pes `psae_ci_halfwidth`). **This run is explicitly NOT
+    converged** -- `PHASE6_DESIGN.md` Section 4.1's own procedure requires
+    two CONSECUTIVE doublings inside tolerance before declaring
+    convergence, and this single step is nowhere close on the CI-width
+    criterion. Reported honestly as an early diagnostic of the mechanism
+    working, not a convergence claim.
+
+### What was NOT run, and why (explicit, per task scope)
+
+  - Sobol at `N_0>=1024` (the design's own full-scale starting point):
+    `1024 * 15 = 15,360` evaluations x ~0.446s/draw ~= **1.9 hours**
+    (revised down from the previously quoted ~1-2 days, since that quote
+    assumed the `calc_second_order=True` evaluation-count formula -- see
+    the correction above). Still a genuinely long, unattended job, not run
+    here without author go-ahead.
+  - General-MC at `N>=8000` per stream: `9 * 8000 = 72,000` full recomputes
+    x ~0.55-0.59s/draw (measured at this small scale) ~= **11-12 hours**,
+    on top of the Sobol run above, and this is the FLOORED (`N=8000`)
+    figure -- the design's full doubling target of `N=16000` would be
+    ~22-24 hours. This is the 9x-multiplier finding stated above,
+    restated here as the reason it was not run.
+
+### Files created/modified
+
+  - `src/index/rng_utils.py` (new) -- `phase6_rng`.
+  - `src/index/sobol_sensitivity.py` (new) -- Phase 6.2 Sobol driver.
+  - `src/index/scenario_discovery.py` (new) -- Phase 6.3 OAT/threshold-sweep driver.
+  - `src/index/general_mc.py` (new) -- Phase 6.1 9-stream general-MC driver.
+  - `tests/test_rng_utils.py`, `tests/test_sobol_sensitivity.py`,
+    `tests/test_scenario_discovery.py`, `tests/test_general_mc.py` (new).
+  - `requirements.txt` -- added `SALib>=1.5` (1.5.2 installed and confirmed
+    working on this machine).
+  - `src/index/sensitivity_recompute.py` -- **unmodified**, per task
+    constraint; no bug found in it.
+
+### Status
+
+**Phase 6.2/6.3 implementation complete and validated at small scale.
+Phase 6.1 (general-MC) implementation complete and validated at small
+scale, explicitly non-converged. Full-scale Sobol run (`N_0>=1024`,
+~1.9 hours) and full-scale general-MC run (`N>=8000` per stream, ~11-24
+hours on top of Sobol) NOT YET EXECUTED, pending author go-ahead --
+specifically on the 9x general-MC cost multiplier (a direct, unavoidable
+consequence of the per-country-scenario RNG granularity decision) and on
+scheduling the now-smaller-than-previously-quoted but still multi-hour
+Sobol wall time. Phase 6 is NOT closed.**
+
+- References: `docs/rework/PHASE6_DESIGN.md` Sections 1, 2, 3, 4; this
+  file, "Phase 6 (Sensitivity/uncertainty) input mapping" (2026-09-14),
+  "GEAR v3 Phase 6: partial-recomputation pipeline" (2026-09-14), "GEAR v3
+  Phase 6 parallelization" (2026-09-15), "GEAR v3 Phase 6 perf" (2026-09-15,
+  0.40s/draw baseline this entry's 0.446s/draw is measured against, the
+  difference explained by the padding-fraction monkeypatch forcing the
+  live path); `src/index/age_factor.py`, `normalization.py`,
+  `risk_bands.py`, `hazard_scope.py`, `psae.py`, `correlation_gate.py`
+  (all read directly, not assumed, before writing the D=13 table and the
+  scenario-discovery mechanisms above).

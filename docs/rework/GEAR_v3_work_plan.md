@@ -191,7 +191,7 @@ and Phase 0 items 2 and 4.
      for heat days as part of the general normality-check procedure,
      not as a special case.
 
-## Phase 4: PSAE aggregation
+## Phase 4: PSAE aggregation -- CLOSED (2026-09-14)
 
 Depends on Phase 3 (needs finalized RiskBand per hazard).
 

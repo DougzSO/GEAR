@@ -43,5 +43,12 @@ scipy>=1.11.0
 # Numba classify_psae_fraction".
 numba>=0.60.0
 
+# GEAR v3 Phase 6.2 (src/index/sobol_sensitivity.py) -- Saltelli sampling and
+# Sobol S1/ST index estimation over the D=13 continuous-parameter problem.
+# Installed 1.5.2 on this machine; no known incompatibility with the pinned
+# numpy/pandas ceilings above. See docs/DECISIONS.md, "GEAR v3 Phase 6.2/6.3
+# implementation".
+SALib>=1.5
+
 # Tests
 pytest>=7.4.0
