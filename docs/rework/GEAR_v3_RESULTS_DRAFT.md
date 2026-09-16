@@ -80,8 +80,26 @@ Wind) or Tier 3 sample-relative percentile (all other hazards) cutoffs
 established in Methods Section 5. [Esta seção descreve resultados já
 computados e salvos em `data/outputs/tables/risk_bands.csv` (última
 atualização em disco: 2026-09-16; não git-tracked -- `data/outputs/` é
-gitignored neste repositório). Contagens/estatísticas abaixo são
-placeholders a serem preenchidos com valores reais do arquivo.]
+gitignored neste repositório).
+
+O arquivo contém 88.116 linhas <!-- risk_bands.csv, wc -l = 88117 - 1 header, 2026-09-16 -->,
+uma linha por combinação (plant x water_scenario x heat_scenario x model x
+hazard_term), não uma linha por país -- **não** é a mesma estrutura que
+`wc -l` = "número de países" assumida no comando original; a contagem
+real de países é obtida separadamente (ver abaixo). Cobertura: 10.808
+plantas únicas <!-- cut -d',' -f1 risk_bands.csv | sort -u | wc -l -->,
+3 países -- Brazil, India, Portugal <!-- cut -d',' -f2 risk_bands.csv | sort -u -->,
+4 buckets -- hydro, solar, thermal, wind <!-- cut -d',' -f4 risk_bands.csv | sort -u -->,
+7 hazard_term -- heat, iv, precip, spei, sv, wind, ws
+<!-- cut -d',' -f8 risk_bands.csv | sort -u -->.
+
+Distribuição bruta de `risk_band` (coluna 13, todas as linhas agregadas,
+sem quebra por país/bucket/scenario -- essa quebra faceted é o que o
+FIGURE/TABLE PLACEHOLDER abaixo ainda pede e não foi extraída aqui):
+Low = 69.349, Medium = 10.248, High = 4.003, Extreme = 4.438, valor vazio
+= 78 <!-- cut -d',' -f13 risk_bands.csv | sort | uniq -c, 2026-09-16 -->.
+As 78 linhas com `risk_band` vazio não têm explicação no CSV (sem coluna
+de motivo/flag correspondente); reportado como está, sem inferir causa.]
 
 ```
 [FIGURE/TABLE PLACEHOLDER: Per-hazard RiskBand distribution (count and MW-share of plants in Low/Medium/High/Extreme), faceted by country x bucket x SSP scenario | Source: risk_bands.py output, per GEAR_v3_work_plan.md Phase 7.1 ("per-hazard risk band maps remain primary") | Caption draft: Distribution of RiskBand_i,h classifications (Low/Medium/High/Extreme) across the operating fleet, by hazard, technology bucket, country, and SSP scenario (SSP1-2.6/SSP3-7.0/SSP5-8.5). Bars show both plant count and installed-capacity share (MW) per band. Extreme Wind's three SSP columns are identical by construction (Section 3 below) and are shown once, annotated as scenario-invariant rather than repeated as three visually distinct bars. | Status: pending Phase 7 implementation (production-scale RiskBand run and figure code not yet executed/committed)]
@@ -101,8 +119,22 @@ same asset, and no "total plant risk" figure is produced anywhere in this
 framework. [Esta seção descreve resultados já computados e salvos em
 `data/outputs/tables/risk_by_hazard.csv` (última atualização em disco:
 2026-09-16; não git-tracked -- `data/outputs/` é gitignored neste
-repositório). Contagens/estatísticas abaixo são placeholders a serem
-preenchidos com valores reais do arquivo.]
+repositório).
+
+453.936 linhas <!-- risk_by_hazard.csv, wc -l = 453937 - 1 header,
+2026-09-16 -->, mesma granularidade plant x hazard x scenario x model
+que `risk_bands.csv`, não uma linha por país. Cobertura: 10.808 plantas
+únicas <!-- cut -d',' -f1 risk_by_hazard.csv | sort -u | wc -l -->, 3
+países -- Brazil, India, Portugal <!-- cut -d',' -f2 risk_by_hazard.csv | sort -u -->,
+7 hazard_term -- heat, iv, precip, spei, sv, wind, ws
+<!-- cut -d',' -f12 risk_by_hazard.csv | sort -u -->. O campo `risk_i_h`
+varia de 0.0 (Brazil, hydro, ws, plant BRA-4cc1c9e5df02) a
+14538.66546653318 (Brazil, hydro, spei, plant BRA-7fc1bf22ac79)
+<!-- awk sobre a coluna risk_i_h (16), min/max exatos sem arredondamento,
+2026-09-16 -->. Nenhuma coluna de RiskBand ou de agregação por
+país/bucket existe neste arquivo além do que foi extraído; a
+distribuição faceted pedida pelos FIGURE/TABLE PLACEHOLDER abaixo (3.2)
+não foi extraída aqui.]
 
 ### 3.1 Extreme Wind: scenario-invariant structural exposure (explicit
     result, not a data gap)
@@ -287,8 +319,21 @@ plots different buckets on a shared color scale or ranks them in one
 list. [Esta seção descreve resultados já computados e salvos em
 `data/outputs/tables/psae.csv` (última atualização em disco: 2026-09-16;
 não git-tracked -- `data/outputs/` é gitignored neste repositório).
-Contagens/estatísticas abaixo são placeholders a serem preenchidos com
-valores reais do arquivo.] The N=800 general-MC psae_mean point estimates
+
+32.424 linhas <!-- psae.csv, wc -l = 32425 - 1 header, 2026-09-16 -->,
+uma linha por combinação (plant x water_scenario x heat_scenario x
+model), não uma linha por país. Cobertura: 10.808 plantas únicas
+<!-- cut -d',' -f1 psae.csv | sort -u | wc -l -->, 3 países -- Brazil,
+India, Portugal <!-- cut -d',' -f2 psae.csv | sort -u -->. O campo
+`psae` varia de 0.0 a 1.0, com mediana 0.0 sobre 32.388 valores não
+vazios <!-- valor central da lista ordenada de psae.csv coluna psae
+(10), n=32388, 2026-09-16 -->. `psae_complete` = True em 32.388 linhas
+e False em 36 <!-- cut -d',' -f12 psae.csv | sort | uniq -c -->.
+Distribuição de `psae_label`: LOW = 24.479, MEDIUM = 6.971, HIGH = 395,
+EXTREME = 543, vazio = 36 <!-- cut -d',' -f11 psae.csv | sort | uniq -c,
+2026-09-16 -->. Esta é a distribuição bruta agregada, sem quebra por
+bucket/país/scenario, que é o que o FIGURE/TABLE PLACEHOLDER abaixo
+ainda pede e não foi extraído aqui.] The N=800 general-MC psae_mean point estimates
 (Section 4.3) remain the only PSAE-related numbers already reconciled into
 narrative text in this draft; those are pooled means with confidence
 intervals, not full band-distribution counts.
@@ -318,8 +363,27 @@ disco: 2026-09-15; não git-tracked -- `data/outputs/` é gitignored neste
 repositório). Ver também "Known Issues" abaixo: MANIFEST.md item 14
 registra um join de produção completo (58.744 linhas) contra as tabelas
 de risco finais, o que contradiz a formulação "not yet produced" mantida
-até aqui neste texto. Contagens/estatísticas abaixo são placeholders a
-serem preenchidos com valores reais do arquivo.]
+até aqui neste texto.
+
+58.744 linhas confirmado <!-- contextual_validators.csv, wc -l = 58745 -
+1 header, 2026-09-16; bate com MANIFEST.md item 14 -->. Colunas:
+plant_uid, country, plant_name, bucket, validator_class, source,
+hazard_term, state, n_geocoded_events, gid_1
+<!-- head -1 contextual_validators.csv -->. `validator_class`:
+broad_impact = 29.372, physical_occurrence = 29.372
+<!-- cut -d',' -f5 contextual_validators.csv | sort | uniq -c -->.
+`state`: Corroborated = 10.430, No Record = 9.180, Not Applicable =
+39.134 <!-- cut -d',' -f8 contextual_validators.csv | sort | uniq -c -->.
+Cruzamento validator_class x state: broad_impact/Corroborated = 8.342,
+broad_impact/No Record = 2.117, broad_impact/Not Applicable = 18.913,
+physical_occurrence/Corroborated = 2.088, physical_occurrence/No Record
+= 7.063, physical_occurrence/Not Applicable = 20.221
+<!-- cut -d',' -f5,8 contextual_validators.csv | sort | uniq -c,
+2026-09-16 -->. Cobertura: 3 países -- Brazil, India, Portugal
+<!-- cut -d',' -f2 contextual_validators.csv | sort -u -->. Esta é a
+contagem agregada de todas as linhas, sem quebra por país/hazard, que é
+o que o FIGURE/TABLE PLACEHOLDER abaixo ainda pede e não foi extraído
+aqui.]
 
 The IBTrACS physical-occurrence validator uses a fixed 100 km
 great-circle radius as a proxy for each storm's wind-field extent, not
