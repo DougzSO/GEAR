@@ -17,7 +17,6 @@ STATES = ["Corroborated", "No Record", "Not Applicable"]
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
     v = c.load_contextual_validators()
 
     table = (
@@ -28,7 +27,7 @@ def run() -> list[c.ManifestEntry]:
     table = table.merge(total, on=["validator_class", "country", "hazard_term"])
     table["fraction"] = table["n_plants"] / table["total"]
     table["hazard_label"] = table["hazard_term"].map(c.HAZARD_LABEL)
-    out_csv = d / "validator_overlay_summary.csv"
+    out_csv = c.tables_dir() / "validator_overlay_summary.csv"
     table.to_csv(out_csv, index=False)
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -45,7 +44,7 @@ def run() -> list[c.ManifestEntry]:
     fig.suptitle("Contextual validator overlay -- Corroborated / No Record / Not Applicable, "
                  "by validator class, country, hazard", fontsize=11)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
-    out_png = d / "validator_overlay_summary.png"
+    out_png = c.other_dir() / "validator_overlay_summary.png"
     fig.savefig(out_png, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -55,7 +54,7 @@ def run() -> list[c.ManifestEntry]:
                 "physical-occurrence (IBTrACS) and broad-impact (EM-DAT) validators, by country "
                 "and hazard.",
         source="data/outputs/tables/contextual_validators.csv",
-        files=[str(out_csv.relative_to(d.parent.parent)), str(out_png.relative_to(d.parent.parent))],
+        files=[str(out_csv.relative_to(c.output_root())), str(out_png.relative_to(c.output_root()))],
         status="generated",
         notes="Full production join already materialized (58,744 rows) -- contradicts the "
               "RESULTS_DRAFT.md text's 'not yet produced' status for this item.",

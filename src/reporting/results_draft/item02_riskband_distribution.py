@@ -26,12 +26,11 @@ def _build_table(inv: pd.DataFrame, rb: pd.DataFrame) -> pd.DataFrame:
             if bucket_cap == 0:
                 continue
             for hazard in c.BUCKET_HAZARDS[bucket]:
-                bands = c.WIND_BAND_ORDER if hazard == "wind" else c.BAND_ORDER
                 sub_h = rb[(rb["country"] == country) & (rb["bucket"] == bucket) & (rb["hazard_term"] == hazard)]
                 for scen in c.SSP_ORDER:
                     sub = sub_h[sub_h["water_scenario"] == scen]
                     n_missing = int(sub["risk_band"].isna().sum())
-                    for band in bands:
+                    for band in c.BAND_ORDER:
                         band_cap = sub.loc[sub["risk_band"] == band, "capacity_mw"].sum()
                         band_n = int((sub["risk_band"] == band).sum())
                         rows.append({
@@ -60,11 +59,10 @@ def _plot_country(country: str, table: pd.DataFrame, out_path) -> None:
         pos = 0
         width = 0.25
         for hi, hazard in enumerate(hazards):
-            bands = c.WIND_BAND_ORDER if hazard == "wind" else c.BAND_ORDER
             for si, scen in enumerate(c.SSP_ORDER):
                 cell = sub[(sub["hazard"] == hazard) & (sub["scenario"] == scen)]
                 bottom = 0.0
-                for band in bands:
+                for band in c.BAND_ORDER:
                     val = cell.loc[cell["band"] == band, "pct_of_bucket_capacity"]
                     v = float(val.iloc[0]) if len(val) else 0.0
                     ax.bar(pos, v, width=width, bottom=bottom, color=BAND_COLORS[band],
@@ -91,19 +89,18 @@ def _plot_country(country: str, table: pd.DataFrame, out_path) -> None:
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
     inv = c.load_inventory()
     rb = c.load_risk_bands(capacity=inv.set_index("plant_uid")["capacity_mw"])
 
     table = _build_table(inv, rb)
-    out_csv = d / "riskband_distribution.csv"
+    out_csv = c.tables_dir() / "riskband_distribution.csv"
     table.to_csv(out_csv, index=False)
 
-    files = [str(out_csv.relative_to(d.parent.parent))]
+    files = [str(out_csv.relative_to(c.output_root()))]
     for country in c.COUNTRIES:
-        out_png = d / f"riskband_distribution_{country.lower()}.png"
+        out_png = c.other_dir() / f"riskband_distribution_{country.lower()}.png"
         _plot_country(country, table, out_png)
-        files.append(str(out_png.relative_to(d.parent.parent)))
+        files.append(str(out_png.relative_to(c.output_root())))
 
     return [c.ManifestEntry(
         item=ITEM, section="2. RiskBand distribution",

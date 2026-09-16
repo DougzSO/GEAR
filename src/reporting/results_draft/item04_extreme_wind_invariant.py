@@ -43,7 +43,6 @@ def _assert_static(rb_wind: pd.DataFrame, rbh_wind: pd.DataFrame) -> None:
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
     rb = c.load_risk_bands()
     rbh = c.load_risk_by_hazard()
     coords = c.load_coords()
@@ -58,44 +57,50 @@ def run() -> list[c.ManifestEntry]:
         on="plant_uid", how="left",
     ).merge(coords, left_on="plant_uid", right_index=True, how="left")
 
-    out_csv = d / "extreme_wind_invariant.csv"
+    out_csv = c.tables_dir() / "extreme_wind_invariant.csv"
     single.to_csv(out_csv, index=False)
 
     countries_present = [co for co in c.COUNTRIES if (single["country"] == co).any()]
-    widths = [c.aspect_ratio_width(co, 5.5) for co in countries_present]
-    fig, axes = plt.subplots(1, len(countries_present), squeeze=False,
-                              figsize=(sum(widths), 5.5))
-    for ax, country in zip(axes[0], countries_present):
+    cap_max = single["capacity_mw"].max()
+    fig, axes = c.make_country_row_figure(countries_present)
+    for ax, country in zip(axes, countries_present):
         sub = single[single["country"] == country]
         c.draw_country_boundary(ax, country)
         for bucket in sub["bucket"].unique():
             bsub = sub[sub["bucket"] == bucket]
-            for band in c.WIND_BAND_ORDER:
+            # Full 4-band scale here, not the old 2-point WIND_BAND_ORDER: the
+            # "wind" bucket (Tier 1, fixed cutoff) is genuinely Low/Extreme
+            # only, but the "solar" bucket's wind exposure (Tier 3, percentile
+            # cutoff) does populate Medium/High -- a 2-band loop silently
+            # dropped those points. Using the same BAND_ORDER/BAND_COLOR as
+            # every other results_draft map also keeps the legend consistent
+            # across the whole package.
+            for band in c.BAND_ORDER:
                 cell = bsub[bsub["risk_band"] == band]
                 if cell.empty:
                     continue
                 ax.scatter(cell["lon"], cell["lat"], marker=c.BUCKET_MARKER[bucket],
-                           color=c.WIND_BAND_COLOR[band], s=c.marker_sizes(cell["capacity_mw"]),
-                           edgecolor="black", linewidth=0.3, zorder=3)
+                           color=c.BAND_COLOR[band],
+                           s=c.marker_sizes(cell["capacity_mw"], capacity_max=cap_max),
+                           edgecolor="black", linewidth=0.3, alpha=c.MARKER_ALPHA, zorder=3)
         c.panel_title(ax, country, sub.shape[0])
 
     buckets_present = sorted(single["bucket"].unique())
-    handles = [plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=c.WIND_BAND_COLOR[b],
-                           markeredgecolor="black", markersize=8, label=b) for b in c.WIND_BAND_ORDER]
+    handles = [plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=col,
+                           markeredgecolor="black", markersize=8.4, label=b)
+               for b, col in c.BAND_COLOR.items()]
     handles += [plt.Line2D([0], [0], marker=m, color="w", markerfacecolor="grey",
-                            markeredgecolor="black", markersize=8, label=c.BUCKET_LABEL[bk])
+                            markeredgecolor="black", markersize=8.4, label=c.BUCKET_LABEL[bk])
                 for bk, m in c.BUCKET_MARKER.items() if bk in buckets_present]
-    fig.legend(handles=handles, loc="lower center", ncol=len(handles), fontsize=8, bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle("Extreme Wind Risk_i,h/RiskBand (ERA5, scenario-invariant, single column; "
-                 "Wind + Solar buckets)", fontsize=11)
-    fig.tight_layout(rect=[0, 0.04, 1, 0.94])
+    c.legend_below_axes(fig, axes, handles, ncol=len(handles))
+    fig.suptitle("Extreme Wind (SSP-invariant)", fontsize=14.4, fontweight="bold")
     fig.canvas.draw()
-    for ax in axes[0]:
+    for ax in axes:
         c.add_compass_rose(ax, redraw=False)
-    out_png = d / "extreme_wind_invariant_map_by_country.png"
+    out_png = c.maps_dir(None) / "extreme_wind_invariant_map_by_country.png"
     c.save_figure(fig, out_png)
 
-    files = [str(out_csv.relative_to(d.parent.parent)), str(out_png.relative_to(d.parent.parent))]
+    files = [str(out_csv.relative_to(c.output_root())), str(out_png.relative_to(c.output_root()))]
 
     return [c.ManifestEntry(
         item=ITEM, section="3.1 Extreme Wind (SSP-invariant)",

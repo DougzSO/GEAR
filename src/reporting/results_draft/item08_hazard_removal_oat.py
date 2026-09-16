@@ -19,10 +19,9 @@ ITEM, SLUG = 8, "hazard_removal_oat"
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
     table = sd.hazard_removal_oat()
 
-    out_csv = d / "hazard_removal_oat.csv"
+    out_csv = c.tables_dir() / "hazard_removal_oat.csv"
     table.to_csv(out_csv, index=False)
 
     high = table[table["psae_label"] == "HIGH"].copy()
@@ -38,7 +37,7 @@ def run() -> list[c.ManifestEntry]:
     ax.set_title("Hazard-removal OAT -- capacity-fraction shift into PSAE=HIGH per removed hazard")
     ax.tick_params(axis="y", labelsize=7)
     fig.tight_layout()
-    out_png = d / "hazard_removal_oat.png"
+    out_png = c.other_dir() / "hazard_removal_oat.png"
     fig.savefig(out_png, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -49,7 +48,7 @@ def run() -> list[c.ManifestEntry]:
                 "removed from its bucket's H_b, by country.",
         source="src.index.scenario_discovery.hazard_removal_oat() (recomputed live; no persisted "
                "CSV in data/outputs/tables/ prior to this run)",
-        files=[str(out_csv.relative_to(d.parent.parent)), str(out_png.relative_to(d.parent.parent))],
+        files=[str(out_csv.relative_to(c.output_root())), str(out_png.relative_to(c.output_root()))],
         status="generated (recomputed from source module, no persisted CSV)",
         notes=f"{len(table)} rows; largest observed |shift| in HIGH band: {max_shift:.1f} pp.",
     )]

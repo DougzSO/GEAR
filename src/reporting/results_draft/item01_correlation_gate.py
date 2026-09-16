@@ -17,7 +17,6 @@ GATE_THRESHOLD = 0.80
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
     df = c.load_correlation_gate()
 
     export_cols = [
@@ -25,7 +24,7 @@ def run() -> list[c.ManifestEntry]:
         "pearson_r", "spearman_rho", "nonlinearity_flagged", "decision_r_method",
         "decision_r", "gate_verdict", "retained_term", "excluded_term", "criterion",
     ]
-    out_csv = d / "correlation_gate_matrix.csv"
+    out_csv = c.tables_dir() / "correlation_gate_matrix.csv"
     df[export_cols].to_csv(out_csv, index=False)
 
     df = df.copy()
@@ -44,7 +43,7 @@ def run() -> list[c.ManifestEntry]:
                   "and the mandatory Water Stress vs. Drought reference rows (grey, not gated)")
     ax.legend(loc="lower right", fontsize=8)
     fig.tight_layout()
-    out_png = d / "correlation_gate_matrix.png"
+    out_png = c.other_dir() / "correlation_gate_matrix.png"
     fig.savefig(out_png, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -55,7 +54,7 @@ def run() -> list[c.ManifestEntry]:
                 "flag, pass/fail) for the five gated pairs x three countries x GCM, plus the "
                 "mandatory Water Stress/Drought reference row.",
         source="data/outputs/tables/correlation_gate.csv",
-        files=[str(out_csv.relative_to(d.parent.parent)), str(out_png.relative_to(d.parent.parent))],
+        files=[str(out_csv.relative_to(c.output_root())), str(out_png.relative_to(c.output_root()))],
         status="generated",
         notes=f"{len(df)} rows exported; {n_flip} gated cells failed the |r|<0.80 threshold "
               f"(expected 0, per docs/DECISIONS.md closure).",

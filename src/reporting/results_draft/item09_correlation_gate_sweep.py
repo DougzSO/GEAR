@@ -17,10 +17,9 @@ ITEM, SLUG = 9, "correlation_gate_sweep"
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
     table = sd.correlation_gate_sweep()
 
-    out_csv = d / "correlation_gate_sweep.csv"
+    out_csv = c.tables_dir() / "correlation_gate_sweep.csv"
     table.to_csv(out_csv, index=False)
 
     flips = table.groupby("threshold")["flipped_vs_baseline"].sum().reindex(sd.SWEPT_THRESHOLDS, fill_value=0)
@@ -34,7 +33,7 @@ def run() -> list[c.ManifestEntry]:
     ax.set_title("Correlation-gate threshold sweep -- flip count vs. threshold")
     ax.legend()
     fig.tight_layout()
-    out_png = d / "correlation_gate_sweep.png"
+    out_png = c.other_dir() / "correlation_gate_sweep.png"
     fig.savefig(out_png, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -45,7 +44,7 @@ def run() -> list[c.ManifestEntry]:
         source="src.index.scenario_discovery.correlation_gate_sweep() (recomputed live from "
                "correlation_gate.csv's real decision_r column; no persisted sweep CSV prior to "
                "this run)",
-        files=[str(out_csv.relative_to(d.parent.parent)), str(out_png.relative_to(d.parent.parent))],
+        files=[str(out_csv.relative_to(c.output_root())), str(out_png.relative_to(c.output_root()))],
         status="generated (recomputed from source module, no persisted CSV)",
         notes=f"flips at 0.80 baseline: {int(flips.get(0.80, 0))} (expected 0).",
     )]

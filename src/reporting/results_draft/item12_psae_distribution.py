@@ -79,25 +79,24 @@ def _plot_bucket(bucket: str, table: pd.DataFrame, out_path) -> None:
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
     inv = c.load_inventory()
     psae = c.load_psae(capacity=inv.set_index("plant_uid")["capacity_mw"])
 
     table = _build_table(inv, psae)
-    out_csv = d / "psae_distribution.csv"
+    out_csv = c.tables_dir() / "psae_distribution.csv"
     table.to_csv(out_csv, index=False)
 
-    files = [str(out_csv.relative_to(d.parent.parent))]
+    files = [str(out_csv.relative_to(c.output_root()))]
     for bucket in c.BUCKET_ORDER:
-        out_png = d / f"psae_distribution_{bucket}.png"
+        out_png = c.other_dir() / f"psae_distribution_{bucket}.png"
         _plot_bucket(bucket, table, out_png)
-        files.append(str(out_png.relative_to(d.parent.parent)))
+        files.append(str(out_png.relative_to(c.output_root())))
 
     coverage = psae.groupby(["bucket", "country"])["psae_complete"].agg(["sum", "count"])
     coverage["incomplete_fraction"] = 1 - coverage["sum"] / coverage["count"]
-    out_cov = d / "psae_coverage.csv"
+    out_cov = c.tables_dir() / "psae_coverage.csv"
     coverage.to_csv(out_cov)
-    files.append(str(out_cov.relative_to(d.parent.parent)))
+    files.append(str(out_cov.relative_to(c.output_root())))
 
     return [c.ManifestEntry(
         item=ITEM, section="5. PSAE distribution",

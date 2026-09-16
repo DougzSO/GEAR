@@ -67,8 +67,11 @@ def main() -> int:
     entries = run(args.items)
     manifest_path = common.write_manifest(entries)
     logger.info("wrote %s (%d entries)", manifest_path, len(entries))
+    inventory_path = common.write_figure_inventory(entries)
+    logger.info("wrote %s", inventory_path)
     n_generated = sum(1 for e in entries if e.status.startswith("generated"))
     print(f"\n{n_generated}/{len(entries)} items generated. Manifest: {manifest_path}")
+    print(f"Figure inventory: {inventory_path}")
     return 0
 
 

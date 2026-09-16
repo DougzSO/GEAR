@@ -1,10 +1,13 @@
 """
-RESULTS_DRAFT.md Section 3.2 -- Risk_i,h intra-hazard comparison figure, one
-panel per hazard, capacity-weighted asset markers colored/sized by Risk_i,h,
-faceted by country and SSP scenario. Never blended across hazards (Methods
-Section 9) -- one figure per hazard, one color scale per figure, never a
-combined score. Source: risk_by_hazard.csv (already carries capacity_mw,
-lat/lon, age_factor).
+RESULTS_DRAFT.md Section 3.2 -- Risk_i,h intra-hazard comparison figure,
+capacity-weighted asset markers colored/sized by Risk_i,h. Never blended
+across hazards (Methods Section 9) -- one figure per (hazard, SSP scenario)
+combination, 3 country panels side by side, one color scale per hazard
+(shared across that hazard's 3 scenario figures for comparability). Source:
+risk_by_hazard.csv (already carries capacity_mw, lat/lon, age_factor).
+
+Layout (2026-09-16 rework, matching item04's country-column convention):
+never more than 3 maps per figure, never a country x scenario grid.
 """
 
 from __future__ import annotations
@@ -19,63 +22,69 @@ ITEM, SLUG = 5, "risk_intra_hazard_map"
 ALL_HAZARDS = ["ws", "spei", "precip", "sv", "iv", "heat", "wind"]
 
 
-def _plot(hazard: str, sub, out_path) -> None:
-    countries = [co for co in c.COUNTRIES if (sub["country"] == co).any()]
-    vmin, vmax = float(sub["risk_i_h"].min()), float(sub["risk_i_h"].max())
-    norm = Normalize(vmin=vmin, vmax=vmax)
+def _plot(hazard: str, scen: str, sub_hazard, norm: Normalize, cap_max: float, out_path) -> None:
     cmap = c.SEQUENTIAL_CMAP
+    sub = sub_hazard[sub_hazard["water_scenario"] == scen]
+    countries = [co for co in c.COUNTRIES if (sub["country"] == co).any()]
+    # constrained_layout (via make_country_row_figure) is colorbar-aware -- fig.colorbar(ax=list)
+    # here just works, unlike tight_layout which explicitly does not understand colorbar axes
+    # and previously needed a hand-built GridSpec column to avoid overlapping the last panel.
+    fig, axes = c.make_country_row_figure(countries)
 
-    fig, axes = plt.subplots(len(countries), 3, squeeze=False,
-                              figsize=(3 * 4.2, 4.6 * len(countries)))
-    for ri, country in enumerate(countries):
-        for ci, scen in enumerate(c.SSP_ORDER):
-            ax = axes[ri, ci]
-            c.draw_country_boundary(ax, country)
-            cell = sub[(sub["country"] == country) & (sub["water_scenario"] == scen)]
-            for bucket in cell["bucket"].unique():
-                bsub = cell[cell["bucket"] == bucket]
-                ax.scatter(bsub["lon"], bsub["lat"], marker=c.BUCKET_MARKER[bucket],
-                           c=bsub["risk_i_h"], cmap=cmap, norm=norm,
-                           s=c.marker_sizes(bsub["capacity_mw"]),
-                           edgecolor="black", linewidth=0.2, zorder=3)
-            title = f"{country} -- {c.SSP_LABEL[scen]}" if ri == 0 or ci == 0 else c.SSP_LABEL[scen]
-            c.panel_title(ax, title, len(cell))
+    for ax, country in zip(axes, countries):
+        c.draw_country_boundary(ax, country)
+        cell = sub[sub["country"] == country]
+        for bucket in cell["bucket"].unique():
+            bsub = cell[cell["bucket"] == bucket]
+            ax.scatter(bsub["lon"], bsub["lat"], marker=c.BUCKET_MARKER[bucket],
+                       c=bsub["risk_i_h"], cmap=cmap, norm=norm,
+                       s=c.marker_sizes(bsub["capacity_mw"], capacity_max=cap_max),
+                       edgecolor="black", linewidth=0.2, alpha=c.MARKER_ALPHA, zorder=3)
+        c.panel_title(ax, country, len(cell))
+
     sm = ScalarMappable(norm=norm, cmap=cmap)
-    fig.colorbar(sm, ax=axes.ravel().tolist(), shrink=0.6, label=f"Risk_i,h ({c.HAZARD_LABEL[hazard]})")
+    cbar = fig.colorbar(sm, ax=axes, shrink=0.8, label=f"Risk_i,h ({c.HAZARD_LABEL[hazard]})")
+    cbar.ax.yaxis.label.set_fontsize(9.6)
+    cbar.ax.tick_params(labelsize=7.2)
     bucket_handles = [plt.Line2D([0], [0], marker=m, color="w", markerfacecolor="grey",
-                                  markeredgecolor="black", markersize=8, label=c.BUCKET_LABEL[bk])
-                      for bk, m in c.BUCKET_MARKER.items() if bk in sub["bucket"].unique()]
-    fig.legend(handles=bucket_handles, loc="lower center", ncol=len(bucket_handles), fontsize=8)
-    fig.suptitle(f"Risk_i,h -- {c.HAZARD_LABEL[hazard]} (marker size = capacity MW; color = Risk_i,h; "
-                 f"single hazard, never blended)", fontsize=11)
-    # compass rose LAST, after colorbar/legend have already shrunk the axes --
-    # see common.add_compass_rose's own docstring for why the order matters.
+                                  markeredgecolor="black", markersize=8.4, label=c.BUCKET_LABEL[bk])
+                      for bk, m in c.BUCKET_MARKER.items() if bk in sub_hazard["bucket"].unique()]
+    c.legend_below_axes(fig, axes, bucket_handles, ncol=len(bucket_handles))
+    fig.suptitle(f"Risk_i,h -- {c.HAZARD_LABEL[hazard]} ({c.SSP_LABEL[scen]})", fontsize=14.4, fontweight="bold")
+    # compass rose LAST, after colorbar/legend have already shrunk the axes.
     fig.canvas.draw()
-    for ax in axes.ravel():
+    for ax in axes:
         c.add_compass_rose(ax, redraw=False)
     c.save_figure(fig, out_path)
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
     rbh = c.load_risk_by_hazard()
+    cap_max = rbh["capacity_mw"].max()
 
     files = []
     for hazard in ALL_HAZARDS:
-        sub = rbh[rbh["hazard_term"] == hazard].dropna(subset=["risk_i_h"])
-        if sub.empty:
+        sub_hazard = rbh[rbh["hazard_term"] == hazard].dropna(subset=["risk_i_h"])
+        if sub_hazard.empty:
             continue
-        out_png = d / f"risk_intra_hazard_map_{hazard}.png"
-        _plot(hazard, sub, out_png)
-        files.append(str(out_png.relative_to(d.parent.parent)))
+        # one color scale per hazard, shared across its 3 scenario figures
+        norm = Normalize(vmin=float(sub_hazard["risk_i_h"].min()), vmax=float(sub_hazard["risk_i_h"].max()))
+        for scen in c.SSP_ORDER:
+            if not (sub_hazard["water_scenario"] == scen).any():
+                continue
+            out_png = c.maps_dir(scen) / f"risk_intra_hazard_map_{hazard}_{scen}.png"
+            _plot(hazard, scen, sub_hazard, norm, cap_max, out_png)
+            files.append(str(out_png.relative_to(c.output_root())))
 
     return [c.ManifestEntry(
         item=ITEM, section="3.2 Risk_i,h intra-hazard map",
-        caption="Asset-level Risk_i,h for [hazard], capacity-weighted marker size, color = Risk_i,h, "
-                "faceted by country and SSP scenario; never a cross-hazard sum.",
+        caption="Asset-level Risk_i,h, capacity-weighted marker size, color = Risk_i,h (one scale per "
+                "hazard), one figure per (hazard, SSP scenario), 3 country panels each; never a "
+                "cross-hazard sum.",
         source="data/outputs/tables/risk_by_hazard.csv",
         files=files, status="generated",
-        notes=f"{len(files)} hazard panels (one figure per hazard, each with country x SSP subgrid).",
+        notes=f"{len(files)} files (1 per hazard x SSP scenario combination) -- 2026-09-16 rework, "
+              f"max 3 maps/figure.",
     )]
 
 

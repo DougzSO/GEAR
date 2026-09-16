@@ -19,7 +19,6 @@ ITEM, SLUG = 10, "general_mc_convergence"
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
     gmc = c.load_general_mc_convergence()
 
     rows = []
@@ -31,7 +30,7 @@ def run() -> list[c.ManifestEntry]:
             row.update(v)
             rows.append(row)
     table = pd.DataFrame(rows)
-    out_csv = d / "general_mc_convergence.csv"
+    out_csv = c.tables_dir() / "general_mc_convergence.csv"
     table.to_csv(out_csv, index=False)
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 9), sharex=True)
@@ -56,7 +55,7 @@ def run() -> list[c.ManifestEntry]:
     fig.suptitle(f"General Monte Carlo convergence -- converged={gmc['converged']} at "
                  f"N={gmc['converged_n']} (Ns tested: {gmc['ns_run']})", fontsize=11)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
-    out_png = d / "general_mc_convergence.png"
+    out_png = c.other_dir() / "general_mc_convergence.png"
     fig.savefig(out_png, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -65,7 +64,7 @@ def run() -> list[c.ManifestEntry]:
         caption="Convergence of point-estimate and 95% CI half-width relative change vs. N "
                 "(doubling sequence), risk_mean and psae_mean, all nine country x scenario streams.",
         source="data/outputs/tables/phase6_general_mc_convergence.json",
-        files=[str(out_csv.relative_to(d.parent.parent)), str(out_png.relative_to(d.parent.parent))],
+        files=[str(out_csv.relative_to(c.output_root())), str(out_png.relative_to(c.output_root()))],
         status="generated",
         notes=f"converged={gmc['converged']}, converged_n={gmc['converged_n']}.",
     )]

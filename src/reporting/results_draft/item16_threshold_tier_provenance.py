@@ -19,8 +19,6 @@ ITEM, SLUG = 16, "threshold_tier_provenance"
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
-
     rows = []
     for (hazard, bucket), spec in sorted(rb.THRESHOLD_REGISTRY.items()):
         rows.append({
@@ -31,7 +29,7 @@ def run() -> list[c.ManifestEntry]:
             "labels": spec.labels, "provisional": spec.provisional, "basis": spec.note,
         })
     table = pd.DataFrame(rows)
-    out_csv = d / "threshold_tier_provenance.csv"
+    out_csv = c.tables_dir() / "threshold_tier_provenance.csv"
     table.to_csv(out_csv, index=False)
 
     return [c.ManifestEntry(
@@ -41,7 +39,7 @@ def run() -> list[c.ManifestEntry]:
                 "combination in every H_b.",
         source="src.index.risk_bands.THRESHOLD_REGISTRY (Python constant, also rendered in "
                "ccrs_risk_bands_report.md)",
-        files=[str(out_csv.relative_to(d.parent.parent))], status="generated",
+        files=[str(out_csv.relative_to(c.output_root()))], status="generated",
         notes=f"{len(table)} rows (one per hazard/bucket combination in every H_b).",
     )]
 

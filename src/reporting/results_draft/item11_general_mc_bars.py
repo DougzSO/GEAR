@@ -18,7 +18,6 @@ ITEM, SLUG = 11, "general_mc_bars"
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
     gmc = c.load_general_mc_convergence()
     converged_n = gmc["converged_n"]
     step = next(s for s in gmc["steps"] if s["n"] == converged_n)
@@ -32,7 +31,7 @@ def run() -> list[c.ManifestEntry]:
             "psae_mean": v["psae_mean"], "psae_ci_lo": v["psae_ci"][0], "psae_ci_hi": v["psae_ci"][1],
         })
     table = pd.DataFrame(rows)
-    out_csv = d / "general_mc_bars.csv"
+    out_csv = c.tables_dir() / "general_mc_bars.csv"
     table.to_csv(out_csv, index=False)
 
     groups = [(co, sc) for co in c.COUNTRIES for sc in c.SSP_ORDER]
@@ -52,7 +51,7 @@ def run() -> list[c.ManifestEntry]:
         ax.set_title(title, fontsize=10)
     fig.suptitle(f"General Monte Carlo point estimates with 95% CI, N={converged_n} per stream", fontsize=11)
     fig.tight_layout(rect=[0, 0, 1, 0.94])
-    out_png = d / "general_mc_bars.png"
+    out_png = c.other_dir() / "general_mc_bars.png"
     fig.savefig(out_png, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -61,7 +60,7 @@ def run() -> list[c.ManifestEntry]:
         caption=f"Mean Risk_i,h and mean PSAE_i with 95% CI, N={converged_n}-per-stream, for nine "
                 f"country x water-scenario combinations.",
         source="data/outputs/tables/phase6_general_mc_convergence.json (converged_n step)",
-        files=[str(out_csv.relative_to(d.parent.parent)), str(out_png.relative_to(d.parent.parent))],
+        files=[str(out_csv.relative_to(c.output_root())), str(out_png.relative_to(c.output_root()))],
         status="generated",
     )]
 

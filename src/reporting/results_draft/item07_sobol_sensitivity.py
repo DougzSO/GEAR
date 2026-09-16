@@ -33,7 +33,6 @@ def _panel(ax, block: dict, title: str) -> None:
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
     sobol = c.load_sobol()
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -43,7 +42,7 @@ def run() -> list[c.ManifestEntry]:
                  f"({sobol['n_evals']:,} evaluations, PSAE coverage "
                  f"{100*sobol['psae_coverage_fraction']:.2f}%)", fontsize=11)
     fig.tight_layout(rect=[0, 0, 1, 0.94])
-    out_png = d / "sobol_sensitivity.png"
+    out_png = c.other_dir() / "sobol_sensitivity.png"
     fig.savefig(out_png, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -56,7 +55,7 @@ def run() -> list[c.ManifestEntry]:
                 "ST": block["ST"][i], "ST_conf": block["ST_conf"][i],
             })
     table = pd.DataFrame(rows)
-    out_csv = d / "sobol_sensitivity.csv"
+    out_csv = c.tables_dir() / "sobol_sensitivity.csv"
     table.to_csv(out_csv, index=False)
 
     return [c.ManifestEntry(
@@ -65,7 +64,7 @@ def run() -> list[c.ManifestEntry]:
                 "parameters, Risk_i,h and PSAE_i panels, showing the two-chain architectural "
                 "independence.",
         source="data/outputs/tables/phase6_sobol_full_n1024.json",
-        files=[str(out_png.relative_to(d.parent.parent)), str(out_csv.relative_to(d.parent.parent))],
+        files=[str(out_png.relative_to(c.output_root())), str(out_csv.relative_to(c.output_root()))],
         status="generated",
     )]
 

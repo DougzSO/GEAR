@@ -10,10 +10,12 @@ source, not an approximation.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import geopandas as gpd
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -28,8 +30,8 @@ from src.downloaders.boundaries_downloader import get_country_bounds, get_countr
 # --------------------------------------------------------------------------
 SSP_ORDER = ["opt", "bau", "pes"]  # SSP1-2.6 -> SSP3-7.0 -> SSP5-8.5, RESULTS_DRAFT's own axis order
 SSP_LABEL = {"opt": "SSP1-2.6", "bau": "SSP3-7.0", "pes": "SSP5-8.5"}
+SSP_SLUG = {"opt": "ssp126", "bau": "ssp370", "pes": "ssp585"}  # maps/ subfolder names
 BAND_ORDER = ["Low", "Medium", "High", "Extreme"]
-WIND_BAND_ORDER = ["Low", "Extreme"]
 PSAE_LABELS = ["LOW", "MEDIUM", "HIGH", "EXTREME"]
 
 HAZARD_LABEL = {
@@ -62,7 +64,6 @@ def _ordinal_band_colors(labels: list[str]) -> dict[str, str]:
 
 
 BAND_COLOR = _ordinal_band_colors(BAND_ORDER)  # Low/Medium/High/Extreme, viridis-ordinal
-WIND_BAND_COLOR = _ordinal_band_colors(WIND_BAND_ORDER)  # Low/Extreme (2-point sample of the same scale)
 PSAE_COLOR = _ordinal_band_colors(PSAE_LABELS)  # LOW/MEDIUM/HIGH/EXTREME, viridis-ordinal
 
 TABLES = OUTPUT_TABLES  # data/outputs/tables -- real, already-computed production CSVs/JSON
@@ -227,35 +228,54 @@ def draw_country_boundary(ax, country: str) -> None:
     ax.set_xlim(xmin - MAP_MARGIN_DEG, xmax + MAP_MARGIN_DEG)
     ax.set_ylim(ymin - MAP_MARGIN_DEG, ymax + MAP_MARGIN_DEG)
     ax.set_aspect("equal")
-    ax.set_xlabel("Longitude", fontsize=8)
-    ax.set_ylabel("Latitude", fontsize=8)
-    ax.tick_params(labelsize=6)
+    ax.set_xlabel("Longitude", fontsize=9.6)  # MAP_TEXT_SCALE (1.2x) applied throughout this module
+    ax.set_ylabel("Latitude", fontsize=9.6)
+    ax.tick_params(labelsize=7.2)
 
 
-def panel_title(ax, text: str, n_power_plants: int, fontsize: float = 9) -> None:
+MAP_TEXT_SCALE = 1.2  # 2026-09-16: all map text/markers 20% larger than the previous pass, proportions
+                       # kept -- every fontsize/markersize constant below is the old value x 1.2.
+
+
+def panel_title(ax, text: str, n_power_plants: int, fontsize: float = 10.8) -> None:
     """Bold "<text> (Power Plants=N)" -- "Power Plants=N", never "n=N", per
     Douglas's 2026-09-04 review (docs/_audit/2026-09-15_phase7_legacy_maps_audit.md
     Section 3, matching src.visualization._common.panel_title's own convention)."""
     ax.set_title(f"{text} (Power Plants={n_power_plants:,})", fontweight="bold", fontsize=fontsize)
 
 
-COMPASS_ROSE_SIZE_IN = 0.36
-COMPASS_ROSE_XY = (0.90, 0.88)
+COMPASS_ROSE_SIZE_IN = 0.36  # fixed physical size, matching the legacy src.visualization._common
+                              # convention -- NOT a fraction of each panel's own size. A rose sized
+                              # relative to its own panel looks the same regardless of how big the
+                              # panel actually is; a fixed physical size is what makes it look
+                              # correctly small once panels grow (2026-09-16 regression: a
+                              # panel-relative rose became oversized when panels were undersized,
+                              # masking the real problem -- panels are now restored to the legacy
+                              # base_height=8in, single-file column layout, see make_country_row_figure).
+COMPASS_ROSE_MARGIN = 0.035  # axes-fraction padding kept clear from every edge, incl. the "N" label
 COMPASS_ROSE_COLORS = ("black", "white")
 COMPASS_ROSE_POINTS = 8
 
 
-def add_compass_rose(ax, xy=COMPASS_ROSE_XY, size_in: float = COMPASS_ROSE_SIZE_IN,
-                      redraw: bool = True) -> None:
-    """8-point star, upper right, fixed physical size. Call LAST, after any
-    shared legend/colorbar has already been added -- see the identical
-    caveat in src.visualization._common.add_compass_rose's own docstring
-    (reading ax.get_window_extent() before the figure's final layout settles
-    produces an inconsistent size across panels). ``redraw=False`` skips the
-    per-call ``fig.canvas.draw()`` -- safe when the caller already drew the
-    canvas once before looping over many panels (the rose itself never
-    changes any axes' bbox, ``clip_on=False``), avoiding an O(n^2) redraw
-    cost on large multi-panel grids (item03/item13's up to 18-panel figures)."""
+def add_compass_rose(ax, size_in: float = COMPASS_ROSE_SIZE_IN,
+                      margin: float = COMPASS_ROSE_MARGIN, redraw: bool = True) -> None:
+    """8-point star, upper right, fixed physical size (legacy-matching).
+    Position is solved from its own radius so the full glyph -- including
+    the "N" label above the north tip -- always lands inside
+    [margin, 1-margin] on both axes; combined with ``clip_on=True`` this
+    guarantees it never spills past the axis limits, and a translucent
+    white backing disc keeps it legible over whatever map data happens to
+    sit in that corner (both improvements over the legacy version, which
+    relied on ``clip_on=False`` and no backing).
+
+    Call LAST, after any shared legend/colorbar has already been added --
+    see the identical caveat in src.visualization._common.add_compass_rose's
+    own docstring (reading ax.get_window_extent() before the figure's final
+    layout settles produces an inconsistent size across panels).
+    ``redraw=False`` skips the per-call ``fig.canvas.draw()`` -- safe when
+    the caller already drew the canvas once before looping over many panels
+    (the rose itself never changes any axes' bbox), avoiding an O(n^2)
+    redraw cost on multi-panel grids."""
     import matplotlib.patches as mpatches
     fig = ax.figure
     if redraw:
@@ -266,12 +286,19 @@ def add_compass_rose(ax, xy=COMPASS_ROSE_XY, size_in: float = COMPASS_ROSE_SIZE_
     r_tip_x = (size_in / 2) / ax_w_in if ax_w_in > 0 else size_in / 2
     r_tip_y = (size_in / 2) / ax_h_in if ax_h_in > 0 else size_in / 2
     r_notch_x, r_notch_y = r_tip_x * 0.32, r_tip_y * 0.32
-    cx, cy = xy
+    label_y_extent = r_tip_y * 0.45 + 0.05  # room for the "N" text above the north tip
+    cx = 1 - margin - r_tip_x
+    cy = 1 - margin - r_tip_y - label_y_extent
     trans = ax.transAxes
 
     def _point(angle_deg, rx, ry):
         rad = np.radians(angle_deg)
         return (cx + rx * np.sin(rad), cy + ry * np.cos(rad))
+
+    backing = mpatches.Ellipse((cx, cy), width=2 * r_tip_x * 1.35, height=2 * r_tip_y * 1.35,
+                                facecolor="white", edgecolor="none", alpha=0.72,
+                                transform=trans, zorder=9, clip_on=True)
+    ax.add_patch(backing)
 
     step = 360 / COMPASS_ROSE_POINTS
     for i in range(COMPASS_ROSE_POINTS):
@@ -282,12 +309,12 @@ def add_compass_rose(ax, xy=COMPASS_ROSE_XY, size_in: float = COMPASS_ROSE_SIZE_
         kite = mpatches.Polygon(
             [(cx, cy), left_notch, tip, right_notch], closed=True,
             facecolor=COMPASS_ROSE_COLORS[i % 2], edgecolor="black", linewidth=0.4,
-            transform=trans, zorder=10, clip_on=False,
+            transform=trans, zorder=10, clip_on=True,
         )
         ax.add_patch(kite)
     n_tip_x, n_tip_y = _point(0, r_tip_x, r_tip_y)
     ax.text(n_tip_x, n_tip_y + r_tip_y * 0.45, "N", transform=trans, ha="center", va="bottom",
-            fontsize=6, fontweight="bold", zorder=11, clip_on=False)
+            fontsize=7.2, fontweight="bold", zorder=11, clip_on=True)
 
 
 def aspect_ratio_width(country: str, base_height: float, min_width: float = 4.0, max_width: float = 14.0) -> float:
@@ -297,11 +324,62 @@ def aspect_ratio_width(country: str, base_height: float, min_width: float = 4.0,
     return max(min_width, min(base_height * width_deg / height_deg, max_width))
 
 
-def marker_sizes(capacity_mw: pd.Series, min_size: float = 6, max_size: float = 200) -> np.ndarray:
+ROW_FIGURE_BASE_HEIGHT = 8.0  # matches the legacy src.visualization.maps._render_country_row_figure
+                               # base_height -- the 2026-09-16 rework's own 5.0in undersized every
+                               # 3-panel map relative to that reference, leaving excess whitespace.
+
+
+def make_country_row_figure(countries: list[str], base_height: float = ROW_FIGURE_BASE_HEIGHT):
+    """1 row x len(countries) columns, panel widths proportional to each
+    country's own lon/lat aspect ratio (``aspect_ratio_width``), maps filling
+    as much of the figure as possible. ``constrained_layout=True`` (not
+    ``tight_layout``/manual ``subplots_adjust``) -- the same choice the
+    legacy row-figure helper made, and the only one of the three that
+    correctly reserves space for both a colorbar and a suptitle without
+    per-caller tuning. Returns (fig, axes) with axes as a flat list."""
+    widths = [aspect_ratio_width(country, base_height) for country in countries]
+    fig, axes = plt.subplots(1, len(countries), figsize=(sum(widths), base_height),
+                              gridspec_kw={"width_ratios": widths}, constrained_layout=True)
+    axes = np.atleast_1d(axes).ravel().tolist()
+    return fig, axes
+
+
+def _tight_bottom_fraction(fig, ax) -> float:
+    fig.canvas.draw()
+    bbox = ax.get_tightbbox(fig.canvas.get_renderer())
+    return fig.transFigure.inverted().transform(bbox.min)[1]
+
+
+def legend_below_axes(fig, axes: list, handles: list, ncol: int | None = None,
+                       fontsize: float = 9.6, margin: float = 0.02):
+    """Places a single figure-level legend just below the real (rendered)
+    bottom edge of every panel, not a hand-tuned ``bbox_to_anchor`` guess --
+    matches the legacy ``legend_below_artists`` convention. Safe to combine
+    with ``constrained_layout``: the legend is added after layout has
+    already settled the axes, and ``save_figure``'s ``bbox_inches="tight"``
+    grows the saved canvas to include it, so no space needs to be
+    pre-reserved for it in the figure itself."""
+    y = min(_tight_bottom_fraction(fig, ax) for ax in axes) - margin
+    return fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, y),
+                       ncol=ncol or len(handles), fontsize=fontsize, frameon=False)
+
+
+MARKER_ALPHA = 0.75  # dense country panels (up to ~10k plants) still need some transparency to keep
+                      # the base map legible even at legacy-scale marker sizes and panel widths
+
+
+def marker_sizes(capacity_mw: pd.Series, min_size: float = 6, max_size: float = 168,
+                  capacity_max: float | None = None) -> np.ndarray:
+    """Area-proportional marker size (sqrt-scaled capacity). ``capacity_max``
+    should be the dataset-wide (whole-figure, not per-panel) max capacity so
+    that markers stay comparable across the 3 country panels of the same
+    figure -- a panel with only small plants must not get artificially
+    inflated markers just because it lacks that figure's largest plant."""
     capacity = capacity_mw.fillna(0).clip(lower=0)
-    if len(capacity) == 0 or capacity.max() <= 0:
+    cap_max = capacity_max if capacity_max is not None else capacity.max()
+    if len(capacity) == 0 or cap_max is None or cap_max <= 0:
         return np.full(len(capacity), min_size)
-    scaled = np.sqrt(capacity / capacity.max())
+    scaled = np.sqrt(capacity / cap_max)
     return (min_size + scaled * (max_size - min_size)).to_numpy()
 
 
@@ -314,12 +392,51 @@ def save_figure(fig, out_path: Path) -> Path:
 
 
 # --------------------------------------------------------------------------
-# Output tree + manifest
+# Output tree + manifest -- 2026-09-16 flattened to 3 top-level folders:
+#   results_draft/tables/          every CSV, no subfolders
+#   results_draft/maps/ssp{126,370,585}/   every SSP-scenario-specific map
+#   results_draft/maps/other/      maps with no scenario axis (e.g. the
+#                                   Extreme Wind SSP-invariant map)
+#   results_draft/other/           every generated figure that is neither a
+#                                   table nor a country-panel map (bar
+#                                   charts, heatmaps, convergence diagnostics)
+# Confirmed 2026-09-16: no script outside this package references the old
+# per-item ``NN_slug/`` paths (the numbered-subfolder scheme itself, and its
+# predecessor ``item_dir()`` helper, are retired here), so this reorg does
+# not break any external reader -- only this package's own auto-generated
+# MANIFEST.md, which is rewritten every run.
 # --------------------------------------------------------------------------
-def item_dir(n: int, slug: str) -> Path:
-    d = OUTPUT_RESULTS_DRAFT / f"{n:02d}_{slug}"
+def tables_dir() -> Path:
+    """Single flat home for every CSV table this package writes."""
+    d = OUTPUT_RESULTS_DRAFT / "tables"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def maps_dir(scenario: str | None) -> Path:
+    """``maps/ssp126|ssp370|ssp585`` for a scenario-specific map (pass the
+    opt/bau/pes scenario code -- translated via ``SSP_SLUG``), or
+    ``maps/other`` when ``scenario`` is None (a map with no scenario axis,
+    e.g. the Extreme Wind SSP-invariant map)."""
+    sub = SSP_SLUG[scenario] if scenario is not None else "other"
+    d = OUTPUT_RESULTS_DRAFT / "maps" / sub
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def other_dir() -> Path:
+    """Every generated figure that is neither a table nor a country-panel
+    map (bar charts, heatmaps, convergence diagnostics)."""
+    d = OUTPUT_RESULTS_DRAFT / "other"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def output_root() -> Path:
+    """``data/outputs`` -- the base every file's manifest-relative path is
+    computed against, regardless of which of the 3 top-level folders above
+    it actually lives in."""
+    return OUTPUT_RESULTS_DRAFT.parent
 
 
 @dataclass
@@ -365,6 +482,91 @@ def write_manifest(entries: list[ManifestEntry], path: Path | None = None) -> Pa
         for e in entries:
             if e.status.startswith("PENDING"):
                 lines.append(f"- **Item {e.item}** ({e.section}): {e.status}")
+    OUTPUT_RESULTS_DRAFT.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+# --------------------------------------------------------------------------
+# Per-file figure inventory -- descriptive, not a ranking (which figures
+# matter most is a thesis-context judgment call this package cannot make).
+# One row per PNG actually written (tables excluded -- this is a figure
+# inventory), parsed from the item's own filename pattern where the
+# filename encodes hazard/scenario/bucket, else falling back to the item's
+# whole-item ManifestEntry caption for items that produce exactly one file.
+# --------------------------------------------------------------------------
+def _figure_row(item: int, filename: str, entry: "ManifestEntry") -> tuple[str, str] | None:
+    module = {
+        1: "item01_correlation_gate.py::run()", 2: "item02_riskband_distribution.py::_plot_country()",
+        3: "item03_riskband_asset_map.py::_plot()", 4: "item04_extreme_wind_invariant.py::run()",
+        5: "item05_risk_intra_hazard_map.py::_plot()", 7: "item07_sobol_sensitivity.py::run()",
+        8: "item08_hazard_removal_oat.py::run()", 9: "item09_correlation_gate_sweep.py::run()",
+        10: "item10_general_mc_convergence.py::run()", 11: "item11_general_mc_bars.py::run()",
+        12: "item12_psae_distribution.py::_plot_bucket()", 13: "item13_psae_screening_map.py::_plot()",
+        14: "item14_validator_overlay.py::run()",
+    }.get(item)
+    if module is None:  # table-only items (06, 15, 16) produce no figures
+        return None
+    how = f"{module} -- {entry.source}"
+
+    if item == 2:
+        m = re.match(r"riskband_distribution_(\w+)\.png", filename)
+        country = m.group(1).capitalize() if m else filename
+        return (f"RiskBand_i,h distribution (plant count and MW-share) by hazard x technology "
+                f"bucket x SSP scenario, {country} only.", how)
+    if item == 3:
+        m = re.match(r"riskband_map_(\w+)_(\w+)\.png", filename)
+        hazard, scen = (m.group(1), m.group(2)) if m else (filename, "")
+        return (f"RiskBand_i,h asset map for {HAZARD_LABEL.get(hazard, hazard)}, "
+                f"{SSP_LABEL.get(scen, scen)} -- 3 country panels (Brazil/Portugal/India), marker "
+                f"shape = technology bucket, color = RiskBand (Low/Medium/High/Extreme).", how)
+    if item == 5:
+        m = re.match(r"risk_intra_hazard_map_(\w+)_(\w+)\.png", filename)
+        hazard, scen = (m.group(1), m.group(2)) if m else (filename, "")
+        return (f"Risk_i,h intra-hazard map for {HAZARD_LABEL.get(hazard, hazard)}, "
+                f"{SSP_LABEL.get(scen, scen)} -- continuous viridis color scale by Risk_i,h, marker "
+                f"size = capacity_mw, 3 country panels.", how)
+    if item == 12:
+        m = re.match(r"psae_distribution_(\w+)\.png", filename)
+        bucket = m.group(1) if m else filename
+        return (f"PSAE_i distribution (plant count and MW-share) for the "
+                f"{BUCKET_LABEL.get(bucket, bucket)} bucket, faceted by country and SSP scenario.", how)
+    if item == 13:
+        m = re.match(r"psae_screening_map_(\w+)_(\w+)\.png", filename)
+        bucket, scen = (m.group(1), m.group(2)) if m else (filename, "")
+        return (f"PSAE_i screening map for the {BUCKET_LABEL.get(bucket, bucket)} bucket, "
+                f"{SSP_LABEL.get(scen, scen)} -- color = PSAE category (Low/Medium/High/Extreme), "
+                f"star/triangle overlay = validator corroboration (IBTrACS physical-occurrence / "
+                f"EM-DAT broad-impact), 3 country panels.", how)
+    return (entry.caption, how)  # single-file items: the item's own caption already describes it
+
+
+def write_figure_inventory(entries: list[ManifestEntry], path: Path | None = None) -> Path:
+    path = path or (OUTPUT_RESULTS_DRAFT / "FIGURE_INVENTORY.md")
+    rows = []
+    for e in sorted(entries, key=lambda x: x.item):
+        for f in e.files:
+            if not f.endswith(".png"):
+                continue
+            described = _figure_row(e.item, Path(f).name, e)
+            if described is None:
+                continue
+            what, how = described
+            rows.append((f.replace("\\", "/"), what, how))
+
+    lines = [
+        "# results_draft/ -- figure inventory\n",
+        "Inventario descritivo de toda figura gerada por "
+        "`src/reporting/results_draft/run_all.py`. Sem ranking de importancia -- isso depende "
+        "do contexto da tese, que este gerador nao tem. Cada linha: caminho do arquivo "
+        "(relativo a `data/outputs/`), o que a figura mostra, e como e gerada (modulo/funcao + "
+        "fonte de dado).\n",
+        f"**Total de figuras: {len(rows)}.**\n",
+        "| Arquivo | O que mostra | Como e gerada |",
+        "|---|---|---|",
+    ]
+    for f, what, how in rows:
+        lines.append(f"| `{f}` | {what} | {how} |")
     OUTPUT_RESULTS_DRAFT.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path

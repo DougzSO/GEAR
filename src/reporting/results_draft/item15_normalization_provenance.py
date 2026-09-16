@@ -14,10 +14,9 @@ ITEM, SLUG = 15, "normalization_provenance"
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
     table = c.load_normalization_origin()
 
-    out_csv = d / "normalization_provenance.csv"
+    out_csv = c.tables_dir() / "normalization_provenance.csv"
     table.to_csv(out_csv, index=False)
 
     return [c.ManifestEntry(
@@ -25,7 +24,7 @@ def run() -> list[c.ManifestEntry]:
         caption="Provenance table for every Min-Max normalization bound (FROZEN_BOUNDS): pooled "
                 "sample min/max, tier, Fisher-Pearson skewness, Shapiro-Wilk diagnostic, transform.",
         source="data/outputs/tables/normalization_origin_table.csv",
-        files=[str(out_csv.relative_to(d.parent.parent))], status="generated",
+        files=[str(out_csv.relative_to(c.output_root()))], status="generated",
         notes=f"{len(table)} rows (one per hazard/GCM origin combination).",
     )]
 

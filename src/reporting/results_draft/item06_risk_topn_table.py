@@ -18,7 +18,6 @@ ALL_HAZARDS = ["ws", "spei", "precip", "sv", "iv", "heat", "wind"]
 
 
 def run() -> list[c.ManifestEntry]:
-    d = c.item_dir(ITEM, SLUG)
     rbh = c.load_risk_by_hazard()
     rb = c.load_risk_bands()[["plant_uid", "water_scenario", "hazard_term", "risk_band"]]
 
@@ -40,7 +39,7 @@ def run() -> list[c.ManifestEntry]:
                         "hazard_i_h": r.hazard_i_h, "risk_i_h": r.risk_i_h, "risk_band": r.risk_band,
                     })
     table = pd.DataFrame(rows)
-    out_csv = d / "risk_topn_table.csv"
+    out_csv = c.tables_dir() / "risk_topn_table.csv"
     table.to_csv(out_csv, index=False)
 
     return [c.ManifestEntry(
@@ -49,7 +48,7 @@ def run() -> list[c.ManifestEntry]:
                 f"(capacity, age_factor, Hazard_i,h, Risk_i,h, RiskBand). Hazard-specific, not "
                 f"cross-hazard comparable.",
         source="data/outputs/tables/risk_by_hazard.csv + risk_bands.csv",
-        files=[str(out_csv.relative_to(d.parent.parent))], status="generated",
+        files=[str(out_csv.relative_to(c.output_root()))], status="generated",
         notes=f"{len(table)} rows ({len(c.COUNTRIES)} countries x {len(ALL_HAZARDS)} hazards x "
               f"3 scenarios x up to {TOP_N}).",
     )]
