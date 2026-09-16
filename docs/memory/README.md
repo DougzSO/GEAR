@@ -294,3 +294,16 @@ pra trocar — sinalizado, não inventado. Ver item 41 de
 [05-decisoes-tecnicas.md](05-decisoes-tecnicas.md) e `docs/DECISIONS.md`,
 "GEAR v3 wind Risk_i,h integration: empirical transform result,
 PENDING_RISK_I_H_HAZARDS closed".
+
+2026-09-16: `src/orchestrator.py` (novo) — orquestrador único do pipeline
+v3 (`correlation_gate` → `risk_calculator` → `risk_bands` → `psae` →
+`contextual_validators` → Sobol/general-MC [opt-in] →
+`results_draft`), com manifesto SHA-256 rastreável
+(`data/outputs/pipeline_manifest.json`) e abort automático se uma
+dependência mudou sem reexecução upstream. Smoke-testado com dado real
+(`--only correlation_gate`, `--only risk_bands psae`, path de abort com
+hash forçado). Extensão experimental adicionada em
+`sobol_sensitivity.py`/`general_mc.py`: Sobol por (country, bucket) e
+general-MC por GCM, aditiva (não altera as funções já fechadas da Fase 6),
+não revisada pelo autor. Ver itens 43 e 44 de
+[05-decisoes-tecnicas.md](05-decisoes-tecnicas.md).

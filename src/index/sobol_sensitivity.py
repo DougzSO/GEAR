@@ -309,17 +309,31 @@ def _sobol_worker_run_draw(row: np.ndarray) -> dict:
         str(c): float(_nanaverage(sub["risk_i_h"].to_numpy("float64"), sub["capacity_mw"].to_numpy("float64")))
         for c, sub in risk_all.groupby("country")
     }
+    # (country, bucket) stratification -- additive, for run_validation_stratified
+    # only (EXPERIMENTAL, see that function's docstring). risk_all/psae_all both
+    # already carry a "bucket" column per row, so this is the same groupby
+    # pattern as risk_by_country, one level finer, at no extra draw cost.
+    risk_by_country_bucket = {
+        f"{c}|{b}": float(_nanaverage(sub["risk_i_h"].to_numpy("float64"), sub["capacity_mw"].to_numpy("float64")))
+        for (c, b), sub in risk_all.groupby(["country", "bucket"])
+    }
 
     psae_overall = float(psae_all["psae"].mean(skipna=True))
     psae_by_country = {
         str(c): float(v) for c, v in psae_all.groupby("country")["psae"].mean().items()
     }
+    psae_by_country_bucket = {
+        f"{c}|{b}": float(v)
+        for (c, b), v in psae_all.groupby(["country", "bucket"])["psae"].mean(skipna=True).items()
+    }
 
     return {
         "risk_mean_overall": risk_overall,
         "risk_mean_by_country": risk_by_country,
+        "risk_mean_by_country_bucket": risk_by_country_bucket,
         "psae_mean_overall": psae_overall,
         "psae_mean_by_country": psae_by_country,
+        "psae_mean_by_country_bucket": psae_by_country_bucket,
         "psae_n_complete": int(psae_all["psae_complete"].sum()),
         "psae_n_total": int(len(psae_all)),
     }
@@ -405,4 +419,75 @@ def run_validation(
         "psae_coverage_fraction": total_complete / total_rows if total_rows else float("nan"),
         "psae_n_complete_total": total_complete,
         "psae_n_total": total_rows,
+    }
+
+
+# --------------------------------------------------------------------------
+# Country x bucket stratified analysis -- EXPERIMENTAL
+# --------------------------------------------------------------------------
+def run_validation_stratified(
+    n0: int,
+    *,
+    pre: sr.PrecomputedInputs | None = None,
+    n_workers: int | None = None,
+    seed: int = 20260915,
+) -> dict:
+    """Same sample/draws as ``run_validation`` (one Saltelli design, one pass
+    of ``run_sobol_draws_parallel`` -- no extra evaluations), but additionally
+    runs SALib ``analyze`` per (country, bucket) stratum using the per-draw
+    breakdown ``_sobol_worker_run_draw`` already returns. ``analyze`` itself
+    is a cheap post-processing step (seconds, not the draw cost), so this
+    does not roughly double the run_validation wall-clock the way a second
+    independent Sobol run would.
+
+    A stratum is skipped (absent from the returned dicts) if any draw is
+    missing it (e.g. a hazard not present at all for a bucket in a given
+    country) -- SALib's ``analyze`` cannot handle NaN in its ``Y`` array, and
+    silently imputing a value would fabricate a Sobol index for data that
+    was never actually sampled.
+
+    EXPERIMENTAL: this stratification (by hazard_scope bucket, one Sobol
+    analysis per country) was not part of the closed Phase 6 methodology in
+    ``docs/DECISIONS.md`` -- the closed run analyzes only the overall pooled
+    statistic and reports per-country as diagnostic detail (see
+    ``_sobol_worker_run_draw``'s docstring). Treat any interpretation of
+    these per-stratum indices as provisional pending explicit author review;
+    do not cite them as part of the closed Phase 6.2 result without that
+    review.
+    """
+    if pre is None:
+        pre = sr.precompute()
+
+    rows = sample_problem(n0, calc_second_order=False, seed=seed)
+    n_evals = rows.shape[0]
+    expected = n0 * (len(PARAM_NAMES) + 2)
+    assert n_evals == expected, f"unexpected evaluation count: got {n_evals}, expected {expected}"
+
+    t0 = time.perf_counter()
+    results = run_sobol_draws_parallel(pre, rows, n_workers=n_workers)
+    elapsed = time.perf_counter() - t0
+
+    strata = sorted({k for r in results for k in r["risk_mean_by_country_bucket"]})
+    sobol_risk_by_stratum: dict[str, dict] = {}
+    sobol_psae_by_stratum: dict[str, dict] = {}
+    skipped_strata: list[str] = []
+    for stratum in strata:
+        y_risk = np.array([r["risk_mean_by_country_bucket"].get(stratum, np.nan) for r in results], dtype="float64")
+        y_psae = np.array([r["psae_mean_by_country_bucket"].get(stratum, np.nan) for r in results], dtype="float64")
+        if np.isnan(y_risk).any() or np.isnan(y_psae).any():
+            skipped_strata.append(stratum)
+            continue
+        sobol_risk_by_stratum[stratum] = salib_analyze.analyze(PROBLEM, y_risk, calc_second_order=False, seed=seed)
+        sobol_psae_by_stratum[stratum] = salib_analyze.analyze(PROBLEM, y_psae, calc_second_order=False, seed=seed)
+
+    return {
+        "n0": n0,
+        "n_evals": n_evals,
+        "n_workers": n_workers or mp.cpu_count(),
+        "run_s": elapsed,
+        "s_per_draw": elapsed / n_evals,
+        "strata": strata,
+        "skipped_strata": skipped_strata,
+        "sobol_risk_by_stratum": sobol_risk_by_stratum,
+        "sobol_psae_by_stratum": sobol_psae_by_stratum,
     }

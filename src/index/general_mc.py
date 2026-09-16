@@ -110,6 +110,8 @@ def _worker_general_mc_draw(task: tuple[str, str, np.ndarray]) -> dict:
 
     original_pad = rc.TLOG_UPPER_TAIL_PADDING_FRACTION
     rc.TLOG_UPPER_TAIL_PADDING_FRACTION = padding_fraction
+    risk_by_model: dict[str, float] = {}
+    psae_by_model: dict[str, float] = {}
     try:
         risk_frames, psae_frames = [], []
         for model in models:
@@ -118,7 +120,19 @@ def _worker_general_mc_draw(task: tuple[str, str, np.ndarray]) -> dict:
             )
             risk_frames.append(risk_df)
             band_table = sr.recompute_risk_bands(pre, model, percentile_overrides=percentile_overrides)
-            psae_frames.append(psae.compute_psae(band_table).frame)
+            psae_df = psae.compute_psae(band_table).frame
+            psae_frames.append(psae_df)
+
+            # per-GCM breakdown, filtered to this task's own (country,
+            # scenario) -- EXPERIMENTAL, see run_convergence_by_gcm's
+            # docstring. Cheap: reuses the frames already computed above,
+            # no extra recompute per model.
+            risk_df_sub = risk_df[(risk_df["country"] == country) & (risk_df["water_scenario"] == scenario)]
+            psae_df_sub = psae_df[(psae_df["country"] == country) & (psae_df["water_scenario"] == scenario)]
+            risk_by_model[model] = float(ss._nanaverage(
+                risk_df_sub["risk_i_h"].to_numpy("float64"), risk_df_sub["capacity_mw"].to_numpy("float64"),
+            ))
+            psae_by_model[model] = float(psae_df_sub["psae"].mean(skipna=True))
     finally:
         rc.TLOG_UPPER_TAIL_PADDING_FRACTION = original_pad
 
@@ -137,6 +151,8 @@ def _worker_general_mc_draw(task: tuple[str, str, np.ndarray]) -> dict:
         "psae_mean": float(psae_sub["psae"].mean(skipna=True)),
         "psae_n_complete": int(psae_sub["psae_complete"].sum()),
         "psae_n_total": int(len(psae_sub)),
+        "risk_mean_by_model": risk_by_model,
+        "psae_mean_by_model": psae_by_model,
     }
 
 
@@ -251,3 +267,88 @@ def run_convergence(
                     abs(c[stat] - base) / abs(base) if base not in (0, None) and not np.isnan(base) else float("nan")
                 )
     return steps
+
+
+# --------------------------------------------------------------------------
+# By-GCM breakdown -- EXPERIMENTAL
+# --------------------------------------------------------------------------
+def run_n_by_gcm(
+    n: int,
+    *,
+    pre: sr.PrecomputedInputs | None = None,
+    n_workers: int | None = None,
+    seed_note: str = "general_mc",
+) -> dict:
+    """Same draws as ``run_n`` (identical tasks, identical RNG streams -- no
+    extra recompute), but summarised per (country, scenario, model) instead
+    of pooled across the two configured GCMs, using the per-model breakdown
+    ``_worker_general_mc_draw`` already returns.
+
+    EXPERIMENTAL: the closed Phase 6.1 general-MC result
+    (``docs/DECISIONS.md``, ``phase6_general_mc_convergence.json``) pools
+    GFDL-ESM4/MIROC6 together per stream, matching how ``Risk_i,h``/
+    ``PSAE_i`` are defined (GCM stacked, never blended, but also never
+    Sobol/MC-summarised as a separate axis). This by-GCM cut was not part of
+    that closure -- treat it as a diagnostic, not a replacement for the
+    pooled convergence result, pending author review."""
+    if pre is None:
+        pre = sr.precompute()
+
+    tasks: list[tuple[str, str, np.ndarray]] = []
+    for country, scenario in STREAMS:
+        rng = rng_utils.phase6_rng(country, scenario, seed_note)
+        for _ in range(n):
+            tasks.append((country, scenario, _draw_row(rng)))
+
+    t0 = time.perf_counter()
+    results = run_stream_draws_parallel(pre, tasks, n_workers=n_workers)
+    elapsed = time.perf_counter() - t0
+
+    models = sorted({m for r in results for m in r["risk_mean_by_model"]})
+    rows = [
+        {
+            "country": r["country"], "scenario": r["scenario"], "model": model,
+            "risk_mean": r["risk_mean_by_model"][model],
+            "psae_mean": r["psae_mean_by_model"][model],
+        }
+        for r in results for model in models
+    ]
+    df = pd.DataFrame(rows)
+
+    stream_stats: dict[tuple[str, str, str], dict] = {}
+    for (country, scenario, model), sub in df.groupby(["country", "scenario", "model"]):
+        risk_vals = sub["risk_mean"].to_numpy("float64")
+        psae_vals = sub["psae_mean"].to_numpy("float64")
+        risk_lo, risk_hi = _percentile_ci(risk_vals)
+        psae_lo, psae_hi = _percentile_ci(psae_vals)
+        stream_stats[(country, scenario, model)] = {
+            "n": len(sub),
+            "risk_mean": float(np.nanmean(risk_vals)),
+            "risk_ci": (risk_lo, risk_hi),
+            "risk_ci_halfwidth": (risk_hi - risk_lo) / 2.0,
+            "psae_mean": float(np.nanmean(psae_vals)),
+            "psae_ci": (psae_lo, psae_hi),
+            "psae_ci_halfwidth": (psae_hi - psae_lo) / 2.0,
+        }
+
+    return {
+        "n": n,
+        "n_total_draws": len(tasks),
+        "models": models,
+        "elapsed_s": elapsed,
+        "s_per_draw": elapsed / len(tasks),
+        "stream_stats": stream_stats,
+    }
+
+
+def run_convergence_by_gcm(
+    ns: list[int],
+    *,
+    pre: sr.PrecomputedInputs | None = None,
+    n_workers: int | None = None,
+) -> list[dict]:
+    """``run_n_by_gcm`` over a doubling sequence -- the by-GCM analogue of
+    ``run_convergence``. See ``run_n_by_gcm`` for the EXPERIMENTAL status."""
+    if pre is None:
+        pre = sr.precompute()
+    return [run_n_by_gcm(n, pre=pre, n_workers=n_workers) for n in ns]

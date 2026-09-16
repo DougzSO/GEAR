@@ -2265,3 +2265,112 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
   se Seção 7.1 for revisitada. Ver `docs/DECISIONS.md`, "GEAR v3 Phase 5:
   physical-occurrence validator (IBTrACS)" (2026-09-15) para o detalhe
   completo (não duplicado aqui).
+
+## 43. `src/orchestrator.py` — orquestrador único do pipeline v3 com manifesto SHA-256 rastreável (2026-09-16)
+
+- **Contexto:** pedido externo (roteiro "FASE A: INFRAESTRUTURA", Comando
+  A.1) para um orquestrador único do pipeline v3 (`correlation_gate` →
+  `risk_calculator` → `risk_bands` → `psae` → `contextual_validators` →
+  Sobol/general-MC → `results_draft`), com manifesto SHA-256 rastreável e
+  abort automático se uma dependência mudou sem reexecução upstream. O
+  roteiro original especificava três coisas que conflitam com o estado
+  real do repositório (confirmado por leitura direta do código antes de
+  implementar, `CLAUDE.md` Seção 1):
+  1. `params/config.yaml` — não existe; `src/config.py` já é a config
+     compartilhada obrigatória (`CLAUDE.md` Seção 12).
+  2. `subprocess.run("python -m ...")` por etapa — `src/main.py` (o
+     orquestrador pré-v3) documenta extensamente por que isso é
+     desperdiçado (cada CLI recomputa seus próprios inputs);
+     `src/reporting/results_draft/run_all.py` já prova o padrão
+     in-process funcionando ponta a ponta na camada de reporting.
+  3. Outputs `phase6_sobol_stratified.json`/`phase6_general_mc_by_gcm.json`
+     — não existiam; `sobol_sensitivity.py`/`general_mc.py` não tinham
+     CLI nenhuma, só `run_validation`/`run_convergence` chamados por
+     scripts avulsos que produziram os JSONs *não*-estratificados já em
+     disco.
+  Essas três divergências foram levadas ao autor antes da implementação
+  (pergunta explícita, não resolvidas silenciosamente).
+- **Decisão:** hash de `src/config.py` (não um YAML novo) é o fingerprint
+  de "config mudou". Toda etapa roda in-process (chama a função do módulo
+  diretamente), nunca subprocess — mesmo padrão de
+  `results_draft/run_all.py`. Sobol/general-MC no orquestrador são
+  **opt-in** (`--run-sobol`/`--run-general-mc`), nunca rodam por padrão —
+  os runs fechados já custaram 7.237s (Sobol, N0=1024) e 11.902s
+  (general-MC, sequência de dobra até N=800/stream); `--sobol-n0`/
+  `--general-mc-ns` default para valores de smoke-test (16, [50,100]), não
+  uma repetição do run fechado. `check_dependencies` compara hash atual
+  vs. hash gravado no manifesto na última execução bem-sucedida; um path
+  nunca visto antes não é mismatch (primeira execução). Etapas que
+  recomputam tudo do zero em memória (`psae`, por exemplo, nunca lê
+  `risk_bands.csv` do disco — recebe o `RiskBandTable` já computado) têm
+  essa checagem como um fingerprint informativo, não uma leitura real de
+  dependência — não bloqueia execuções válidas, mas também não pega toda
+  mudança upstream possível se alguém rodar só uma etapa isolada fora de
+  ordem. Validações pós-execução: nenhum output com prefixo `ccrs_`
+  (namespace da camada CCRS legada, deletada — item 36); `risk_bands.csv`
+  não pode ter 100% NaN nas linhas `hazard_term=="wind"`;
+  `phase6_sobol_stratified.json` (quando gerado) precisa ter pelo menos um
+  estrato `(country, bucket)`.
+- **Verificação:** smoke-test real, não só leitura de código —
+  `python -m src.orchestrator --only correlation_gate` (16,2s, escreveu
+  `correlation_gate.csv`, manifesto gravado corretamente) e `--only
+  risk_bands psae` (14,6s + 1,6s, escreveu `risk_bands.csv`,
+  `band_cuts.csv` novo, `psae.csv`; checagem de wind não-nulo passou).
+  Path de abort testado com hash de config forçado a valor inválido:
+  imprime `[ABORT] ...` e retorna exit code 1 (confirmado via `$?` direto,
+  não via pipe).
+- **Consequências:** `python -m src.orchestrator --only <etapas>` roda um
+  subconjunto; sem `--only`, roda a ordem completa (Sobol/general-MC ainda
+  pulados por padrão). `data/outputs/pipeline_manifest.json` acumula um
+  registro por execução (`runs`) mais o snapshot de hashes atual
+  (`current_hashes`). `band_cuts.csv` (novo) extrai
+  `RiskBandTable.percentile_cuts` (já existente, só renderizado como texto
+  em `risk_bands_report.md`) numa tabela parseável.
+- **Arquivos:** `src/orchestrator.py` (novo), `docs/memory/README.md`
+  (índice atualizado).
+- **Status:** Ativa.
+
+## 44. Extensão experimental: Sobol por (country, bucket) e general-MC por GCM (2026-09-16)
+
+- **Contexto:** o mesmo Comando A.1 (item 43) pediu, além da orquestração,
+  dois produtos analíticos novos que não existiam: Sobol estratificado por
+  país×bucket (`phase6_sobol_stratified.json`) e general-MC quebrado por
+  GCM (`phase6_general_mc_by_gcm.json`). O autor confirmou explicitamente
+  construir isso agora (não adiar), mas isso é trabalho analítico novo,
+  não apenas wiring de orquestração — nenhuma dessas quebras fazia parte
+  da metodologia Fase 6 fechada (itens 30-ish/`docs/DECISIONS.md`, "GEAR
+  v3 Phase 6 FECHADA").
+- **Decisão:** implementado como extensão aditiva, nunca modificando o
+  comportamento das funções já fechadas:
+  - `sobol_sensitivity._sobol_worker_run_draw` ganhou duas chaves novas no
+    dict de retorno (`risk_mean_by_country_bucket`,
+    `psae_mean_by_country_bucket`) — as chaves existentes usadas por
+    `run_validation` (`risk_mean_overall`, `psae_mean_overall`, etc.)
+    continuam exatamente iguais.
+  - `sobol_sensitivity.run_validation_stratified(n0, ...)` é uma função
+    nova, separada de `run_validation` — mesma amostra/mesmos draws
+    (nenhum custo extra de avaliação), reanalisa via `SALib.analyze` por
+    estrato (barato: segundos, não o custo do draw). Um estrato ausente
+    em qualquer draw (hazard não presente naquele bucket/país) é pulado,
+    nunca imputado.
+  - `general_mc._worker_general_mc_draw` ganhou `risk_mean_by_model`/
+    `psae_mean_by_model` (por GCM, filtrado ao (country, scenario) da
+    task), reaproveitando os frames já computados no loop existente —
+    nenhum recompute extra por modelo.
+  - `general_mc.run_n_by_gcm`/`run_convergence_by_gcm` são funções novas,
+    paralelas a `run_n`/`run_convergence` (que continuam pooling
+    GFDL-ESM4/MIROC6 como sempre fizeram).
+  Ambas as extensões têm docstring própria marcando **EXPERIMENTAL** e
+  apontando que não fazem parte do fechamento de Fase 6 — não devem ser
+  citadas como resultado fechado do artigo sem revisão explícita do
+  autor.
+- **Consequências:** rodar `--run-sobol`/`--run-general-mc` no
+  orquestrador produz esses dois JSONs novos, mas em `n0`/`ns` pequenos
+  por padrão (ver item 43) — reproduzir a escala do run fechado exige
+  passar `--sobol-n0 1024 --general-mc-ns 100 200 400 800` (ou similar) e
+  aceitar o custo de horas já medido para as versões pooled.
+- **Arquivos:** `src/index/sobol_sensitivity.py`,
+  `src/index/general_mc.py`, `src/orchestrator.py`.
+- **Status:** Incerta (metodologia não revisada pelo autor — ver nota
+  EXPERIMENTAL acima; não citar como parte do Phase 6 fechado sem
+  confirmação).
