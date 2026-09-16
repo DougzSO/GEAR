@@ -417,14 +417,19 @@ Log of every methodological and data-source decision made during this project, i
   country's plants. The two-term `Risk_i` also could not carry the Aqueduct
   variability indicators (sv, iv), which the plant-level diagnostics showed
   were distinct from the stress level; the CCRS has four terms.
-- Status: active. Supersedes the SCI/NAES index architecture (ARCHITECTURE.md
-  Section 5, rewritten in this commit) and the 3-factor `Resilience_i`
-  product (Section 7, dissolved). Related entries are carried forward with
-  update notes, none deleted: "Water stress normalisation ...", "Heat stress
-  normalisation ...", "Hazard combination -- linear sum retained ...",
-  "NAES/SCI computable-capacity denominator (V6 closed)", "Event factor:
-  country-level EM-DAT frequency (V2 closed)". The linear no-interaction
-  hazard combination and the country-level event factor are unchanged in
+- Status: superseded
+- Superseded by: [2026-09-11] GEAR v3 Phase 1: Risk_i,h replaces the CCRS core
+- Reason: ccrs_calculator.py deleted, Risk_i,h computed per-hazard without
+  weighted bucket aggregation
+- Status (historical, as originally recorded): active. Supersedes the
+  SCI/NAES index architecture (ARCHITECTURE.md Section 5, rewritten in this
+  commit) and the 3-factor `Resilience_i` product (Section 7, dissolved).
+  Related entries are carried forward with update notes, none deleted:
+  "Water stress normalisation ...", "Heat stress normalisation ...",
+  "Hazard combination -- linear sum retained ...", "NAES/SCI
+  computable-capacity denominator (V6 closed)", "Event factor: country-level
+  EM-DAT frequency (V2 closed)". The linear no-interaction hazard
+  combination and the country-level event factor are unchanged in
   substance. `fuel_factor` is removed (V5 closed -- see below); the frozen
   global Min-Max transform constants remain open.
 
@@ -1182,6 +1187,8 @@ stated per entry per the standing rule.
   entry; HAZUS-MH reference removed from that row.
 
 ## [2026-09-11] GEAR v3 Phase 1: Risk_i,h replaces the CCRS core (Equation 1)
+- Replaces: [2026-09-03] CCRS replaces SCI/NAES as the unified risk
+  architecture (bucket-weighted aggregation model)
 - Decision: `src/index/ccrs_calculator.py` and `src/index/ccrs_report.py` are
   deleted, not deprecated in place. `src/index/risk_calculator.py` replaces
   them: `risk_i_h(hazard_i_h, exposure_mw, vulnerability) = hazard_i_h *
@@ -2427,7 +2434,11 @@ stated per entry per the standing rule.
   05-decisoes-tecnicas.md` items 30, 37; `docs/DECISIONS.md`, "GEAR v3
   Phase 2.5: correlation gate implemented and run" (the Phase 2.1 pattern
   this finding was checked against and found NOT to match).
-- Status: **open, blocked on author decision.** Two options on the table,
+- Status: resolved
+- Resolved by: [2026-09-14] GEAR v3 Risk_i,h integration gap follow-up: ERA5
+  wind acquisition complete, Risk_i,h wiring still pending
+- Status (historical, as originally recorded): **open, blocked on author
+  decision.** Two options on the table,
   neither taken unilaterally: (a) authorize the ERA5 download now (90 CDS
   requests across the three countries, duration unknown); (b) leave
   Extreme Wind as `insufficient_data` for the time being and revisit in a
