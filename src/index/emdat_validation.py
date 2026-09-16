@@ -95,7 +95,7 @@ from scipy import stats
 from src.config import BOUNDARIES_RAW, COUNTRIES, COUNTRY_ISO3, MAINLAND_ONLY_COUNTRIES, OUTPUT_TABLES
 from src.downloaders import emdat_downloader
 from src.downloaders.boundaries_downloader import get_country_geometry
-from src.index import ccrs_calculator as ccrs
+from src.index import risk_calculator
 from src.index.risk_bands import PRIMARY_GCM
 
 logger = logging.getLogger(__name__)
@@ -207,11 +207,11 @@ def polygon_hazard_table(
     country: str, term: str, model: str = PRIMARY_GCM, water_scenario: str = REFERENCE_WATER_SCENARIO,
 ) -> pd.DataFrame:
     """One row per admin-1 polygon: ``gid_1``, zonal-mean raw raster value of
-    ``term`` (``ccrs_calculator.raster_path``, the same raster the CCRS
+    ``term`` (``risk_calculator.raster_path``, the same raster the Risk_i,h
     Hazard term itself samples at plant points -- here aggregated over the
     whole polygon instead)."""
     admin1 = _load_admin1_boundaries(country)
-    path = ccrs.raster_path(term, country, water_scenario, model)
+    path = risk_calculator.raster_path(term, country, water_scenario, model)
     rows = [{"gid_1": gid, "hazard_value": _zonal_mean(path, geom)}
             for gid, geom in zip(admin1["GID_1"], admin1.geometry)]
     return pd.DataFrame(rows)

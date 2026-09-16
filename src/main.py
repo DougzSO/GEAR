@@ -68,6 +68,10 @@ from src.processors import spei_processor as speip
 from src.processors import water_stress_processor as wsp
 from src.processors import water_variability_processor as wvp
 from src.processors._common import _find_aqueduct_csv
+
+# ATENCAO: Este orquestrador nao foi migrado para GEAR v3 (risk_calculator).
+# Uso nao recomendado. Sucessor funcional: src/reporting/results_draft/run_all.py
+# Ver docs/DECISIONS.md linha 1220-1231 e docs/memory/04-scripts-comandos.md
 from src.visualization import charts, diagrams, maps
 from src.visualization import emdat_validation as emv_viz
 from src.visualization import tables as vtables

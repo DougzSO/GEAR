@@ -55,7 +55,7 @@ import pandas as pd
 
 from src.config import BOUNDARIES_RAW, COUNTRY_ISO3, MAINLAND_ONLY_COUNTRIES
 from src.downloaders.boundaries_downloader import get_country_bounds, get_country_geometry
-from src.index.ccrs_calculator import BUCKETS
+from src.index.risk_calculator import BUCKETS
 
 # --------------------------------------------------------------------------
 # Palette
