@@ -123,6 +123,7 @@ Todas as entradas com `Status: active` (ou variantes "active, closed") em `docs/
 - **[2026-09-12] Bug ERA5 GRIB mal-rotulado corrigido**: 18 anos do Brasil recuperados sem re-download via detecção por magic-bytes, não extensão de arquivo.
 - **[2026-09-12] Reestruturação de footprint de disco ERA5**: um ano por vez, reduz e apaga bruto — de ~28GB/país pico para ~130KB/ano após redução.
 - **[2026-09-16] `correlation_gate.csv` regenerado; "12 failed" era bug de comparação NaN**: `NaN != "pass"` avalia True em pandas, contava linhas "pooled" sem verdict como falha — corrigido para comparação explícita `== "fail"`; resultado real: 0 falhas.
+- **[2026-09-16] Checklist externo apontando "Extreme Wind 100% NaN em `risk_bands.csv`" verificado como falso positivo, não corrigido por não haver o que corrigir**: item de checklist descrevia exatamente o gap já registrado e fechado em 2026-09-14 (linhas 144-145 acima). Verificação direta em `risk_bands.csv` (mtime idêntico ao já citado na linha 23 deste mapa), `risk_by_hazard.csv` e `psae.csv` confirma 0% NaN em `risk_band`/`risk_i_h` para `wind` e `psae_complete=True` em 100% das linhas do bucket `wind`. Regressão coberta por `tests/test_wind_consistency.py` (checa `risk_calculator.HAZARD_TERMS`/`FROZEN_BOUNDS` e `hazard_scope.PENDING_RISK_I_H_HAZARDS` sem I/O, mais os três CSVs de saída sob `@pytest.mark.skipif` quando ausentes).
 
 ---
 
