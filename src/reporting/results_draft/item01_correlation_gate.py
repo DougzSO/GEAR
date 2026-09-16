@@ -32,7 +32,17 @@ def run() -> list[c.ManifestEntry]:
     df = df.sort_values(["gated", "pair_label", "country", "gcm"], ascending=[False, True, True, True])
 
     fig, ax = plt.subplots(figsize=(9, max(6, 0.22 * len(df))))
-    colors = np.where(df["gated"], np.where(df["gate_verdict"] == "pass", "#2a9d8f", "#e63946"), "#8d99ae")
+    # Explicit pass/fail selection, not `gated & (verdict != "pass")": that
+    # comparison treats a NaN verdict as "!= pass" too, which silently
+    # painted the 12 "pooled" rows (gated=True by pair definition, but never
+    # assigned a real per-country verdict -- see correlation_gate.run_gate,
+    # `if country != "pooled": verdict = ...`) red as if they had failed the
+    # gate, when in fact zero real per-country gated cells fail.
+    colors = np.select(
+        [df["gate_verdict"] == "pass", df["gate_verdict"] == "fail"],
+        ["#2a9d8f", "#e63946"],
+        default="#8d99ae",
+    )
     y = np.arange(len(df))
     ax.barh(y, df["decision_r"].abs(), color=colors)
     ax.axvline(GATE_THRESHOLD, color="black", linestyle="--", linewidth=1, label=f"exclusion threshold |r|={GATE_THRESHOLD}")
@@ -47,7 +57,10 @@ def run() -> list[c.ManifestEntry]:
     fig.savefig(out_png, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
-    n_flip = int((df["gated"] & (df["gate_verdict"] != "pass")).sum())
+    n_flip = int((df["gate_verdict"] == "fail").sum())
+    n_pass = int((df["gate_verdict"] == "pass").sum())
+    n_report_only = int((df["gate_verdict"] == "report_only").sum())
+    n_not_gated = int(df["gate_verdict"].isna().sum())
     return [c.ManifestEntry(
         item=ITEM, section="1. Correlation gate",
         caption="Full pairwise correlation-gate matrix (Pearson r, Spearman rho, n, decision-method "
@@ -57,7 +70,8 @@ def run() -> list[c.ManifestEntry]:
         files=[str(out_csv.relative_to(c.output_root())), str(out_png.relative_to(c.output_root()))],
         status="generated",
         notes=f"{len(df)} rows exported; {n_flip} gated cells failed the |r|<0.80 threshold "
-              f"(expected 0, per docs/DECISIONS.md closure).",
+              f"(expected 0, per docs/DECISIONS.md closure) -- {n_pass} pass, {n_report_only} "
+              f"report_only, {n_not_gated} not gated (pooled reference rows, no per-country verdict).",
     )]
 
 

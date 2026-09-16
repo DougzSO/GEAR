@@ -5178,3 +5178,47 @@ above) and must be placed once the actual manuscript draft exists.
   forward at every future citation-related task until either the trigger
   fires or Phase 7 begins with `References.md` already instantiated by
   other means.
+
+## [2026-09-16] correlation_gate.csv regenerated, MANIFEST Item 1 "12 failed" traced to a NaN-comparison bug and fixed
+- Context: the pre-synthesis consistency checklist flagged `correlation_gate.csv`
+  as stale (2026-09-12, 3-4 days behind `risk_bands.csv`/`psae.csv`/etc.) and
+  `MANIFEST.md` Item 1's "12 gated cells failed the |r|<0.80 threshold" as
+  contradicted by the CSV itself (0 "fail" verdicts, verified by direct
+  `pandas` inspection). Both were carried into `GEAR_v3_RESULTS_DRAFT.md`'s
+  "Known Issues" section as an open, unresolved anomaly.
+- Decision: `python -m src.index.correlation_gate` was re-run (deterministic,
+  no upstream data changed since 2026-09-12 -- new 56-row output is numerically
+  identical to the prior one, row for row, only the file timestamp changed to
+  2026-09-16). The "12" figure was not a stale artifact but a live bug in
+  `src/reporting/results_draft/item01_correlation_gate.py`'s `n_flip`
+  computation: `df["gated"] & (df["gate_verdict"] != "pass")` treats a `NaN`
+  `gate_verdict` as `!= "pass"` under pandas comparison semantics, so it
+  counted the 12 "pooled" rows -- `gated=True` by pair definition
+  (`correlation_gate.run_gate`), but deliberately never assigned a real
+  per-country verdict (`if country != "pooled": verdict = ...`, else stays
+  `None`) -- as gate failures. The same bug separately mis-colored those 12
+  rows red ("failed") in `correlation_gate_matrix.png`. Fixed to an explicit
+  `df["gate_verdict"] == "fail"` count and an explicit
+  `np.select([verdict=="pass", verdict=="fail"], [green, red], default=grey)`
+  color map, which correctly yields 0 fails (36 pass, 6 report_only, 14
+  not-gated/pooled) and greys out the pooled rows instead of marking them red.
+  Item 1 was re-run to regenerate `correlation_gate_matrix.csv`/`.png` and the
+  `MANIFEST.md` note with the corrected count and an explanatory breakdown.
+  `GEAR_v3_RESULTS_DRAFT.md`'s "Known Issues" section (Item 1) is removed --
+  resolved, not a standing caveat.
+- Evidence tier: direct code/data inspection (bug reproduced standalone before
+  the fix, confirmed absent after); not a data-availability or methodology
+  finding.
+- Alternatives considered and rejected: treating the 2026-09-12 CSV as
+  already-correct and only patching the MANIFEST text (the task's own
+  "Alternativa Rápida" path) -- rejected once the root cause turned out to be
+  a real bug in the reporting layer, not a stale/unverified number; leaving
+  it unfixed would have reproduced "12" on every future `run_all.py` pass.
+- Files: `src/reporting/results_draft/item01_correlation_gate.py` (`n_flip`
+  and color-map fix); `data/outputs/tables/correlation_gate.csv` (regenerated,
+  gitignored); `data/outputs/results_draft/MANIFEST.md` (Item 1 note
+  corrected, gitignored); `docs/rework/GEAR_v3_RESULTS_DRAFT.md` (Known
+  Issues Item 1 removed).
+- Status: resolved. No other MANIFEST item was found to share this pattern in
+  this pass (not exhaustively re-audited item by item; flag if a similar
+  NaN-vs-string comparison surfaces elsewhere in `results_draft/item*.py`).

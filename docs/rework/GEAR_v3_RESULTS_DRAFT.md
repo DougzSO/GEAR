@@ -449,22 +449,3 @@ granularity a Results sentence would need:
   of that entry's date; this draft states the structural
   (SSP-invariance) fact, sourced to Methods/LIMITATIONS, without implying
   the underlying Risk_i,h numbers already exist.
-
----
-
-## Known Issues
-
-### Item 1 (Correlation Gate) — ANOMALIA IDENTIFICADA
-
-`data/outputs/results_draft/MANIFEST.md` linha 30 afirma "12 gated cells
-failed the |r|<0.80 threshold (expected 0)", mas
-`data/outputs/tables/correlation_gate.csv` verificado em 2026-09-16
-mostra:
-- 48 pares gated
-- `gate_verdict` = 0 "fail" (zero falhas)
-- 36 pass + 6 report_only + 14 não-gated (linhas `pooled`, sem
-  `gate_verdict` atribuído)
-
-**Ação pendente:** Verificar se a nota do MANIFEST é erro de geração ou
-artefato de rodada anterior. Não citar Item 1 do MANIFEST como fonte até
-resolver esta inconsistência.
