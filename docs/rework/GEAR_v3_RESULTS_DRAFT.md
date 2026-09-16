@@ -77,11 +77,11 @@ closed for all three countries" (both 2026-09-12); reconciled in
 RiskBand_i,h classifies each plant into Low/Medium/High/Extreme per
 applicable hazard, using the Tier 1 (Water Stress, Wind-bucket Extreme
 Wind) or Tier 3 sample-relative percentile (all other hazards) cutoffs
-established in Methods Section 5. Production-scale RiskBand distributions
-across the full three-country fleet have not yet been computed and
-committed as of this draft (Phase 4's DECISIONS.md closure covers the
-PSAE input-mapping/complete-case design, not a numeric production run);
-no distribution numbers are reported here.
+established in Methods Section 5. [Esta seção descreve resultados já
+computados e salvos em `data/outputs/tables/risk_bands.csv` (última
+atualização em disco: 2026-09-16; não git-tracked -- `data/outputs/` é
+gitignored neste repositório). Contagens/estatísticas abaixo são
+placeholders a serem preenchidos com valores reais do arquivo.]
 
 ```
 [FIGURE/TABLE PLACEHOLDER: Per-hazard RiskBand distribution (count and MW-share of plants in Low/Medium/High/Extreme), faceted by country x bucket x SSP scenario | Source: risk_bands.py output, per GEAR_v3_work_plan.md Phase 7.1 ("per-hazard risk band maps remain primary") | Caption draft: Distribution of RiskBand_i,h classifications (Low/Medium/High/Extreme) across the operating fleet, by hazard, technology bucket, country, and SSP scenario (SSP1-2.6/SSP3-7.0/SSP5-8.5). Bars show both plant count and installed-capacity share (MW) per band. Extreme Wind's three SSP columns are identical by construction (Section 3 below) and are shown once, annotated as scenario-invariant rather than repeated as three visually distinct bars. | Status: pending Phase 7 implementation (production-scale RiskBand run and figure code not yet executed/committed)]
@@ -98,8 +98,11 @@ Risk_i,h = Hazard_i,h x Exposure_i x Vulnerability_i is valid for
 comparison across technology and country, strictly within the same
 hazard; it is never summed or otherwise combined across hazards for the
 same asset, and no "total plant risk" figure is produced anywhere in this
-framework. Production-scale Risk_i,h asset rankings and priority maps have
-not yet been computed and committed at full scale for this draft.
+framework. [Esta seção descreve resultados já computados e salvos em
+`data/outputs/tables/risk_by_hazard.csv` (última atualização em disco:
+2026-09-16; não git-tracked -- `data/outputs/` é gitignored neste
+repositório). Contagens/estatísticas abaixo são placeholders a serem
+preenchidos com valores reais do arquivo.]
 
 ### 3.1 Extreme Wind: scenario-invariant structural exposure (explicit
     result, not a data gap)
@@ -281,12 +284,14 @@ country — never across buckets, since |H_b| differs by bucket and the
 index is a within-bucket saturation fraction, not an absolute severity
 scale (Methods Section 6.2). No PSAE figure or table in this chapter
 plots different buckets on a shared color scale or ranks them in one
-list. Production-scale PSAE_i distributions (EXTREME/HIGH/MEDIUM/LOW
-counts and MW-share, per bucket, per country, per scenario) have not yet
-been computed and committed at full scale for this draft; the N=800
-general-MC psae_mean point estimates (Section 4.3) are the only real,
-closed PSAE-related numbers currently available, and those are pooled
-means with confidence intervals, not full band-distribution counts.
+list. [Esta seção descreve resultados já computados e salvos em
+`data/outputs/tables/psae.csv` (última atualização em disco: 2026-09-16;
+não git-tracked -- `data/outputs/` é gitignored neste repositório).
+Contagens/estatísticas abaixo são placeholders a serem preenchidos com
+valores reais do arquivo.] The N=800 general-MC psae_mean point estimates
+(Section 4.3) remain the only PSAE-related numbers already reconciled into
+narrative text in this draft; those are pooled means with confidence
+intervals, not full band-distribution counts.
 
 ```
 [FIGURE/TABLE PLACEHOLDER: PSAE_i band distribution (EXTREME/HIGH/MEDIUM/LOW, plant count and MW-share), separate panel per bucket (Hydro/Thermal/Solar four-band; Wind two-band LOW/EXTREME), faceted by country and SSP scenario | Source: PSAE aggregation module (src/index/, per Methods Section 6 / Equation 2), per GEAR_v3_work_plan.md Phase 7.1 ("PSAE map becomes explicitly labeled secondary/screening, intra-technology only") | Caption draft: Distribution of PSAE_i categorical classifications across the operating fleet, shown as one independent panel per technology bucket (Hydro, Thermal, Solar: EXTREME/HIGH/MEDIUM/LOW; Wind: compressed LOW/EXTREME scheme, |H_b|=1), by country and SSP scenario. Panels are never combined on a shared color scale or ranked against one another: PSAE is a within-bucket saturation fraction (fraction of applicable hazards at RiskBand >= High), not an absolute cross-bucket severity measure (Methods Section 6.2). psae_complete coverage (fraction of plants with a fully defined PSAE_i under the complete-case convention) is reported alongside each panel. | Status: pending Phase 7 implementation (production-scale PSAE run and figure code not yet executed/committed)]
@@ -306,9 +311,15 @@ the three. Real, country-level validator match patterns are on record
 storm across the full post-2000 South Atlantic record to be Hurricane
 Catarina, 2004 — the basin's one documented case — and Portugal's
 corroborations traced to five identifiable storms: Joaquin 2015, Leslie
-2018, Michael 2018, Alpha 2020, Gabrielle 2025), but a full production
-validator-overlay dataset joined against the final asset-level risk
-tables has not yet been produced and committed for this draft.
+2018, Michael 2018, Alpha 2020, Gabrielle 2025). [Esta seção descreve
+resultados já computados e salvos em
+`data/outputs/tables/contextual_validators.csv` (última atualização em
+disco: 2026-09-15; não git-tracked -- `data/outputs/` é gitignored neste
+repositório). Ver também "Known Issues" abaixo: MANIFEST.md item 14
+registra um join de produção completo (58.744 linhas) contra as tabelas
+de risco finais, o que contradiz a formulação "not yet produced" mantida
+até aqui neste texto. Contagens/estatísticas abaixo são placeholders a
+serem preenchidos com valores reais do arquivo.]
 
 The IBTrACS physical-occurrence validator uses a fixed 100 km
 great-circle radius as a proxy for each storm's wind-field extent, not
@@ -374,3 +385,22 @@ granularity a Results sentence would need:
   of that entry's date; this draft states the structural
   (SSP-invariance) fact, sourced to Methods/LIMITATIONS, without implying
   the underlying Risk_i,h numbers already exist.
+
+---
+
+## Known Issues
+
+### Item 1 (Correlation Gate) — ANOMALIA IDENTIFICADA
+
+`data/outputs/results_draft/MANIFEST.md` linha 30 afirma "12 gated cells
+failed the |r|<0.80 threshold (expected 0)", mas
+`data/outputs/tables/correlation_gate.csv` verificado em 2026-09-16
+mostra:
+- 48 pares gated
+- `gate_verdict` = 0 "fail" (zero falhas)
+- 36 pass + 6 report_only + 14 não-gated (linhas `pooled`, sem
+  `gate_verdict` atribuído)
+
+**Ação pendente:** Verificar se a nota do MANIFEST é erro de geração ou
+artefato de rodada anterior. Não citar Item 1 do MANIFEST como fonte até
+resolver esta inconsistência.
