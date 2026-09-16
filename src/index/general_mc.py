@@ -65,10 +65,12 @@ Standalone: no CLI. ``run_convergence`` is the entry point.
 
 from __future__ import annotations
 
+import json
 import logging
 import multiprocessing as mp
 import os
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -174,6 +176,29 @@ def run_stream_draws_parallel(
 
 def _percentile_ci(values: np.ndarray) -> tuple[float, float]:
     return float(np.nanpercentile(values, 2.5)), float(np.nanpercentile(values, 97.5))
+
+
+def compute_mcse(samples: np.ndarray) -> float:
+    """Monte Carlo Standard Error: ``std(samples, ddof=1) / sqrt(n)`` -- the
+    sampling error of the MC point estimate (mean) itself, from re-running
+    the same stream with a different draw count. NOT the 95%% percentile CI
+    (``_percentile_ci``), which instead reports the spread of the underlying
+    output distribution across draws (parametric uncertainty propagated
+    through the model). The two answer different questions and must not be
+    reported as if interchangeable."""
+    if len(samples) < 2:
+        return float("nan")
+    return float(np.nanstd(samples, ddof=1) / np.sqrt(len(samples)))
+
+
+def check_convergence(samples: np.ndarray, threshold_pct: float = 5.0) -> bool:
+    """True iff MCSE is below ``threshold_pct``%% of the sample mean --
+    the doubling-sequence halt criterion. See ``compute_mcse`` for why this
+    is distinct from the output distribution's own CI half-width."""
+    mean = float(np.nanmean(samples))
+    if mean == 0.0 or np.isnan(mean):
+        return False
+    return (compute_mcse(samples) / abs(mean)) * 100.0 < threshold_pct
 
 
 def run_n(
@@ -321,14 +346,22 @@ def run_n_by_gcm(
         psae_vals = sub["psae_mean"].to_numpy("float64")
         risk_lo, risk_hi = _percentile_ci(risk_vals)
         psae_lo, psae_hi = _percentile_ci(psae_vals)
+        risk_mean = float(np.nanmean(risk_vals))
+        psae_mean = float(np.nanmean(psae_vals))
+        risk_mcse = compute_mcse(risk_vals)
+        psae_mcse = compute_mcse(psae_vals)
         stream_stats[(country, scenario, model)] = {
             "n": len(sub),
-            "risk_mean": float(np.nanmean(risk_vals)),
+            "risk_mean": risk_mean,
             "risk_ci": (risk_lo, risk_hi),
             "risk_ci_halfwidth": (risk_hi - risk_lo) / 2.0,
-            "psae_mean": float(np.nanmean(psae_vals)),
+            "risk_mcse": risk_mcse,
+            "risk_mcse_pct": (risk_mcse / abs(risk_mean)) * 100.0 if risk_mean else float("nan"),
+            "psae_mean": psae_mean,
             "psae_ci": (psae_lo, psae_hi),
             "psae_ci_halfwidth": (psae_hi - psae_lo) / 2.0,
+            "psae_mcse": psae_mcse,
+            "psae_mcse_pct": (psae_mcse / abs(psae_mean)) * 100.0 if psae_mean else float("nan"),
         }
 
     return {
@@ -352,3 +385,77 @@ def run_convergence_by_gcm(
     if pre is None:
         pre = sr.precompute()
     return [run_n_by_gcm(n, pre=pre, n_workers=n_workers) for n in ns]
+
+
+def build_general_mc_by_gcm_report(
+    ns: list[int],
+    *,
+    pre: sr.PrecomputedInputs | None = None,
+    n_workers: int | None = None,
+    mcse_threshold_pct: float = 5.0,
+) -> dict:
+    """Assembles the 18-row (3 country x 3 scenario x 2 GCM) by-GCM report
+    -- one row per ``run_n_by_gcm`` stream_stats key -- from the EXISTING
+    pooled 9-stream RNG draws (``run_convergence_by_gcm``), NOT from 18
+    independent RNG streams: splitting the RNG itself would reverse the
+    closed Phase 6.1 pooling decision (``docs/DECISIONS.md``, GCM "stacked,
+    never blended, never Sobol/MC-summarised as a separate axis") and
+    double the already-flagged 9x draw cost (see module docstring). This
+    report is a per-GCM READOUT of the same closed draws, still
+    EXPERIMENTAL/diagnostic per ``run_n_by_gcm``'s own docstring.
+
+    Reports MCSE (``compute_mcse`` -- sampling error of the MC estimator)
+    separately from the 95%% percentile CI of the output distribution
+    (``_percentile_ci`` -- propagated parametric uncertainty); the two must
+    not be conflated. ``n_converged`` is the first step in ``ns`` where both
+    risk and PSAE MCSE fall under ``mcse_threshold_pct``%% of their mean;
+    ``n_confirmed`` is the largest (last) step actually run."""
+    steps = run_convergence_by_gcm(ns, pre=pre, n_workers=n_workers)
+    n_confirmed = ns[-1]
+
+    streams = []
+    for key in steps[0]["stream_stats"]:
+        country, scenario, model = key
+        n_converged = None
+        for step, n in zip(steps, ns):
+            stats = step["stream_stats"][key]
+            if stats["risk_mcse_pct"] < mcse_threshold_pct and stats["psae_mcse_pct"] < mcse_threshold_pct:
+                n_converged = n
+                break
+        final = steps[-1]["stream_stats"][key]
+        streams.append({
+            "country": country,
+            "scenario": scenario,
+            "gcm": model,
+            "risk_mean": final["risk_mean"],
+            "risk_mcse": final["risk_mcse"],
+            "risk_distribution_ic95": list(final["risk_ci"]),
+            "psae_mean": final["psae_mean"],
+            "psae_mcse": final["psae_mcse"],
+            "psae_distribution_ic95": list(final["psae_ci"]),
+            "convergence": {
+                "n_converged": n_converged,
+                "n_confirmed": n_confirmed,
+                "risk_mcse_pct": final["risk_mcse_pct"],
+                "psae_mcse_pct": final["psae_mcse_pct"],
+            },
+        })
+
+    return {"streams": streams}
+
+
+def save_general_mc_by_gcm_report(
+    ns: list[int],
+    *,
+    pre: sr.PrecomputedInputs | None = None,
+    n_workers: int | None = None,
+    mcse_threshold_pct: float = 5.0,
+    output_path: Path = Path("data/outputs/tables/phase6_general_mc_by_gcm.json"),
+) -> dict:
+    report = build_general_mc_by_gcm_report(
+        ns, pre=pre, n_workers=n_workers, mcse_threshold_pct=mcse_threshold_pct,
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+    return report

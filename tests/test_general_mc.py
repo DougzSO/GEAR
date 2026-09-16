@@ -65,3 +65,43 @@ def test_run_convergence_records_relative_change_on_second_step():
     for stats in steps[1]["stream_stats"].values():
         assert "risk_mean_relchange_vs_prev" in stats
         assert "psae_ci_halfwidth_relchange_vs_prev" in stats
+
+
+def test_compute_mcse_matches_std_over_sqrt_n():
+    samples = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    expected = np.std(samples, ddof=1) / np.sqrt(len(samples))
+    assert gm.compute_mcse(samples) == pytest.approx(expected)
+
+
+def test_compute_mcse_nan_below_two_samples():
+    assert np.isnan(gm.compute_mcse(np.array([1.0])))
+
+
+def test_check_convergence_true_for_tight_samples_false_for_wide():
+    tight = np.full(1000, 10.0)
+    tight[0] = 10.001
+    assert gm.check_convergence(tight, threshold_pct=5.0) is True
+
+    wide = np.array([0.0, 1000.0])
+    assert gm.check_convergence(wide, threshold_pct=5.0) is False
+
+
+@pytest.mark.skipif(not _rasters_present(), reason="processed rasters absent -- cannot precompute")
+def test_general_mc_by_gcm_report_has_18_streams():
+    pre = sr.precompute()
+    report = gm.build_general_mc_by_gcm_report([2, 3], pre=pre, n_workers=2)
+    assert len(report["streams"]) == 18
+    seen = {(s["country"], s["scenario"], s["gcm"]) for s in report["streams"]}
+    assert len(seen) == 18
+
+
+@pytest.mark.skipif(not _rasters_present(), reason="processed rasters absent -- cannot precompute")
+def test_general_mc_by_gcm_report_documents_mcse_and_ci95_separately():
+    pre = sr.precompute()
+    report = gm.build_general_mc_by_gcm_report([2, 3], pre=pre, n_workers=2)
+    for stream in report["streams"]:
+        assert "risk_mcse" in stream and "risk_distribution_ic95" in stream
+        assert "psae_mcse" in stream and "psae_distribution_ic95" in stream
+        assert stream["convergence"]["n_confirmed"] == 3
+        assert np.isfinite(stream["convergence"]["risk_mcse_pct"])
+        assert np.isfinite(stream["convergence"]["psae_mcse_pct"])

@@ -2374,3 +2374,45 @@ metodologia estão em `docs/DECISIONS.md`; itens de julgamento do autor em
 - **Status:** Incerta (metodologia não revisada pelo autor — ver nota
   EXPERIMENTAL acima; não citar como parte do Phase 6 fechado sem
   confirmação).
+
+## MCSE explícito + relatório JSON por-GCM (18 linhas, mesmos 9 streams pooled) — não 18 streams de RNG independentes
+
+- **Contexto:** pedido explícito (COMANDO B.3) era separar o Monte Carlo
+  por GCM criando 18 streams de RNG independentes (3 países × 3 cenários ×
+  2 GCMs), o que reverteria a decisão fechada de pooling de GCM
+  (`docs/DECISIONS.md`: Risk_i,h/PSAE_i "GCM stacked, never blended, never
+  Sobol/MC-summarised as a separate axis") e dobraria o custo já sinalizado
+  como caro (docstring de `general_mc.py`: ~9h em N=8000 com 9 streams;
+  18 streams dobraria isso). Perguntado ao autor via AskUserQuestion —
+  resposta: manter o pooling fechado, aproveitar o breakdown por GCM já
+  existente (`run_n_by_gcm`/`run_convergence_by_gcm`, ver entrada acima) e
+  só adicionar MCSE explícito + o formato de JSON pedido.
+- **Decisão:**
+  - `general_mc.compute_mcse(samples)`: `std(samples, ddof=1) / sqrt(n)` —
+    erro padrão do estimador MC, documentado explicitamente como distinto
+    do IC percentil 95% do `_percentile_ci` (que mede a incerteza
+    paramétrica propagada pela distribuição de output, não o erro amostral
+    do estimador). Os dois nunca devem ser reportados como intercambiáveis.
+  - `general_mc.check_convergence(samples, threshold_pct=5.0)`: True se
+    MCSE < `threshold_pct`% da média.
+  - `run_n_by_gcm`'s `stream_stats` ganhou `risk_mcse`/`risk_mcse_pct`/
+    `psae_mcse`/`psae_mcse_pct` (reaproveita os valores já computados, sem
+    draw extra).
+  - `general_mc.build_general_mc_by_gcm_report(ns, ...)`: roda a sequência
+    de doubling via `run_convergence_by_gcm` (os MESMOS 9 streams pooled,
+    RNG idêntico, nenhum recompute extra) e monta 18 linhas — uma por
+    `(country, scenario, gcm)`, lida a partir do breakdown por-modelo já
+    existente — com `risk_mean`/`risk_mcse`/`risk_distribution_ic95`/
+    `psae_mean`/`psae_mcse`/`psae_distribution_ic95`/`convergence`
+    (`n_converged` = primeiro `n` em `ns` com MCSE-relativo < threshold em
+    ambas as métricas; `n_confirmed` = último `n` rodado).
+  - `general_mc.save_general_mc_by_gcm_report(...)` escreve em
+    `data/outputs/tables/phase6_general_mc_by_gcm.json`.
+  - "18 streams" aqui significa 18 LINHAS de relatório (breakdown por GCM
+    dos 9 streams pooled), não 18 RNGs independentes — continua herdando o
+    status EXPERIMENTAL/Incerta da entrada acima.
+- **Consequências:** nenhum custo adicional de draw (reaproveita
+  `run_n_by_gcm`); nenhuma reversão da decisão de pooling fechada.
+- **Arquivos:** `src/index/general_mc.py`, `tests/test_general_mc.py`.
+- **Status:** Incerta (mesma ressalva EXPERIMENTAL da entrada acima —
+  este relatório por-GCM não substitui o resultado pooled fechado).
