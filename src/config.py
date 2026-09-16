@@ -47,6 +47,13 @@ OUTPUT_TABLES = OUTPUT_DIR / "tables"
 OUTPUT_INSPECTION = OUTPUT_DIR / "inspection"
 OUTPUT_DIAGRAMS = OUTPUT_DIR / "diagrams"
 
+# Additive tree for the GEAR_v3_RESULTS_DRAFT.md figure/table set (docs/ARCHITECTURE.md,
+# "Results-draft asset tree"). Deliberately separate from OUTPUT_TABLES/OUTPUT_MAPS above --
+# those paths are read by src/main.py and every existing src/visualization/ module; this tree
+# exists so the 16 results-draft assets can be regenerated/audited independently without
+# touching the pipeline's own output paths.
+OUTPUT_RESULTS_DRAFT = OUTPUT_DIR / "results_draft"
+
 LOG_DIR = BASE_DIR / "logs"
 
 # --------------------------------------------------------------------------

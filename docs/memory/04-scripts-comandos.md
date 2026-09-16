@@ -188,3 +188,48 @@ caso, revisão manual antes de atualizar a constante (ver
 - EM-DAT Archive: ~8 MB, um download.
 - Processors: segundos por país×cenário; ~275 MB de rasters processados de
   calor + ~150 MB de água (normalizado + bruto).
+
+## results_draft (figuras/tabelas do GEAR_v3_RESULTS_DRAFT.md, 2026-09-15)
+
+`src/reporting/results_draft/` — um módulo por item numerado do draft (16
+total, `item01_correlation_gate.py` … `item16_threshold_tier_provenance.py`),
+mais `common.py` (loaders de dado real + constantes compartilhadas) e
+`run_all.py` (orquestrador). Escreve em `data/outputs/results_draft/`
+(estrutura aprovada e registrada em `docs/ARCHITECTURE.md` Seção 11 —
+gitignored como o resto de `data/outputs/`, os scripts são o artefato
+versionado).
+
+```
+.venv\Scripts\python -m src.reporting.results_draft.run_all           # todos os 16
+.venv\Scripts\python -m src.reporting.results_draft.run_all --items 7 12
+.venv\Scripts\python -m src.index.psae                                 # pré-requisito: gera
+                                                                         # psae.csv (não
+                                                                         # persistido pelo
+                                                                         # src.main pipeline)
+```
+
+Cada item lê arquivo(s) real(is) já em `data/outputs/tables/` (ou, para os
+itens 8/9, chama `src.index.scenario_discovery.hazard_removal_oat()` /
+`correlation_gate_sweep()` ao vivo — módulos reais, sem CSV persistido antes
+desta task; execução é barata, sem Monte Carlo). Mapeamento completo
+item→fonte real, com filtros/colunas, foi feito manualmente antes de
+qualquer código ser escrito (ver `MANIFEST.md` gerado na raiz da árvore de
+output — reconstrói o mesmo mapeamento a cada execução).
+
+**Bug pré-existente descoberto ao rodar isto (não corrigido, fora do escopo
+desta task):** `src/visualization/_common.py` e mais 8 arquivos (`src/main.py`,
+`monte_carlo.py`, `emdat_validation.py`, `charts.py`, `data.py`, `maps.py`,
+`tables.py`) importam `from src.index import ccrs_calculator` — esse módulo
+não existe mais (renomeado para `risk_calculator.py` em algum commit
+anterior sem atualizar os importadores). Confirmado por import direto:
+`ModuleNotFoundError: No module named 'src.index.ccrs_calculator'`. Isso
+significa que **`python -m src.main` e qualquer `src/visualization/*`
+atualmente não rodam**, tal como commitados. `results_draft/common.py`
+deliberadamente NÃO importa `src.visualization._common` por causa disso —
+reimplementa um helper mínimo de mapa (boundary/marker/save) usando só
+`src.config` + `src.downloaders.boundaries_downloader` (que importam
+limpos). Ver `06-areas-de-risco.md` para o registro formal deste risco.
+
+Duas dependências declaradas em `requirements.txt` mas ausentes do `.venv`
+local foram instaladas durante esta task (`numba`, `SALib`) — drift de
+ambiente, não mudança de versão pinada.

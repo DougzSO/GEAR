@@ -264,3 +264,31 @@ CCRS-era-specific label; the v3 equivalent is `RiskBand_i,h` for the `heat`
 term) has no published absolute threshold and uses sample-relative
 percentile cuts, GCM-sensitive — declared limitation, still true in v3
 (`risk_bands.THRESHOLD_REGISTRY`'s Tier 3 percentile entries for `heat`).
+
+## Import quebrado: `src.index.ccrs_calculator` não existe (descoberto 2026-09-15)
+
+**Severidade: alta — bloqueia `python -m src.main` e toda a camada
+`src/visualization/` como commitado hoje.** Descoberto ao construir
+`src/reporting/results_draft/` (ver `04-scripts-comandos.md`): 9 imports
+reais (`from src.index import ccrs_calculator` ou
+`from src.index.ccrs_calculator import ...`) em `src/main.py`,
+`src/index/monte_carlo.py`, `src/index/emdat_validation.py`,
+`src/visualization/charts.py`, `data.py`, `maps.py`, `tables.py`, e
+`src/visualization/_common.py`, apontam para um módulo que não existe em
+`src/index/`. O módulo real com o mesmo conteúdo (`BUCKETS`, `PLANT_UID`,
+`WATER_SCENARIOS`, `WATER_TO_HEAT`, `HAZARD_LABELS`) é
+`src/index/risk_calculator.py` — aparenta ser um rename não propagado a
+todos os importadores. `tables.py` também referencia `BUCKET_WEIGHTS` e
+`_PUBLISHED_WITHIN_WATER` de `ccrs_calculator`, que não foram localizados em
+`risk_calculator.py` numa checagem rápida — pode precisar de mais que um
+rename simples para esse arquivo especificamente.
+
+Confirmado por import direto (`ModuleNotFoundError`), não assumido. Não
+corrigido nesta task — fora do escopo pedido (gerar as figuras/tabelas do
+RESULTS_DRAFT), e uma correção às cegas em 9 arquivos sem entender o
+histórico do rename seria uma correção paliativa, não a raiz. `results_draft/
+common.py` contorna isso com um helper de mapa mínimo e independente (não
+importa `_common.py`). **Próximo passo recomendado**: `git log -p` nos 9
+arquivos ao redor da introdução de `risk_calculator.py` para confirmar se foi
+de fato um rename 1:1 ou se `ccrs_calculator.py` tinha responsabilidades que
+se dividiram entre módulos diferentes, antes de tocar nesses imports.
