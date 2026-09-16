@@ -538,7 +538,7 @@ Para cada bucket, entre os plant x water_scenario classificados PSAE=EXTREME (em
 
 ### 4.3 Amplificacao de risco por idade (age_factor)
 
-`age_factor` multiplica o hazard bruto (ccrs_hazard_aged.csv); valores > 1.0 amplificam o risco. Tabela por pais x tecnologia (media simples, media ponderada por capacidade, e maximo observado).
+Fonte: `ccrs_age_factors.csv` (`src/index/age_factor.py`) -- o termo `Vulnerability_i` de `Risk_i,h` (Equation 1, `docs/DECISIONS.md` [2026-09-11] "GEAR v3 Phase 1"), nao um produto CCRS legado (correcao 2026-09-16: a secao citava `ccrs_hazard_aged.csv`, o produto `Hazard * age_factor` da montagem CCRS ja arquivada, `archive/ccrs_artifacts_2026_09_16/`; os valores abaixo sao o `age_factor` isolado, nao uma combinacao com hazard). Valores > 1.0 amplificam o risco. Tabela por pais x tecnologia (media simples, media ponderada por capacidade, e maximo observado).
 
 | Pais | Tecnologia | Age factor medio | Age factor (media ponderada por MW) | Age factor maximo | N plantas |
 |---|---|---|---|---|---|
@@ -560,28 +560,9 @@ Para cada bucket, entre os plant x water_scenario classificados PSAE=EXTREME (em
 
 ### 4.4 Robustez do ranking de exposicao entre paises
 
-Fonte: `national_ccrs_summary.csv` (Monte Carlo, GCM GFDL-ESM4, IC 95%), rank 1 = maior CCRS nacional no cenario. `phase6_general_mc_convergence.json` fornece o mesmo ranking (risk_mean) atraves do processo de convergencia de N draws (100->1600), usado aqui como segunda checagem independente de estabilidade sob reamostragem/perturbacao estocastica -- nao e o OAT de `scenario_discovery.py` (hazard-inclusion / correlation-gate / psae-cutpoint), que nao possui CSV persistido nesta base e nao foi executado nesta extracao.
+Nota (2026-09-16): esta secao citava `national_ccrs_summary.csv` (ranking pelo indice CCRS nacional composto, mediana Monte Carlo). Esse arquivo foi arquivado (`archive/ccrs_artifacts_2026_09_16/`) -- e produto de `src/main.py`/`ccrs_report.py`, a montagem CCRS removida na Fase 1 (`docs/DECISIONS.md` [2026-09-11]); v3 nao combina `Risk_i,h` entre hazards em um indice composto por pais (`docs/LIMITATIONS.md`, "2026-09-16 -- Legacy CCRS visualization/sensitivity layer removed"). Sem substituto v3 direto para um "ranking CCRS nacional" -- fica em aberto ate o manuscrito decidir se um indice composto por pais sera reconstruido sob a metodologia v3. A checagem de convergencia abaixo (`risk_mean`, por `general_mc.py`, o sucessor funcional do papel de sensibilidade de `monte_carlo.py`) permanece valida e independente desta lacuna.
 
-| Cenario | Rank | Pais | CCRS nacional (mediana MC) | IC 95% |
-|---|---|---|---|---|
-| SSP3-7.0 | 1 | India | 0.8093 | [0.7409, 0.8814] |
-| SSP3-7.0 | 2 | Portugal | 0.3161 | [0.3108, 0.3215] |
-| SSP3-7.0 | 3 | Brazil | 0.2743 | [0.2624, 0.2870] |
-| SSP1-2.6 | 1 | India | 0.7639 | [0.6994, 0.8316] |
-| SSP1-2.6 | 2 | Brazil | 0.2453 | [0.2346, 0.2566] |
-| SSP1-2.6 | 3 | Portugal | 0.2361 | [0.2320, 0.2403] |
-| SSP5-8.5 | 1 | India | 0.8461 | [0.7746, 0.9212] |
-| SSP5-8.5 | 2 | Brazil | 0.3268 | [0.3126, 0.3420] |
-| SSP5-8.5 | 3 | Portugal | 0.2979 | [0.2931, 0.3029] |
-
-- Rank 1 (maior CCRS) em todos os 3 cenarios: **India** (estavel nos 3 cenarios).
-- Ordem completa: SSP1-2.6 = ['India', 'Brazil', 'Portugal']; SSP3-7.0 = ['India', 'Portugal', 'Brazil']; SSP5-8.5 = ['India', 'Brazil', 'Portugal'].
-- Brazil e Portugal trocam de posicao (rank 2/3) entre cenarios; India permanece rank 1 em todos.
-
-**ATENCAO -- metrica diferente, nao comparavel diretamente**: o ranking abaixo (`risk_mean`, de `phase6_general_mc_convergence.json`) usa `risk_i_h` medio ponderado por capacidade (escala nao normalizada, ordens de grandeza de centenas), enquanto a tabela acima usa o CCRS nacional (indice composto normalizado ~0-1). Os dois rankeiam Brazil/India em ordem OPOSTA (`risk_mean` coloca Brazil em 1o lugar nos 3 cenarios) porque medem quantidades distintas -- isto e um resultado real dos dados, nao um erro de transcricao, e deve ser tratado no manuscrito como duas metricas de exposicao com definicoes diferentes, nao como uma contradicao a resolver.
-
-
-_Checagem de convergencia (`phase6_general_mc_convergence.json`)_: convergiu = True, N convergente = 800, Ns testados = [100, 200, 400, 800, 1600].
+Fonte: `phase6_general_mc_convergence.json`. Convergiu = True, N convergente = 800, Ns testados = [100, 200, 400, 800, 1600].
 
 | Cenario | Ranking risk_mean N=100 | Ranking risk_mean N=1600 | Estabilidade |
 |---|---|---|---|
